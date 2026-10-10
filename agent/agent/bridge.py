@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, InvalidHandshake
 
+from .jobs import JOB_MESSAGES
+
 MAX_LINE = 6 * 1024 * 1024
 
 
@@ -137,13 +139,19 @@ class NativeProcess:
             pass
 
 
-async def receive_commands(websocket, tools, outbox):
+async def receive_commands(websocket, tools, outbox, validation=None):
     async for payload in websocket:
         message = None
         try:
             message = json.loads(payload)
             if not isinstance(message, dict):
                 raise ValueError("Message must be an object")
+            if message.get("type") in JOB_MESSAGES:
+                if validation is None:
+                    await outbox.result({"type": "validation_result", "job_id": None, "status": "REJECTED", "reason": "VALIDATION_UNAVAILABLE"})
+                else:
+                    await validation.handle(message)
+                continue
             if message.get("type") == "job":
                 job_id = message.get("job_id")
                 if not isinstance(job_id, str) or len(job_id) > 128:
@@ -182,8 +190,9 @@ async def send_events(websocket, outbox):
         await websocket.send(json.dumps(await outbox.get(), separators=(",", ":"), allow_nan=False))
 
 
-async def connected_session(websocket, options, binaries):
+async def connected_session(websocket, options, binaries, validation_service=None):
     outbox = Outbox()
+    validation = validation_service.connect(outbox) if validation_service else None
     tools, tasks = {}, []
     args = {
         "volume": [], "mouse": [],
@@ -197,8 +206,11 @@ async def connected_session(websocket, options, binaries):
             process = await asyncio.create_subprocess_exec(str(binaries[name]), *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=MAX_LINE)
             tools[name] = NativeProcess(name, process, outbox)
             tasks.append(asyncio.create_task(tools[name].read()))
-        await outbox.result({"type": "agent_hello", "protocol": 1, "streams": list(tools), "commands": ["volume.set", "mouse.move", "mouse.button", "mouse.scroll"]})
-        tasks.extend((asyncio.create_task(send_events(websocket, outbox)), asyncio.create_task(receive_commands(websocket, tools, outbox))))
+        await outbox.result({"type": "agent_hello", "protocol": 1, "streams": list(tools), "commands": ["volume.set", "mouse.move", "mouse.button", "mouse.scroll"],
+                             "validation": {"protocol": 1, "max_source_bytes": 131072, "max_attempts": 3,
+                                            "build_boundary_available": bool(validation_service and validation_service.boundary.can_build()),
+                                            "execution_boundary_available": bool(validation_service and validation_service.boundary.can_run())}})
+        tasks.extend((asyncio.create_task(send_events(websocket, outbox)), asyncio.create_task(receive_commands(websocket, tools, outbox, validation))))
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             try:
@@ -207,20 +219,24 @@ async def connected_session(websocket, options, binaries):
                 # A backend can close normally while a final sample is sending.
                 pass
     finally:
+        if validation:
+            await validation.close()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.gather(*(tool.close() for tool in tools.values()))
 
 
-async def run_bridge(options, binaries, token):
+async def run_bridge(options, binaries, token, validation_service=None):
     retry = 1
     while True:
         try:
-            async with connect(options.url, additional_headers={"Authorization": f"Bearer {token}"}, max_size=65536, close_timeout=3) as websocket:
+            # Permit JSON escaping of a full 128 KiB source; validation still
+            # applies the smaller decoded UTF-8 source limit before compiling.
+            async with connect(options.url, additional_headers={"Authorization": f"Bearer {token}"}, max_size=1024 * 1024, close_timeout=3) as websocket:
                 retry = 1
                 print("Backend connected; native telemetry active", file=sys.stderr)
-                await connected_session(websocket, options, binaries)
+                await connected_session(websocket, options, binaries, validation_service)
         except (ConnectionClosed, InvalidHandshake, OSError, RuntimeError) as error:
             print(f"Connection/tool interrupted ({type(error).__name__}); reconnecting in {retry}s", file=sys.stderr)
         await asyncio.sleep(retry)

@@ -47,6 +47,22 @@ prioritized. The startup `agent_hello` message lists enabled streams and command
 Use Ctrl+C to stop. Screen capture starts only with `--screen`, and cannot be
 enabled remotely through the command protocol.
 
+## Generated C validation and repair
+
+The bridge also routes `validate_job`, `code_revision`, `execute_job`, and
+`cancel_job` messages. Validation enforces a local per-job policy, a 128 KiB C11
+source contract, at most three compilations, sanitized backend repair requests,
+and a separate artifact/execution authorization gate. Runtime outputs stay local
+unless the local policy explicitly opts into sharing them.
+
+Generated-code compilation and execution **are blocked by default**: a verified
+macOS/Windows isolation worker is not supplied. The five repository-owned tools
+continue to work. A local `--validation-policy .validation-policy.json` file can
+register grants but cannot enable isolation. See the
+[protocol and local-worker interface](docs/validation-protocol.md) for message
+schemas, local policy, resource limits, and activation requirements. Backend
+handlers and LLM calls are outside this agent-only change.
+
 ## Tools
 
 | Program | Input/options | Live output |
@@ -141,8 +157,9 @@ The bridge replies after the native API operation:
 ```
 
 Invalid controls return `ok: false` and an `error`. Commands are serialized so
-acknowledgements cannot be assigned to the wrong request. No remote shell,
-arbitrary executable, C source, path, or screenshot-enable command is accepted.
+acknowledgements cannot be assigned to the wrong request. Native control commands
+accept only the actions above. Generated C uses the separate validation protocol
+and requires a local grant and verified isolation before it can be compiled.
 For joystick movement, the acknowledgement means the velocity was accepted by
 the input API; subsequent mouse telemetry supplies cursor position. Sensor and
 desktop permission failures remain observable as events.
@@ -192,7 +209,10 @@ uv run --no-sync python -m unittest discover -s tests -v
 The tests exercise real subprocess pipes and a local WebSocket server, command
 validation/acknowledgements, existing job compatibility, slow-consumer sample
 coalescing, subprocess cleanup, and platform-independent C filtering/JSON
-logic. On macOS and Windows, an additional test compiles all five tools against
+logic. Additional validation tests exercise repair routing, privacy, artifact
+integrity, authorization, and fail-closed isolation gates using a simulated worker;
+they do not establish native sandbox containment. On macOS and Windows, an
+additional test compiles all five tools against
 the installed native SDK with fresh outputs; this test is skipped on Linux.
 They do not simulate successful native OS calls. Windows x86-64 builds
 were cross-compiled from Linux with Zig 0.15.2. macOS SDK compilation, MSVC

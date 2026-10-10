@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from .compiler import CompilerError
+from .compiler import CompilerError, detect_compiler
 from .native import TOOLS, build_tools
 
 
@@ -23,6 +23,7 @@ def parser() -> argparse.ArgumentParser:
     stream.add_argument("--min-cpu", type=float, default=1)
     stream.add_argument("--min-ram-mb", type=float, default=100)
     stream.add_argument("--temperature-file", help="Optional local sensor-provider file, Celsius")
+    stream.add_argument("--validation-policy", help="Local JSON grants by job ID; never supplied by the backend")
     return cli
 
 
@@ -39,12 +40,17 @@ def main(argv=None) -> int:
             args = options.args[1:] if options.args[:1] == ["--"] else options.args
             return subprocess.call([str(binary), *args])
         from .bridge import run_bridge, validate_options
+        from .jobs import ValidationService
+        from .validation import load_policies
         validate_options(options)
         token = os.getenv("AGENT_TOKEN")
         if not token:
             cli.error("Set AGENT_TOKEN in your local environment (never pass it on the command line)")
-        binaries = build_tools()
-        asyncio.run(run_bridge(options, binaries, token))
+        policies = load_policies(options.validation_policy)
+        compiler = detect_compiler()
+        binaries = build_tools(compiler=compiler)
+        validation = ValidationService(compiler, policies)
+        asyncio.run(run_bridge(options, binaries, token, validation))
         return 0
     except KeyboardInterrupt:
         return 130
