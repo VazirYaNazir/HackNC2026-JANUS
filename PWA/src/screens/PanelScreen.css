@@ -1,0 +1,10 @@
+.panel {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  background: var(--surface);
+}
+.panel__title { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--text); }
+.panel__grid { display: grid; align-content: start; }
+.panel__grid > div { display: flex; min-width: 0; min-height: 0; }
+.panel__grid > div > .jw { flex: 1; }
