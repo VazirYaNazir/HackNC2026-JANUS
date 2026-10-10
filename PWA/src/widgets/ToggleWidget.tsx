@@ -1,4 +1,5 @@
 import { Frame } from "./Frame";
+import WidgetTitle from "./WidgetTitle";
 import { activate, type WidgetProps } from "./types";
 
 export default function ToggleWidget(props: WidgetProps) {
@@ -13,7 +14,7 @@ export default function ToggleWidget(props: WidgetProps) {
         className="jw__tap jw__tap--row"
         onClick={() => activate(props, !on)}
       >
-        <span className="jw__title">{widget.label}</span>
+        <WidgetTitle widget={widget} />
         <span className={`jw__switch ${on ? "jw__switch--on" : ""}`} aria-hidden="true">
           <span className="jw__knob" />
         </span>

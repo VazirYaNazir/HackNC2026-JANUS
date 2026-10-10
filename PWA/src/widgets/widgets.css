@@ -14,6 +14,7 @@
 .jw--selected { outline: 2px solid var(--amber); outline-offset: 3px; }
 
 .jw__title { font-size: 14px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; }
+.jw__heading { display: inline-flex; align-items: center; gap: 6px; }
 .jw__row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .jw__readout { font-family: var(--font-mono); font-size: 14px; color: var(--cyan); }
 .jw__readout--amber { color: var(--amber); }
@@ -46,7 +47,6 @@
 .jw__tap--row { justify-content: space-between; }
 .jw__tap:active { box-shadow: var(--neu-inset); }
 .jw__tap:focus-visible, .jw__range:focus-visible, .jw__select:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
-.jw__icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Toggle switch: inset track, raised knob that slides right and turns green */
 .jw__switch {

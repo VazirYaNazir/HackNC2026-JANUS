@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { Frame } from "./Frame";
+import WidgetTitle from "./WidgetTitle";
 import { isDialWidget, type WidgetProps } from "./types";
 import { levelOf } from "./level";
 
@@ -12,7 +13,7 @@ export default function BarWidget(props: WidgetProps) {
   return (
     <Frame props={props} selectable>
       <div className="jw__row">
-        <span className="jw__title">{widget.label}</span>
+        <WidgetTitle widget={widget} />
         <span className="jw__readout">
           {reading === undefined ? "—" : Math.round(reading)}
           {unit}

@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { Frame } from "./Frame";
+import WidgetTitle from "./WidgetTitle";
 import { activate, isInputWidget, type WidgetProps } from "./types";
 
 export default function SliderWidget(props: WidgetProps) {
@@ -20,7 +21,7 @@ export default function SliderWidget(props: WidgetProps) {
 
   return (
     <Frame props={props} selectable>
-      <span className="jw__title">{widget.label}</span>
+      <WidgetTitle widget={widget} />
       <input
         type="range"
         className="jw__range"

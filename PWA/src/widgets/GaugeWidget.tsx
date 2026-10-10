@@ -1,4 +1,5 @@
 import { Frame } from "./Frame";
+import WidgetTitle from "./WidgetTitle";
 import { isDialWidget, type WidgetProps } from "./types";
 import { levelOf } from "./level";
 
@@ -11,7 +12,7 @@ export default function GaugeWidget(props: WidgetProps) {
 
   return (
     <Frame props={props} selectable>
-      <span className="jw__title">{widget.label}</span>
+      <WidgetTitle widget={widget} />
       <div className="jw__gauge">
         <svg viewBox="0 0 100 58" role="img" aria-label={`${widget.label} ${reading ?? "no data"}${unit}`}>
           <path className="jw__arc jw__arc--track" d="M 10 52 A 40 40 0 0 1 90 52" pathLength={100} />
