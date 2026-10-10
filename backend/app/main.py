@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -9,6 +10,9 @@ from app.db import init_db
 from app.routes.agent import router as agent_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
+from app.tunnel import start_tunnel, stop_tunnel
+
+logger = logging.getLogger("uvicorn.error")
 
 # ==========================================
 # 1. Admin API (Port 8001 - Localhost only)
@@ -58,7 +62,15 @@ async def lifespan(app: FastAPI):
     admin_thread = threading.Thread(target=admin_server.run, daemon=True)
     admin_thread.start()
 
+    # Launch Cloudflare Tunnel for public API (Port 8000)
+    try:
+        await start_tunnel(8000)
+    except Exception as exc:
+        logger.warning(f"Could not start Cloudflare tunnel: {exc}")
+
     yield
+
+    await stop_tunnel()
 
     if admin_server is not None:
         admin_server.should_exit = True
