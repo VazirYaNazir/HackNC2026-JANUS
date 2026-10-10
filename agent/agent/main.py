@@ -1,77 +1,56 @@
 
-import asyncio
-import json
-import os
-
-from dotenv import load_dotenv
-from websockets.asyncio.client import connect
-
-from .executor import execute_job
+from .compiler import detect_compiler, CompilerError
+from .executor import execute_c, ExecutionError
+from .installer import install_zig
 
 
-load_dotenv()
+TEST_CODE = r"""
+#include <stdio.h>
 
-SERVER_URL = os.getenv(
-    "BACKEND_WS_URL",
-    "ws://127.0.0.1:8000/ws/agent"
-)
+int main(void) {
+    printf("Hello from native C execution!\n");
+    return 0;
+}
+"""
 
-AGENT_TOKEN = os.environ["AGENT_TOKEN"]
 
+def main():
+    print("Starting HackNC Laptop Agent")
 
-async def run_agent():
-    while True:
-        try:
-            async with connect(
-                SERVER_URL,
-                additional_headers={
-                    "Authorization": f"Bearer {AGENT_TOKEN}"
-                },
-                ping_interval=20,
-                ping_timeout=20,
-            ) as websocket:
+    # Step 1: Detect OS and configure compiler
+    try:
+        compiler = detect_compiler()
 
-                print("Connected to backend")
+    except CompilerError as error:
+        print(f"Compiler setup failed:\n{error}")
+        return 1
 
-                async for raw_message in websocket:
-                    message = json.loads(raw_message)
+    print(f"Operating System: {compiler.system}")
+    print(f"C Compiler: {compiler.name}")
+    print(f"Compiler Path: {compiler.path}")
 
-                    if message.get("type") != "job":
-                        continue
+    # Step 2: Verify local C execution
+    try:
+        result = execute_c(
+            source_code=TEST_CODE,
+            compiler=compiler,
+        )
 
-                    job_id = message.get("job_id")
+    except (CompilerError, ExecutionError) as error:
+        print(f"Execution failed: {error}")
+        return 1
 
-                    print(f"Received job: {job_id}")
+    print("\nExecution Result:")
+    print(f"Exit Code: {result.returncode}")
+    print(f"STDOUT: {result.stdout}")
+    print(f"STDERR: {result.stderr}")
 
-                    try:
-                        # Execute on this machine
-                        result = execute_job(message)
+    if result.returncode != 0:
+        return 1
 
-                        response = {
-                            "type": "job_result",
-                            "job_id": job_id,
-                            "status": "completed",
-                            "result": result,
-                        }
-
-                    except Exception as error:
-                        response = {
-                            "type": "job_result",
-                            "job_id": job_id,
-                            "status": "error",
-                            "error": str(error),
-                        }
-
-                    await websocket.send(
-                        json.dumps(response)
-                    )
-
-        except Exception as error:
-            print(f"Connection lost: {error}")
-            print("Reconnecting in 3 seconds...")
-
-            await asyncio.sleep(3)
+    print("Agent initialized successfully")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(run_agent())
+    raise SystemExit(main())
