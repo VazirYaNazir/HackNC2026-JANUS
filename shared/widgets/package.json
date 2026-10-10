@@ -1,0 +1,19 @@
+{
+  "name": "@janus/widgets",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@janus/design": "*",
+    "@janus/schema": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

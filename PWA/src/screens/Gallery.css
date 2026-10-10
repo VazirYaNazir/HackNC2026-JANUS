@@ -1,0 +1,4 @@
+.gallery { width: 100%; max-width: 420px; margin: 0 auto; background: var(--surface); }
+.gallery__title { margin: 0 0 12px; font-size: 20px; font-weight: 600; }
+.gallery__type h2 { margin: 24px 0 4px; font-size: 16px; color: var(--amber); text-transform: capitalize; }
+.gallery__size h3 { margin: 16px 0 8px; font-size: 12px; font-weight: 600; font-family: var(--font-mono); color: var(--text-muted); }

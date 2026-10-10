@@ -11,6 +11,7 @@ export default function ToggleWidget(props: WidgetProps) {
         type="button"
         role="switch"
         aria-checked={on}
+        aria-label={widget.label}
         className="jw__tap jw__tap--row"
         onClick={() => activate(props, !on)}
       >

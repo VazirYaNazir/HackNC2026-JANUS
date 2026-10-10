@@ -1,8 +1,7 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { GRID } from "@janus/design";
 import type { Layout, Widget } from "@janus/schema";
-import WidgetView from "../widgets/WidgetView";
-import { isInputWidget, type WidgetValue } from "../widgets/types";
+import { PanelGrid, isInputWidget, type WidgetValue } from "@janus/widgets";
 import "./PanelScreen.css";
 
 interface PanelScreenProps {
@@ -22,29 +21,10 @@ export default function PanelScreen({ layout, data = {}, initialValues = {} }: P
     if (value !== undefined) setValues((prev) => ({ ...prev, [widget.id]: value }));
   };
 
-  const gridStyle: CSSProperties = {
-    gridTemplateColumns: `repeat(${GRID.columns}, minmax(0, 1fr))`,
-    gridAutoRows: `${GRID.rowHeight}px`,
-    gap: `${GRID.gap}px`,
-    alignContent: "start",
-  };
-
   return (
     <main className="panel" style={{ padding: `${GRID.padding}px` }}>
       <h1 className="panel__title">{layout.name}</h1>
-      <div className="panel__grid" style={gridStyle}>
-        {layout.widgets.map((widget) => {
-          const value = isInputWidget(widget) ? values[widget.id] : data[widget.source];
-          return (
-            <div
-              key={widget.id}
-              style={{ gridColumn: `${widget.x + 1} / span ${widget.w}`, gridRow: `${widget.y + 1} / span ${widget.h}` }}
-            >
-              <WidgetView widget={widget} mode="live" value={value} onTrigger={handleTrigger} />
-            </div>
-          );
-        })}
-      </div>
+      <PanelGrid layout={layout} values={values} data={data} onTrigger={handleTrigger} />
     </main>
   );
 }

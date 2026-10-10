@@ -21,6 +21,7 @@ export default function GaugeWidget(props: WidgetProps) {
   const pct = reading === undefined ? 0 : Math.min(100, Math.max(0, reading));
   const unit = isDialWidget(widget) ? (widget.unit ?? "") : "";
   const level = levelOf(widget, reading, { warn: 70, critical: 90 });
+  const shown = reading === undefined ? "—" : Math.round(reading);
 
   return (
     <Frame props={props} selectable>
@@ -43,12 +44,17 @@ export default function GaugeWidget(props: WidgetProps) {
           </svg>
           <div className="jw__dial" aria-hidden="true">
             <span className="jw__big">
-              {reading === undefined ? "—" : Math.round(reading)}
+              {shown}
               <small>{unit}</small>
             </span>
           </div>
         </div>
       </div>
+      {/* Shown instead of the dial when the cell is one row tall. */}
+      <span className={`jw__side jw__side--${level}`} aria-hidden="true">
+        {shown}
+        <small>{unit}</small>
+      </span>
     </Frame>
   );
 }
