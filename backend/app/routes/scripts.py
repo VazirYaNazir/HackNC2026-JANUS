@@ -1,15 +1,35 @@
-import os
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException
+# app/routes/scripts.py
+import secrets
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+
+from app.config import settings
+from app.db import (
+    delete_script_by_id,
+    generate_pairing_code,
+    get_all_devices,
+    get_all_scripts,
+    revoke_device_by_id,
+    save_script,
+)
 
 router = APIRouter(prefix="/api/v1/scripts", tags=["Scripts Admin"])
 
-# In-memory database mock (replace with SQLite/JSON store for hackathon)
-SCRIPTS_DB = {}
+# Header extractor for local BuilderUI app
+ADMIN_KEY_HEADER = APIKeyHeader(name="X-Admin-Secret", auto_error=False)
+
+def verify_admin_key(api_key: str = Security(ADMIN_KEY_HEADER)):
+    """Verifies that requests to scripts.py carry the matching admin secret."""
+    if api_key != settings.ADMIN_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Invalid or missing local admin credentials."
+        )
 
 class WidgetConfig(BaseModel):
-    widget_type: str  # e.g., "button", "slider", "toggle"
+    widget_type: str
     label: str
     default_val: Optional[str] = None
 
@@ -18,51 +38,45 @@ class ScriptCreateRequest(BaseModel):
     code: str
     widget: WidgetConfig
 
-class AIGenerateRequest(BaseModel):
-    prompt: str
+@router.get("/", dependencies=[Security(verify_admin_key)])
+def list_scripts():
+    return get_all_scripts()
 
-@router.get("/")
-def get_all_scripts():
-    """Returns all saved scripts and their metadata for BuilderUI."""
-    return list(SCRIPTS_DB.values())
-
-@router.post("/")
+@router.post("/", dependencies=[Security(verify_admin_key)])
 def create_script(payload: ScriptCreateRequest):
-    """Saves a new manual or AI-generated script."""
-    script_id = f"script_{len(SCRIPTS_DB) + 1}"
-    script_data = {
-        "id": script_id,
-        "name": payload.name,
-        "code": payload.code,
-        "widget": payload.widget.model_dump()
-    }
-    SCRIPTS_DB[script_id] = script_data
-    return {"status": "created", "script": script_data}
+    script_id = f"script_{secrets.token_hex(4)}"
+    save_script(
+        script_id=script_id,
+        name=payload.name,
+        code=payload.code,
+        widget_type=payload.widget.widget_type,
+        label=payload.widget.label,
+        default_val=payload.widget.default_val,
+    )
+    return {"status": "created", "script_id": script_id}
 
-@router.post("/ai-generate")
-def generate_ai_script(payload: AIGenerateRequest):
-    """
-    Sends the user's prompt to an LLM (OpenAI/Anthropic API) 
-    and returns python code + suggested UI widget config.
-    """
-    # System prompt to ensure LLM responds in JSON format:
-    # { "code": "import os...", "widget_type": "button", "label": "Press Me" }
-    
-    # Mock LLM response for demonstration
-    generated_code = f"# Auto-generated code for: {payload.prompt}\nimport os\nprint('Executing AI Action')"
-    
-    return {
-        "suggested_name": payload.prompt[:20],
-        "code": generated_code,
-        "widget": {
-            "widget_type": "button",
-            "label": payload.prompt.capitalize()
-        }
-    }
-
-@router.delete("/{script_id}")
+@router.delete("/{script_id}", dependencies=[Security(verify_admin_key)])
 def delete_script(script_id: str):
-    if script_id in SCRIPTS_DB:
-        del SCRIPTS_DB[script_id]
-        return {"status": "deleted"}
-    raise HTTPException(status_code=404, detail="Script not found")
+    if not delete_script_by_id(script_id):
+        raise HTTPException(status_code=404, detail="Script not found")
+    return {"status": "deleted"}
+
+@router.get("/pairing/request", dependencies=[Security(verify_admin_key)])
+def request_pairing_code(tunnel_url: str = "http://localhost:8000"):
+    code = generate_pairing_code(ttl_seconds=60)
+    qr_payload = f"{tunnel_url.strip('/')}?pairing_code={code}"
+    return {
+        "pairing_code": code,
+        "expires_in_seconds": 60,
+        "qr_payload": qr_payload,
+    }
+
+@router.get("/devices", dependencies=[Security(verify_admin_key)])
+def list_devices():
+    return {"devices": get_all_devices()}
+
+@router.delete("/devices/{device_id}", dependencies=[Security(verify_admin_key)])
+def revoke_device(device_id: str):
+    if not revoke_device_by_id(device_id):
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"status": "revoked", "device_id": device_id}
