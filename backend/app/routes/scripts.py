@@ -14,6 +14,7 @@ from app.db import (
     revoke_device_by_id,
     save_script,
 )
+from app.tunnel import get_tunnel_url
 
 router = APIRouter(prefix="/api/v1/scripts", tags=["Scripts Admin"])
 
@@ -62,9 +63,10 @@ def delete_script(script_id: str):
     return {"status": "deleted"}
 
 @router.get("/pairing/request", dependencies=[Security(verify_admin_key)])
-def request_pairing_code(tunnel_url: str = "http://localhost:8000"):
+def request_pairing_code(tunnel_url: Optional[str] = None):
+    active_tunnel = tunnel_url or get_tunnel_url() or "http://localhost:8000"
     code = generate_pairing_code(ttl_seconds=60)
-    qr_payload = f"{tunnel_url.strip('/')}?pairing_code={code}"
+    qr_payload = f"{active_tunnel.rstrip('/')}?pairing_code={code}"
     return {
         "pairing_code": code,
         "expires_in_seconds": 60,
