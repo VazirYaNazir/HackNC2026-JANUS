@@ -11,17 +11,25 @@ const ICONS: Partial<Record<WidgetType, string>> = {
   bar: "memory",
   gauge: "cpu",
 };
-const LABELS = [
-  { key: "short", text: "CPU" },
-  { key: "long", text: "A very long widget label that cannot fit" },
-] as const;
+const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
+  button: "Backup",
+  toggle: "Spotify",
+  slider: "Volume",
+  bar: "Memory",
+  gauge: "CPU",
+};
+const LONG_LABEL = "A very long widget label that cannot fit";
 const READINGS: Record<string, number> = { "demo.short": 42, "demo.long": 83 };
 
 /** Places widgets left-to-right, wrapping at the column count. Returns the laid-out widgets. */
 function section(type: WidgetType, w: number, h: number): Layout {
   let x = 0;
   let y = 0;
-  const widgets = LABELS.map(({ key, text }): Widget => {
+  const labels = [
+    { key: "short", text: SHORT_LABELS[type] ?? type },
+    { key: "long", text: LONG_LABEL },
+  ];
+  const widgets = labels.map(({ key, text }): Widget => {
     if (x + w > GRID.columns) {
       x = 0;
       y += h;

@@ -14,6 +14,7 @@
 .jw {
   position: relative;
   container: jw / size;
+  --jw-font-min: 12px; /* no widget text is ever smaller than this */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -36,15 +37,17 @@
 .jw--selected { outline: 2px solid var(--amber); outline-offset: 3px; }
 
 /* ---------- Shared text ---------- */
-.jw__title { font-size: clamp(12px, 22cqh, 14px); font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; }
-.jw__heading { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.jw__title { font-size: clamp(var(--jw-font-min), 22cqh, 14px); font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; }
+.jw__heading { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
 .jw__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jw__ico { flex: none; width: 16px; height: 16px; }
+.jw__ico { flex: none; align-self: center; width: 16px; height: 16px; }
 .jw__row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
 .jw__row > .jw__heading { flex: 1; }
-.jw__readout { flex: none; font-family: var(--font-mono); font-size: clamp(12px, 22cqh, 14px); color: var(--cyan); }
+.jw__readout { flex: none; font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 22cqh, 14px); color: var(--cyan); }
 .jw__readout--amber { color: var(--amber); }
-.jw__hint { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.jw__readout--warn { color: var(--amber); }
+.jw__readout--critical { color: var(--coral); }
+.jw__hint { font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); }
 .jw__hint--green { color: var(--green); }
 .jw__hint--coral { color: var(--coral); }
 
@@ -84,7 +87,7 @@
 
 /* ---------- Button ---------- */
 .jw--button .jw__tap { color: var(--amber); }
-.jw--button .jw__label { font-size: clamp(12px, 24cqh, 16px); font-weight: 600; }
+.jw--button .jw__label { font-size: clamp(var(--jw-font-min), 24cqh, 16px); font-weight: 600; }
 .jw--button .jw__ico { width: clamp(16px, 34cqh, 22px); height: clamp(16px, 34cqh, 22px); }
 
 /* ---------- Toggle ---------- */
@@ -231,12 +234,12 @@
   background: var(--surface);
   box-shadow: var(--neu-raised);
 }
-.jw__big { font-family: var(--font-mono); font-size: clamp(12px, 15cqh, 20px); font-weight: 600; color: var(--text); }
-.jw__big small, .jw__side small { font-size: 12px; color: var(--text-muted); margin-left: 1px; }
+.jw__big { font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 15cqh, 20px); font-weight: 600; color: var(--text); }
+.jw__big small, .jw__side small { font-size: var(--jw-font-min); color: var(--text-muted); margin-left: 1px; }
 .jw__side {
   display: none;
   font-family: var(--font-mono);
-  font-size: clamp(12px, 30cqh, 20px);
+  font-size: clamp(var(--jw-font-min), 30cqh, 20px);
   font-weight: 600;
   color: var(--cyan);
 }
@@ -268,12 +271,12 @@
 
 /* Narrow + short (1x1): stack everything, 12px text. */
 @container jw (max-width: 119px) and (max-height: 99px) {
-  .jw__title, .jw--button .jw__label, .jw__readout { font-size: 12px; }
+  .jw__title, .jw--button .jw__label, .jw__readout { font-size: var(--jw-font-min); }
   .jw--button .jw__tap { flex-direction: column; gap: 2px; padding: 0 6px; }
   .jw--button .jw__label { max-width: 100%; }
   .jw--toggle .jw__tap { flex-direction: column; justify-content: center; gap: 6px; padding: 0 6px; }
   .jw--toggle .jw__heading { flex: none; justify-content: center; }
-  .jw--toggle .jw__ico, .jw--bar .jw__ico { display: none; }
+  .jw--toggle .jw__ico { display: none; }
   .jw__switch { width: 40px; height: 22px; border-radius: 11px; }
   .jw__knob { top: 3px; left: 3px; width: 16px; height: 16px; }
   .jw__switch--on .jw__knob { transform: translateX(18px); }
@@ -304,6 +307,28 @@
   .jw--gauge .jw__gauge { display: none; }
   .jw--gauge .jw__heading { align-self: end; }
   .jw--gauge .jw__ico { display: none; }
+}
+
+/*
+ * 1x1: if the label does not fit at the minimum size (Frame sets data-clipped), hide it and show the
+ * icon for inputs, or a larger value for dials. The label stays in aria-label.
+ */
+@container jw (max-width: 119px) and (max-height: 99px) {
+  .jw--icon[data-clipped] .jw__label,
+  .jw--gauge[data-clipped] .jw__label,
+  .jw--bar.jw--icon .jw__label {
+    position: absolute;
+    left: 6px;
+    max-width: calc(100% - 12px);
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .jw--bar.jw--icon .jw__row { align-items: center; }
+  .jw--button[data-clipped] .jw__ico { width: 24px; height: 24px; }
+  .jw--toggle.jw--icon[data-clipped] .jw__ico { display: inline-block; width: 20px; height: 20px; }
+  .jw--gauge[data-clipped] .jw__side { font-size: clamp(20px, 40cqh, 26px); }
 }
 
 /* Tall button (2x2): icon over a label that may wrap to two lines. */

@@ -10,10 +10,12 @@ export default function App() {
   return (
     <>
       {gallery ? <Gallery /> : <PanelScreen layout={mockLayout} data={mockData} initialValues={mockValues} />}
-      <nav className="app-nav">
-        <a href="/" aria-current={gallery ? undefined : "page"}>Panel</a>
-        <a href="/?gallery" aria-current={gallery ? "page" : undefined}>Gallery</a>
-      </nav>
+      {import.meta.env.DEV && (
+        <nav className="app-nav">
+          <a href="/" aria-current={gallery ? undefined : "page"}>Panel</a>
+          <a href="/?gallery" aria-current={gallery ? "page" : undefined}>Gallery</a>
+        </nav>
+      )}
     </>
   );
 }
