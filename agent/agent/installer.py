@@ -1,5 +1,6 @@
 
 import hashlib
+import json
 import os
 import platform
 import tarfile
@@ -9,6 +10,42 @@ import zipfile
 from pathlib import Path
 
 VERSION = "0.15.2"
+CACHE_RECEIPT = ".janus-verified.json"
+
+
+def toolchain_digest(root: Path) -> str:
+    """Cover the compiler and its support files, without following external links."""
+    if root.is_symlink():
+        raise RuntimeError("Cached toolchain root must not be a symlink")
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if relative == CACHE_RECEIPT:
+            continue
+        digest.update(relative.encode("utf-8") + b"\0")
+        if path.is_symlink():
+            if not path.resolve().is_relative_to(root.resolve()):
+                raise RuntimeError("Cached toolchain contains an external link")
+            digest.update(b"link\0" + str(path.readlink()).encode("utf-8"))
+        elif path.is_file():
+            with path.open("rb") as file:
+                while data := file.read(1024 * 1024):
+                    digest.update(data)
+        else:
+            digest.update(b"directory")
+    return digest.hexdigest()
+
+
+def cache_verified(root: Path, release_hash: str) -> bool:
+    try:
+        record = root / CACHE_RECEIPT
+        if record.is_symlink() or record.stat().st_size > 4096:
+            return False
+        receipt = json.loads(record.read_text())
+        return (receipt["version"] == VERSION and receipt["release_sha256"] == release_hash
+                and receipt["toolchain_sha256"] == toolchain_digest(root))
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
 
 # Official SHA-256 checksums from ziglang.org
 RELEASES = {
@@ -83,7 +120,7 @@ def install_zig() -> Path:
     compiler = destination / executable
 
     # Reuse previous installation
-    if compiler.is_file():
+    if compiler.is_file() and cache_verified(destination, expected_hash):
         return compiler
 
     print(f"Installing Zig {VERSION} locally...")
@@ -137,7 +174,22 @@ def install_zig() -> Path:
                     "Compiler not found in archive"
                 )
 
-            extracted.rename(destination)
+            verified_tree = toolchain_digest(extracted)
+            if destination.exists():
+                # Older installations have no receipt. Re-verify them against
+                # the checksum-verified release, preserving existing files.
+                if toolchain_digest(destination) != verified_tree:
+                    raise RuntimeError("Cached compiler integrity check failed; configure a trusted system compiler or replace the cache")
+            else:
+                extracted.rename(destination)
+            with tempfile.NamedTemporaryFile(mode="w", dir=destination, prefix=".janus-receipt-", delete=False) as record:
+                json.dump({"version": VERSION, "release_sha256": expected_hash,
+                           "toolchain_sha256": verified_tree}, record)
+                record_path = Path(record.name)
+            try:
+                record_path.replace(destination / CACHE_RECEIPT)
+            finally:
+                record_path.unlink(missing_ok=True)
 
     except (
         OSError,

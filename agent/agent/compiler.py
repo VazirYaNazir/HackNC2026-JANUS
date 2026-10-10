@@ -1,16 +1,34 @@
 # test
 import platform
 import shutil
-import subprocess
 import tempfile
 
 from dataclasses import dataclass
 from pathlib import Path
 
 from .installer import install_zig
+from .process import run_bounded
+
+
+@dataclass(frozen=True)
+class CompileResult:
+    compiler: str
+    returncode: int | None
+    stdout: str
+    stderr: str
+    elapsed_ms: int
+    executable_exists: bool
+    reason: str | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.returncode == 0 and self.executable_exists and self.reason is None
+
 
 class CompilerError(RuntimeError):
-    pass
+    def __init__(self, message, result: CompileResult | None = None):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass(frozen=True)
@@ -19,13 +37,12 @@ class CCompiler:
     path: str
     system: str
 
-    def compile(
+    def command(
         self,
         source: Path,
         output: Path,
-        timeout: int = 30,
         link_args: tuple[str, ...] = (),
-    ) -> None:
+    ) -> list[str]:
 
         if self.name == "msvc":
             # Microsoft Visual C++ compiler
@@ -57,25 +74,29 @@ class CCompiler:
             command.extend(link_args)
 
 
-        try:
-            result = subprocess.run(
-                command,
-                cwd=source.parent,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+        return command
 
-        except subprocess.TimeoutExpired as exc:
-            raise CompilerError(
-                "C compilation timed out"
-            ) from exc
+    def compile_detailed(self, source: Path, output: Path, timeout: int = 30,
+                         link_args: tuple[str, ...] = (), diagnostic_limit: int = 65536) -> CompileResult:
+        """Trusted source/toolchain path. Generated source must use a verified build boundary."""
+        output.unlink(missing_ok=True)
+        result = run_bounded(self.command(source, output, link_args), cwd=source.parent,
+                             timeout=timeout, stdout_limit=diagnostic_limit, stderr_limit=diagnostic_limit)
+        exists = output.is_file() and not output.is_symlink()
+        reason = ("COMPILER_UNAVAILABLE" if result.unavailable else "COMPILE_TIMEOUT" if result.timed_out
+                  else "RESOURCE_LIMIT" if result.output_limited else "COMPILE_ERROR" if result.returncode != 0
+                  else "COMPILER_UNAVAILABLE" if not exists else None)
+        if reason:
+            output.unlink(missing_ok=True)
+        return CompileResult(self.name, result.returncode, result.stdout, result.stderr,
+                             result.elapsed_ms, exists, reason)
 
-        if result.returncode != 0:
-            raise CompilerError(
-                f"Compilation failed:\n"
-                f"{result.stderr or result.stdout}"
-            )
+    def compile(self, source: Path, output: Path, timeout: int = 30,
+                link_args: tuple[str, ...] = ()) -> CompileResult:
+        result = self.compile_detailed(source, output, timeout, link_args)
+        if not result.success:
+            raise CompilerError(f"Compilation failed ({result.reason}):\n{result.stderr or result.stdout}", result)
+        return result
 
 
 def detect_compiler() -> CCompiler:
