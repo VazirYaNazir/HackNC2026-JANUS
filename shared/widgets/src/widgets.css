@@ -344,7 +344,7 @@
   overflow: auto;
   border-radius: var(--radius-small);
   box-shadow: var(--neu-inset-sm);
-  font-family: var(--font-mono);
+  font-family: "Courier New", Courier, monospace;
   font-size: var(--jw-font-min);
   line-height: 1.5;
   color: var(--text-muted);
