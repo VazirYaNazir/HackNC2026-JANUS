@@ -36,3 +36,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+**/.venv/
+**/.env
+**/__pycache__/
+*.pyc
+.DS_Store
+*.db

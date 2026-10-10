@@ -1,11 +1,70 @@
+import os
+import threading
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
+from app.db import init_db
 from app.routes.agent import router as agent_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
 
-app = FastAPI(title="HackNC Backend")
+# ==========================================
+# 1. Admin API (Port 8001 - Localhost only)
+# ==========================================
+admin_app = FastAPI(title="HackNC Admin Backend (Builder UI)")
+
+admin_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+admin_app.include_router(scripts_router)
+
+
+@admin_app.get("/health")
+async def admin_health():
+    return {"status": "ok", "service": "admin"}
+
+
+# ==========================================
+# 2. Public API (Port 8000 - Cloudflare Tunnel)
+# ==========================================
+admin_server: uvicorn.Server | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global admin_server
+
+    # Initialize SQLite database tables
+    init_db()
+
+    # Launch Admin API strictly bound to localhost:8001
+    admin_host = os.getenv("ADMIN_HOST", "127.0.0.1")
+    admin_port = int(os.getenv("ADMIN_PORT", "8001"))
+
+    admin_config = uvicorn.Config(
+        admin_app,
+        host=admin_host,
+        port=admin_port,
+        log_level="info",
+    )
+    admin_server = uvicorn.Server(admin_config)
+    admin_thread = threading.Thread(target=admin_server.run, daemon=True)
+    admin_thread.start()
+
+    yield
+
+    if admin_server is not None:
+        admin_server.should_exit = True
+
+
+app = FastAPI(title="HackNC Public Backend (Mobile / Tunnel)", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,11 +74,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(agent_router)
+# Only mount Panels and Agent WebSocket routes on the public app
 app.include_router(panels_router)
-app.include_router(scripts_router)
+app.include_router(agent_router)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "public"}
+
+
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
