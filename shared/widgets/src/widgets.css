@@ -190,7 +190,8 @@
 
 /* ---------- Gauge (default = tall: title on top, arc + raised dial below) ---------- */
 .jw--gauge .jw__body { gap: 4px; }
-.jw__gauge {
+.jw__gauge,
+.jw__ringbox {
   --groove-dark: rgba(0, 0, 0, 0.4);
   --groove-light: rgba(255, 255, 255, 0.05);
   position: relative;
@@ -245,6 +246,114 @@
 }
 .jw__side--warn { color: var(--amber); }
 .jw__side--critical { color: var(--coral); }
+
+/* ---------- Shared value text ---------- */
+.jw__val { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 600; color: var(--cyan); }
+.jw__val small { margin-left: 2px; font-size: var(--jw-font-min); font-weight: 600; color: var(--text-muted); }
+.jw__val--warn { color: var(--amber); }
+.jw__val--critical { color: var(--coral); }
+
+/* ---------- Line graph: inset screen with the last 60 readings ---------- */
+.jw--line .jw__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "title value" "screen screen";
+  gap: 4px 8px;
+  padding: 6px 14px 10px;
+}
+.jw--line .jw__heading { grid-area: title; }
+.jw--line .jw__val { grid-area: value; font-size: clamp(var(--jw-font-min), 22cqh, 16px); }
+.jw__screen {
+  grid-area: screen;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  box-shadow: var(--neu-inset-sm);
+}
+.jw__plot { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--cyan); }
+.jw__plot--warn { color: var(--amber); }
+.jw__plot--critical { color: var(--coral); }
+.jw__plot path { vector-effect: non-scaling-stroke; }
+.jw__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 40%, transparent));
+}
+.jw__area { fill: currentColor; stroke: none; opacity: 0.12; }
+
+/* ---------- Ring: full-circle gauge (0-100), same groove and dial as the gauge ---------- */
+.jw--ring .jw__body { gap: 4px; }
+.jw__ring {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  aspect-ratio: 1;
+  max-width: 100%;
+}
+.jw__ring svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.jw__ring .jw__dial { top: 50%; width: 54%; }
+
+/* ---------- Temperature: thermometer + value ---------- */
+.jw--temperature .jw__body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "thermo title" "thermo value";
+  align-content: center;
+  column-gap: 12px;
+  padding: 6px 14px;
+}
+.jw--temperature .jw__heading { grid-area: title; align-self: end; }
+.jw--temperature .jw__val { grid-area: value; align-self: start; font-size: clamp(var(--jw-font-min), 34cqh, 24px); }
+.jw__thermo { grid-area: thermo; display: flex; flex-direction: column; align-items: center; width: 16px; height: calc(100cqh - 12px); }
+.jw__tube {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  width: 10px;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 5px 5px 0 0;
+  box-shadow: var(--neu-inset-sm);
+}
+.jw__mercury { width: 100%; height: var(--pct); background: var(--cyan); transition: height 0.3s ease; }
+.jw__bulb { flex: none; width: 16px; height: 16px; margin-top: -3px; border-radius: 50%; background: var(--cyan); box-shadow: var(--neu-raised-sm); }
+.jw__mercury--warn, .jw__bulb--warn { background: var(--amber); }
+.jw__mercury--critical, .jw__bulb--critical { background: var(--coral); }
+
+/* ---------- Big number ---------- */
+.jw--number .jw__body { justify-content: center; gap: 0; padding: 6px 14px; }
+/* The font shrinks with the text length (--len-u = value + unit characters) so a number never truncates. */
+.jw--number .jw__val {
+  font-size: clamp(var(--jw-font-min), min(40cqh, calc((100cqw - 28px) / (var(--len-u, 4) * 0.62))), 36px);
+  line-height: 1.1;
+}
+
+/* ---------- Log feed: inset monospace box, newest line at the bottom ---------- */
+.jw--log .jw__body { gap: 6px; padding: 8px 12px 12px; }
+.jw__logbox {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-small);
+  box-shadow: var(--neu-inset-sm);
+  font-family: var(--font-mono);
+  font-size: var(--jw-font-min);
+  line-height: 1.5;
+  color: var(--text-muted);
+  scrollbar-width: thin;
+  scrollbar-color: var(--graphite) transparent;
+}
+.jw__logbox:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__logline { overflow-wrap: anywhere; }
+.jw__logline:last-child { color: var(--text); }
 
 /* ---------- Unsupported ---------- */
 .jw--unsupported { box-shadow: var(--neu-inset); }
@@ -316,6 +425,9 @@
 @container jw (max-width: 119px) and (max-height: 99px) {
   .jw--icon[data-clipped] .jw__label,
   .jw--gauge[data-clipped] .jw__label,
+  .jw--ring[data-clipped] .jw__label,
+  .jw--temperature[data-clipped] .jw__label,
+  .jw--number[data-clipped] .jw__label,
   .jw--bar.jw--icon .jw__label {
     position: absolute;
     left: 6px;
@@ -329,6 +441,48 @@
   .jw--button[data-clipped] .jw__ico { width: 24px; height: 24px; }
   .jw--toggle.jw--icon[data-clipped] .jw__ico { display: inline-block; width: 20px; height: 20px; }
   .jw--gauge[data-clipped] .jw__side { font-size: clamp(20px, 40cqh, 26px); }
+  .jw--temperature[data-clipped] .jw__val { font-size: clamp(20px, 40cqh, 26px); }
+  .jw--number[data-clipped] .jw__val { font-size: clamp(var(--jw-font-min), min(52cqh, calc((100cqw - 16px) / (var(--len, 4) * 0.62))), 30px); }
+}
+
+/* Wide + short line graph (4x1): label over value on the left, screen on the right. */
+@container jw (min-width: 260px) and (max-height: 99px) {
+  .jw--line .jw__body {
+    grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+    grid-template-rows: 1fr 1fr;
+    grid-template-areas: "title screen" "value screen";
+    column-gap: 14px;
+    padding: 8px 14px;
+  }
+  .jw--line .jw__heading { align-self: end; }
+  .jw--line .jw__val { align-self: start; font-size: clamp(var(--jw-font-min), 30cqh, 20px); }
+}
+
+/* Tall line graph (4x2): bigger value. */
+@container jw (min-height: 100px) {
+  .jw--line .jw__val { font-size: clamp(14px, 12cqh, 20px); }
+  .jw--line .jw__body { padding: 10px 14px 14px; }
+}
+
+/* 1x1 ring, temperature and number: the value sits in the ring / label over value, no extras. */
+@container jw (max-width: 119px) and (max-height: 99px) {
+  .jw--ring .jw__body { padding: 6px 8px; gap: 2px; }
+  .jw--ring .jw__dial { width: 80%; background: none; box-shadow: none; }
+  .jw--ring .jw__big small { display: none; }
+  .jw--ring .jw__heading { align-self: center; }
+  .jw--temperature .jw__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title" "value";
+    justify-items: center;
+    text-align: center;
+    padding: 6px 8px;
+  }
+  .jw--temperature .jw__thermo { display: none; }
+  .jw--temperature .jw__val { font-size: clamp(var(--jw-font-min), 30cqh, 20px); }
+  .jw--number .jw__body { align-items: center; text-align: center; padding: 6px 8px; }
+  .jw--number .jw__heading { justify-content: center; }
+  .jw--number .jw__val { font-size: clamp(var(--jw-font-min), min(40cqh, calc((100cqw - 16px) / (var(--len, 4) * 0.62))), 36px); }
+  .jw--number .jw__val small { display: none; }
 }
 
 /* Tall button (2x2): icon over a label that may wrap to two lines. */
