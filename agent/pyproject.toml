@@ -6,4 +6,5 @@ dependencies = [
     "google>=3.0.0",
     "numpy>=2.5.3",
     "pynput>=1.8.2",
+    "websockets>=17.2",
 ]

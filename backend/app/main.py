@@ -1,18 +1,24 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from fastapi import FastAPI
-
-app = FastAPI(
-    title="HackNC2026 API",
-    version="0.1.0"
-)
-
-@app.get("/")
-async def root():
-    return {
-        "application": "HackNC2026",
-        "status": "running"
-    }
+app = FastAPI()
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.websocket("/ws/agent")
+async def agent_connection(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        await websocket.send_json({
+            "type": "test",
+            "message": "Hello from the backend!"
+        })
+
+        while True:
+            message = await websocket.receive_json()
+            print("Agent response:", message)
+
+    except WebSocketDisconnect:
+        print("Agent disconnected")
