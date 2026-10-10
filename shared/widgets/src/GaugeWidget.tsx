@@ -1,19 +1,13 @@
 import { Frame } from "./Frame";
+import { polar, sweepPath } from "./arc";
 import WidgetTitle from "./WidgetTitle";
 import { isDialWidget, type WidgetProps } from "./types";
 import { levelOf } from "./level";
 
-/* 270° gauge on a 100x86 viewBox (cropped below the open end of the arc). f runs 0..1 from bottom-left, clockwise. */
-const C = 50;
+/* 270° gauge on a 100x86 viewBox (cropped below the open end of the arc). */
 const R = 40;
-const point = (r: number, f: number) => {
-  const a = ((225 - f * 270) * Math.PI) / 180;
-  return { x: C + r * Math.cos(a), y: C - r * Math.sin(a) };
-};
-const start = point(R, 0);
-const end = point(R, 1);
-const ARC = `M ${start.x} ${start.y} A ${R} ${R} 0 1 1 ${end.x} ${end.y}`;
-const TICKS = Array.from({ length: 11 }, (_, i) => ({ a: point(R + 6.5, i / 10), b: point(R + 9, i / 10) }));
+const ARC = sweepPath(R);
+const TICKS = Array.from({ length: 11 }, (_, i) => ({ a: polar(R + 6.5, i / 10), b: polar(R + 9, i / 10) }));
 
 export default function GaugeWidget(props: WidgetProps) {
   const { widget, value } = props;

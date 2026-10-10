@@ -355,6 +355,130 @@
 .jw__logline { overflow-wrap: anywhere; }
 .jw__logline:last-child { color: var(--text); }
 
+/* ---------- Joystick: inset base, raised knob with an amber center ---------- */
+.jw--joystick .jw__body { gap: 4px; }
+.jw__stickbox { position: relative; flex: 1; min-height: 0; }
+.jw__stick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  aspect-ratio: 1;
+  max-width: 100%;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--neu-inset);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+.jw__stick--active { cursor: grabbing; }
+.jw__stick:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 3px; }
+.jw__stickknob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44%;
+  aspect-ratio: 1;
+  margin: -22% 0 0 -22%;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: var(--neu-raised-sm);
+  /* Knob travel is 28% of the base = 63.6% of the knob's own width. */
+  transform: translate(calc(var(--kx, 0) * 63.6%), calc(var(--ky, 0) * -63.6%));
+  transition: transform 0.18s ease;
+  pointer-events: none;
+}
+.jw__stick--active .jw__stickknob { transition: none; }
+.jw__stickknob::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--amber) 50%, transparent);
+}
+
+/* ---------- D-pad: four raised arrow buttons on a 3x3 grid ---------- */
+.jw--dpad .jw__body { gap: 2px; padding: 6px 12px; }
+.jw__dpad {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  aspect-ratio: 1;
+  max-width: 100%;
+  display: grid;
+  grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+  gap: 2px;
+}
+.jw__dcenter { grid-row: 2; grid-column: 2; margin: 18%; border-radius: 50%; box-shadow: var(--neu-inset-sm); }
+.jw__dbtn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--neu-raised-sm);
+  color: var(--amber);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: box-shadow 0.12s ease;
+}
+/* Visible buttons are ~33px; this extends the touch target to 44px+. */
+.jw__dbtn::after { content: ""; position: absolute; inset: -6px; }
+.jw__dbtn:active, .jw__dbtn--held { box-shadow: var(--neu-inset-sm); }
+.jw__dbtn:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__arrow { width: 60%; height: 60%; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.jw__dbtn--right .jw__arrow { transform: rotate(90deg); }
+.jw__dbtn--down .jw__arrow { transform: rotate(180deg); }
+.jw__dbtn--left .jw__arrow { transform: rotate(270deg); }
+
+/* ---------- Knob: drag vertically, 270 degrees, amber arc ---------- */
+.jw--knob .jw__big { display: none; }
+.jw__arc--amber {
+  stroke: var(--amber);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--amber) 40%, transparent));
+}
+.jw__pointer { position: absolute; inset: 0; transform: rotate(var(--rot, 0deg)); transition: transform 0.12s ease; }
+.jw__pointer::before {
+  content: "";
+  position: absolute;
+  top: 10%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 50%, transparent);
+}
+.jw__surface {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.jw__surface:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__surface[aria-disabled="true"] { cursor: pointer; }
+
 /* ---------- Unsupported ---------- */
 .jw--unsupported { box-shadow: var(--neu-inset); }
 .jw--unsupported .jw__body { justify-content: center; gap: 4px; }
@@ -427,6 +551,7 @@
   .jw--gauge[data-clipped] .jw__label,
   .jw--ring[data-clipped] .jw__label,
   .jw--temperature[data-clipped] .jw__label,
+  .jw--knob[data-clipped] .jw__label,
   .jw--number[data-clipped] .jw__label,
   .jw--bar.jw--icon .jw__label {
     position: absolute;
@@ -483,6 +608,18 @@
   .jw--number .jw__heading { justify-content: center; }
   .jw--number .jw__val { font-size: clamp(var(--jw-font-min), min(40cqh, calc((100cqw - 16px) / (var(--len, 4) * 0.62))), 36px); }
   .jw--number .jw__val small { display: none; }
+}
+
+/* 1x1 joystick: no room for a label, the base fills the tile (50px, above the 44px minimum). */
+@container jw (max-width: 119px) and (max-height: 99px) {
+  .jw--joystick .jw__body { padding: 6px; }
+  .jw--joystick .jw__heading { display: none; }
+  /* 1x1 knob: the value sits in the ring, like the ring widget. */
+  .jw--knob .jw__body { padding: 6px 8px; gap: 2px; }
+  .jw--knob .jw__row { justify-content: center; }
+  .jw--knob .jw__readout, .jw--knob .jw__pointer { display: none; }
+  .jw--knob .jw__dial { width: 80%; background: none; box-shadow: none; }
+  .jw--knob .jw__big { display: inline; font-size: var(--jw-font-min); }
 }
 
 /* Tall button (2x2): icon over a label that may wrap to two lines. */

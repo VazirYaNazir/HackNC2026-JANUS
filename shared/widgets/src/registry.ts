@@ -3,7 +3,10 @@ import type { WidgetType } from "@janus/schema";
 import BarWidget from "./BarWidget";
 import BigNumberWidget from "./BigNumberWidget";
 import ButtonWidget from "./ButtonWidget";
+import DPadWidget from "./DPadWidget";
 import GaugeWidget from "./GaugeWidget";
+import JoystickWidget from "./JoystickWidget";
+import KnobWidget from "./KnobWidget";
 import LineGraphWidget from "./LineGraphWidget";
 import LogFeedWidget from "./LogFeedWidget";
 import RingWidget from "./RingWidget";
@@ -32,6 +35,9 @@ export const WIDGETS: Partial<Record<WidgetType, WidgetDef>> = {
   button: { component: ButtonWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1), size(2, 2)] },
   toggle: { component: ToggleWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1)] },
   slider: { component: SliderWidget, defaultSize: size(2, 1), sizes: [size(2, 1), size(4, 1)] },
+  joystick: { component: JoystickWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 2)] },
+  dpad: { component: DPadWidget, defaultSize: size(2, 2), sizes: [size(2, 2)] },
+  knob: { component: KnobWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 2)] },
   bar: { component: BarWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1)] },
   gauge: { component: GaugeWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 1), size(2, 2)] },
   line: { component: LineGraphWidget, defaultSize: size(4, 1), sizes: [size(2, 1), size(4, 1), size(4, 2)] },

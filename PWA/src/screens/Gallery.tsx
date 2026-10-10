@@ -18,6 +18,9 @@ const ICONS: Partial<Record<WidgetType, string>> = {
   temperature: "thermometer",
   number: "monitor",
   log: "terminal",
+  joystick: "monitor",
+  dpad: "play",
+  knob: "sun",
 };
 const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
   button: "Backup",
@@ -30,6 +33,9 @@ const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
   temperature: "GPU Temp",
   number: "Processes",
   log: "Agent Log",
+  joystick: "Mouse",
+  dpad: "Arrows",
+  knob: "Brightness",
 };
 const LONG_LABEL = "A very long widget label that cannot fit";
 const UNITS: Partial<Record<WidgetType, string>> = { gauge: "%", bar: "%", ring: "%", line: "%", number: "req/s" };
@@ -121,11 +127,18 @@ function section(type: WidgetType, w: number, h: number): Layout {
 
 export default function Gallery() {
   const data = useTicker();
+  // ?edit renders every widget in edit mode: taps select, nothing triggers.
+  const edit = new URLSearchParams(window.location.search).has("edit");
+  const [lastInput, setLastInput] = useState<string>("none yet");
   const [values, setValues] = useState<Record<string, WidgetValue>>(() => {
     const initial: Record<string, WidgetValue> = {};
     for (const type of WIDGET_TYPES) {
       for (const { w, h } of WIDGETS[type]?.sizes ?? []) {
         if (type === "toggle") initial[`toggle-${w}x${h}-long`] = true;
+        if (type === "knob") {
+          initial[`knob-${w}x${h}-short`] = 40;
+          initial[`knob-${w}x${h}-long`] = 75;
+        }
         if (type === "slider") {
           initial[`slider-${w}x${h}-short`] = 30;
           initial[`slider-${w}x${h}-long`] = 70;
@@ -139,6 +152,7 @@ export default function Gallery() {
     <main className="gallery" style={{ padding: `${GRID.padding}px` }}>
       <h1 className="gallery__title">Widget gallery</h1>
       <p className="gallery__note">Dials update every second with mock data.</p>
+      <p className="gallery__last" aria-live="off">Last input: {lastInput}</p>
       {WIDGET_TYPES.map((type) => (
         <section key={type} className="gallery__type">
           <h2>{type}</h2>
@@ -150,9 +164,12 @@ export default function Gallery() {
               </h3>
               <PanelGrid
                 layout={section(type, w, h)}
+                mode={edit ? "edit" : "live"}
                 values={values}
                 data={data}
+                onSelect={(id) => setLastInput(`select ${id}`)}
                 onTrigger={(widget, value) => {
+                  setLastInput(`${widget.id} ${JSON.stringify(value)}`);
                   if (value !== undefined) setValues((prev) => ({ ...prev, [widget.id]: value }));
                 }}
               />

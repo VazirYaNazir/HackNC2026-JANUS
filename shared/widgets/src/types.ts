@@ -1,6 +1,12 @@
 import { isInput, type DialWidget, type InputWidget, type RunState, type Widget } from "@janus/schema";
 
-export type WidgetValue = number | string | boolean;
+/** Joystick position, each axis -1..1 (y is up). */
+export interface Vec2 {
+  x: number;
+  y: number;
+}
+
+export type WidgetValue = number | string | boolean | Vec2;
 
 export interface WidgetProps {
   widget: Widget;
