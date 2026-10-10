@@ -1,55 +1,56 @@
+"""Local native-tool commands and an authenticated live backend connection."""
+import argparse
+import asyncio
+import os
+import subprocess
+import sys
 
-from .compiler import detect_compiler, CompilerError
-from .executor import execute_c, ExecutionError
-from .installer import install_zig
-
-
-TEST_CODE = r"""
-#include <stdio.h>
-
-int main(void) {
-    printf("Hello from native C execution!\n");
-    return 0;
-}
-"""
+from .compiler import CompilerError
+from .native import TOOLS, build_tools
 
 
-def main():
-    print("Starting HackNC Laptop Agent")
+def parser() -> argparse.ArgumentParser:
+    cli = argparse.ArgumentParser(description="Janus laptop tools (macOS / Windows)")
+    commands = cli.add_subparsers(dest="command", required=True)
+    commands.add_parser("build", help="Compile all five standalone tools")
+    run = commands.add_parser("run", help="Build and run one tool; JSON Lines on stdout")
+    run.add_argument("tool", choices=TOOLS)
+    run.add_argument("args", nargs=argparse.REMAINDER)
+    stream = commands.add_parser("stream", help="Stream telemetry and receive backend commands")
+    stream.add_argument("--url", default=os.getenv("AGENT_BACKEND_URL"))
+    stream.add_argument("--screen", action="store_true", help="Enable primary-screen JPEG streaming")
+    stream.add_argument("--screen-interval", type=int, default=1000)
+    stream.add_argument("--min-cpu", type=float, default=1)
+    stream.add_argument("--min-ram-mb", type=float, default=100)
+    stream.add_argument("--temperature-file", help="Optional local sensor-provider file, Celsius")
+    return cli
 
-    # Step 1: Detect OS and configure compiler
+
+def main(argv=None) -> int:
+    cli = parser()
+    options = cli.parse_args(argv)
     try:
-        compiler = detect_compiler()
-
-    except CompilerError as error:
-        print(f"Compiler setup failed:\n{error}")
+        if options.command == "build":
+            for name, path in build_tools().items():
+                print(f"{name}: {path}")
+            return 0
+        if options.command == "run":
+            binary = build_tools((options.tool,))[options.tool]
+            args = options.args[1:] if options.args[:1] == ["--"] else options.args
+            return subprocess.call([str(binary), *args])
+        from .bridge import run_bridge, validate_options
+        validate_options(options)
+        token = os.getenv("AGENT_TOKEN")
+        if not token:
+            cli.error("Set AGENT_TOKEN in your local environment (never pass it on the command line)")
+        binaries = build_tools()
+        asyncio.run(run_bridge(options, binaries, token))
+        return 0
+    except KeyboardInterrupt:
+        return 130
+    except (CompilerError, OSError, ValueError) as error:
+        print(f"Agent error: {error}", file=sys.stderr)
         return 1
-
-    print(f"Operating System: {compiler.system}")
-    print(f"C Compiler: {compiler.name}")
-    print(f"Compiler Path: {compiler.path}")
-
-    # Step 2: Verify local C execution
-    try:
-        result = execute_c(
-            source_code=TEST_CODE,
-            compiler=compiler,
-        )
-
-    except (CompilerError, ExecutionError) as error:
-        print(f"Execution failed: {error}")
-        return 1
-
-    print("\nExecution Result:")
-    print(f"Exit Code: {result.returncode}")
-    print(f"STDOUT: {result.stdout}")
-    print(f"STDERR: {result.stderr}")
-
-    if result.returncode != 0:
-        return 1
-
-    print("Agent initialized successfully")
-    return 0
 
 
 if __name__ == "__main__":

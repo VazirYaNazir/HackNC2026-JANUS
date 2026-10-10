@@ -24,6 +24,7 @@ class CCompiler:
         source: Path,
         output: Path,
         timeout: int = 30,
+        link_args: tuple[str, ...] = (),
     ) -> None:
 
         if self.name == "msvc":
@@ -32,10 +33,13 @@ class CCompiler:
                 self.path,
                 "/nologo",
                 "/TC",
+                "/std:c11",
                 str(source),
                 f"/Fe:{output}",
                 f"/Fo:{output.with_suffix('.obj')}",
             ]
+            if link_args:
+                command.extend(["/link", *link_args])
 
         else:
             command = [self.path]
@@ -50,6 +54,7 @@ class CCompiler:
                 "-o",
                 str(output),
             ])
+            command.extend(link_args)
 
 
         try:
