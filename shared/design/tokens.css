@@ -1,0 +1,21 @@
+:root {
+  /* accents */
+  --amber: #F5A524; --amber-light: #FFC35A; --amber-ink: #1A1300;
+  --cyan: #5BC8E8;  --cyan-light: #8FDDF3;
+  --green: #4ADE80;
+  --coral: #F0605A; --coral-light: #F38C87;
+  --graphite: #3A3F4A;
+
+  /* neumorphic surface */
+  --surface: #1F2229; --surface-raised: #262A32;
+  --text: #E4E7EC;    --text-muted: #A9B0BB;
+  --neu-raised: -5px -5px 12px rgba(255,255,255,0.045), 6px 6px 14px rgba(0,0,0,0.6);
+  --neu-raised-sm: -2px -2px 5px rgba(255,255,255,0.06), 3px 3px 7px rgba(0,0,0,0.65);
+  --neu-inset: inset 4px 4px 9px rgba(0,0,0,0.6), inset -4px -4px 9px rgba(255,255,255,0.045);
+  --neu-inset-sm: inset 2px 2px 4px rgba(0,0,0,0.65), inset -2px -2px 4px rgba(255,255,255,0.04);
+
+  /* shape + type */
+  --radius-widget: 18px; --radius-small: 16px;
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+}

@@ -1,0 +1,1 @@
+export const GRID = { columns: 4, rowHeight: 62, gap: 12, padding: 18 } as const;

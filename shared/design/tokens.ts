@@ -1,0 +1,1 @@
+export const role = { input: "amber", data: "cyan", on: "green", danger: "coral" } as const;
