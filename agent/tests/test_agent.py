@@ -15,8 +15,22 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
 from agent.bridge import Outbox, command_line, connected_session, validate_options
-from agent.compiler import CCompiler
+from agent.compiler import CCompiler, detect_compiler
 from agent.native import ROOT, TOOLS, link_arguments
+
+
+class NativeBuildTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform in ("darwin", "win32"), "Requires a macOS or Windows SDK")
+    def test_all_tools_build_against_native_sdk(self):
+        # Compile fresh outputs to catch SDK header/link failures, even if the
+        # normal builder already has cached executables.
+        compiler = detect_compiler()
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in TOOLS:
+                with self.subTest(tool=name):
+                    binary = Path(tmp) / (name + (".exe" if sys.platform == "win32" else ""))
+                    compiler.compile(ROOT / "native" / f"{name}.c", binary, timeout=120, link_args=link_arguments(name, compiler))
+                    self.assertTrue(binary.is_file())
 
 
 class CommandTests(unittest.TestCase):

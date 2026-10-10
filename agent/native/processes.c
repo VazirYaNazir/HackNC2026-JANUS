@@ -1,6 +1,13 @@
 /* Standalone Janus native tool. JSON Lines on stdout; diagnostics on stderr.
  * Build commands and wire protocol are in agent/README.md. */
+/* Darwin SDK headers need BSD types even when compiling in C11 mode. */
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
+#endif
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #ifndef _WIN32_WINNT
@@ -131,6 +138,7 @@ static int snapshot(int all) {
     CloseHandle(snap);return 1;
 }
 #elif defined(__APPLE__)
+#include <sys/types.h>
 #include <libproc.h>
 #include <sys/proc_info.h>
 static int snapshot(int all) {

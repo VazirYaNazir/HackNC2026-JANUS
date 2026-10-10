@@ -192,7 +192,9 @@ uv run --no-sync python -m unittest discover -s tests -v
 The tests exercise real subprocess pipes and a local WebSocket server, command
 validation/acknowledgements, existing job compatibility, slow-consumer sample
 coalescing, subprocess cleanup, and platform-independent C filtering/JSON
-logic. They do not simulate successful native OS calls. Windows x86-64 builds
+logic. On macOS and Windows, an additional test compiles all five tools against
+the installed native SDK with fresh outputs; this test is skipped on Linux.
+They do not simulate successful native OS calls. Windows x86-64 builds
 were cross-compiled from Linux with Zig 0.15.2. macOS SDK compilation, MSVC
 compilation, hardware sensors, mouse input, audio devices, and desktop capture
 must still be verified on target machines. On each target, build all tools;
