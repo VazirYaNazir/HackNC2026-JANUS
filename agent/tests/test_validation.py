@@ -20,48 +20,8 @@ from agent.isolation import IsolationBoundary, REQUIRED_GUARANTEES, ResourceLimi
 from agent.jobs import ValidationService
 from agent.installer import CACHE_RECEIPT, VERSION, cache_verified, toolchain_digest
 from agent.process import ProcessResult, run_bounded
-from agent.validation import ExecutionPolicy, Fixture, Job, MAX_SOURCE_BYTES, load_policies, sanitize_diagnostics, validate_job
-
-SOURCE = "int main(void) { return 0; }"
-COMPILER = CCompiler("clang", "/not-executed/clang", "Darwin")
-LOCAL = ("Darwin", "arm64")
-
-
-def job(job_id="job-123", source=SOURCE, **fields):
-    return {"type": "validate_job", "job_id": job_id, "attempt": 1, "language": "c11", "source": source,
-            "operation": "compute", "platform": "Darwin", "architecture": "arm64", "capabilities": [], "dependencies": [], **fields}
-
-
-class SimulatedBoundary(IsolationBoundary):
-    """Tests only: simulate worker replies, never invoke a compiler or native executable."""
-    build_guarantees = REQUIRED_GUARANTEES
-    run_guarantees = REQUIRED_GUARANTEES
-    run_capabilities = frozenset({"files.write", "desktop.mouse"})
-
-    def __init__(self, compilations=(), executions=()):
-        self.compilations = list(compilations)
-        self.executions = list(executions)
-        self.sources, self.runs, self.directories = [], [], []
-
-    async def compile(self, compiler, source, output, limits, link_args):
-        self.sources.append(source.read_text())
-        self.directories.append(source.parent)
-        outcome = self.compilations.pop(0) if self.compilations else None
-        if isinstance(outcome, BaseException):
-            raise outcome
-        if outcome:
-            if isinstance(outcome, CompileResult):
-                return outcome
-            return CompileResult("clang", 1, "", outcome, 1, False, "COMPILE_ERROR")
-        output.write_bytes(b"simulated-not-executable")
-        return CompileResult("clang", 0, "", "", 1, True)
-
-    async def run(self, executable, stdin, limits, capabilities):
-        self.runs.append((executable, stdin, capabilities))
-        outcome = self.executions.pop(0) if self.executions else ProcessResult(0)
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
+from agent.validation import ExecutionPolicy, Fixture, MAX_SOURCE_BYTES, load_policies, sanitize_diagnostics, validate_job
+from tests.support import COMPILER, LOCAL, SOURCE, SimulatedBoundary, job
 
 
 class ValidationTests(unittest.IsolatedAsyncioTestCase):

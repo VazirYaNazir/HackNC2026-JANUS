@@ -1,2 +1,6 @@
 .native-bin/
 .validation-policy*.json
+.coverage*
+htmlcov/
+coverage.json
+coverage.xml

@@ -1,4 +1,5 @@
 """Bounded capture for trusted toolchain commands; this is NOT an OS sandbox."""
+import asyncio
 import os
 import signal
 import subprocess
@@ -17,11 +18,34 @@ class ProcessResult:
     timed_out: bool = False
     output_limited: bool = False
     unavailable: bool = False
+    cancelled: bool = False
 
 
-def run_bounded(command, *, cwd, timeout=30, stdout_limit=65536, stderr_limit=65536):
+async def finish_thread(function, *args):
+    """Finish owned file IO before propagating cancellation and deleting its files."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Threads cannot be forcibly cancelled. Windows cannot delete an open
+        # executable, so its hash reader must finish before artifact cleanup.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()
+        raise
+
+
+def run_bounded(command, *, cwd, timeout=30, stdout_limit=65536, stderr_limit=65536, cancel_event=None):
     """Bound memory and wall time; callers still need an OS boundary for untrusted code."""
     start = time.monotonic()
+    if cancel_event is not None and cancel_event.is_set():
+        return ProcessResult(None, cancelled=True)
     kwargs = {"start_new_session": True} if os.name != "nt" else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     try:
         process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
@@ -44,9 +68,13 @@ def run_bounded(command, *, cwd, timeout=30, stdout_limit=65536, stderr_limit=65
     for reader in readers:
         reader.start()
     timed_out = False
+    cancelled = False
     deadline = start + timeout
     try:
         while process.poll() is None and not overflow.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
             if time.monotonic() >= deadline:
                 timed_out = True
                 break
@@ -74,4 +102,4 @@ def run_bounded(command, *, cwd, timeout=30, stdout_limit=65536, stderr_limit=65
         process.wait()
         for reader in readers:
             reader.join(timeout=1)
-    return ProcessResult(process.returncode, buffers[0].decode("utf-8", "replace"), buffers[1].decode("utf-8", "replace"), int((time.monotonic() - start) * 1000), timed_out, overflow.is_set())
+    return ProcessResult(process.returncode, buffers[0].decode("utf-8", "replace"), buffers[1].decode("utf-8", "replace"), int((time.monotonic() - start) * 1000), timed_out, overflow.is_set(), cancelled=cancelled)

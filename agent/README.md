@@ -28,6 +28,9 @@ uv run --no-sync python -m agent.main run volume
 The last command stays running: type `set 35` followed by Enter to set volume,
 or `stop` to exit. Binaries are cached under ignored `.native-bin/`, rebuilt when
 their source or compiler changes, and may be run directly without Python.
+The builder compiles independent tools in up to five threads. Each build stages
+its output before replacing the cache; interruption or failure cancels active
+compiler commands and removes unfinished staging directories.
 
 For streaming, configure `AGENT_TOKEN` securely in the local environment to match
 the backend's agent token; configure `AGENT_BACKEND_URL` to its `/ws/agent` URL.
@@ -156,8 +159,10 @@ The bridge replies after the native API operation:
 {"type":"command_result","stream":"volume","request_id":"volume-42","timestamp_ms":1790000000000,"seq":13,"ok":true,"data":{"value":42.0,"muted":false}}
 ```
 
-Invalid controls return `ok: false` and an `error`. Commands are serialized so
-acknowledgements cannot be assigned to the wrong request. Native control commands
+Invalid controls return `ok: false` and an `error`. Commands for one device stay
+ordered, while mouse and volume use separate workers so a slow acknowledgement
+cannot block the other device or job messages. Each device queue holds at most
+32 pending commands; excess commands return an error. Native control commands
 accept only the actions above. Generated C uses the separate validation protocol
 and requires a local grant and verified isolation before it can be compiled.
 For joystick movement, the acknowledgement means the velocity was accepted by
@@ -203,18 +208,21 @@ using MSVC. No shared local headers or generated C dependencies are required.
 ## Validation
 
 ```sh
-uv run --no-sync python -m unittest discover -s tests -v
+uv sync --locked
+uv run --locked python -m unittest discover -s tests -v
+# Check combined Python statement/branch coverage (99% minimum):
+uv run --locked coverage run -m unittest discover -s tests
+uv run --locked coverage report -m
 ```
 
-The tests exercise real subprocess pipes and a local WebSocket server, command
-validation/acknowledgements, existing job compatibility, slow-consumer sample
-coalescing, subprocess cleanup, and platform-independent C filtering/JSON
-logic. Additional validation tests exercise repair routing, privacy, artifact
-integrity, authorization, and fail-closed isolation gates using a simulated worker;
-they do not establish native sandbox containment. On macOS and Windows, an
-additional test compiles all five tools against
-the installed native SDK with fresh outputs; this test is skipped on Linux.
-They do not simulate successful native OS calls. Windows x86-64 builds
+The suite covers every Python module, portable C logic in all five tools, actual
+subprocess/WebSocket transport, and concurrent execution/cancellation races.
+See the [detailed test matrix and concurrency model](docs/testing.md). Python
+coverage measures both statements and branches; native C coverage is separate.
+Generated-code worker replies are simulated and establish no sandbox containment.
+On macOS/Windows, C harnesses and a separate fresh build use the installed native
+SDK. The SDK build test is skipped on Linux; successful desktop/hardware API calls
+still require target-machine verification. Windows x86-64 builds
 were cross-compiled from Linux with Zig 0.15.2. macOS SDK compilation, MSVC
 compilation, hardware sensors, mouse input, audio devices, and desktop capture
 must still be verified on target machines. On each target, build all tools;

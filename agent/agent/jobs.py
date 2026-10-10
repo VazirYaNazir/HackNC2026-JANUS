@@ -8,16 +8,38 @@ from .validation import ID, ValidationResult, validate_job
 JOB_MESSAGES = frozenset({"validate_job", "code_revision", "execute_job", "cancel_job"})
 
 
+class WorkerPoolBoundary(IsolationBoundary):
+    """Bound simultaneous native workers without occupying slots during repair."""
+    def __init__(self, boundary, slots):
+        self.boundary, self.slots = boundary, slots
+
+    def can_build(self):
+        return self.boundary.can_build()
+
+    def can_run(self, capabilities=frozenset()):
+        return self.boundary.can_run(capabilities)
+
+    async def compile(self, *args):
+        async with self.slots:
+            return await self.boundary.compile(*args)
+
+    async def run(self, *args):
+        async with self.slots:
+            return await self.boundary.run(*args)
+
+
 class ValidationService:
     """Local app configuration and replay ledger survive backend reconnects."""
-    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None):
+    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None, max_parallel=4):
+        if type(max_parallel) is not int or not 1 <= max_parallel <= 4:
+            raise ValueError("Parallel job workers must be between 1 and 4")
         self.compiler = compiler
         self.policies = dict(policies or {})
         self.boundary = boundary or IsolationBoundary()
         self.revision_timeout = revision_timeout
         self.local_platform = local_platform
         self.seen_jobs = set()
-        self.compiling = asyncio.Semaphore(1)
+        self.workers = WorkerPoolBoundary(self.boundary, asyncio.Semaphore(max_parallel))
 
     def connect(self, outbox):
         return ValidationSession(self, outbox)
@@ -84,7 +106,7 @@ class ValidationSession:
         if job_id in self.service.seen_jobs:
             await self.reject(job_id, "DUPLICATE_JOB")
             return
-        if len(self.service.seen_jobs) >= 256 or len(self.tasks) + len(self.results) >= 4:
+        if len(self.service.seen_jobs) >= 256 or len(self.tasks.keys() | self.results.keys()) >= 4:
             await self.reject(job_id, "RESOURCE_LIMIT")
             return
         # Never evict IDs and accidentally permit replay of an approved side effect.
@@ -105,10 +127,9 @@ class ValidationSession:
     async def validate(self, job_id, message):
         result = None
         try:
-            async with self.service.compiling:
-                result = await validate_job(message, self.service.compiler, self.request_revision,
-                                            policy=self.service.policies.get(job_id), boundary=self.service.boundary,
-                                            revision_timeout=self.service.revision_timeout, local_platform=self.service.local_platform)
+            result = await validate_job(message, self.service.compiler, self.request_revision,
+                                        policy=self.service.policies.get(job_id), boundary=self.service.workers,
+                                        revision_timeout=self.service.revision_timeout, local_platform=self.service.local_platform)
             if self.closed:
                 result.close()
                 return
@@ -120,10 +141,12 @@ class ValidationSession:
         except asyncio.CancelledError:
             if result:
                 result.close()
+            self.results.pop(job_id, None)
             raise
         except Exception:
             if result:
                 result.close()
+            self.results.pop(job_id, None)
             await self.emit(ValidationResult(job_id, "VALIDATION_FAILED", "INTERNAL_ERROR").event())
         finally:
             self.tasks.pop(job_id, None)
@@ -131,9 +154,12 @@ class ValidationSession:
     async def execute(self, job_id, result):
         try:
             policy = self.service.policies.get(job_id)
-            if self.closed or policy is None:
+            if self.closed:
                 return
-            outcome = await execute_artifact(result, self.service.boundary, policy, policy.execution_stdin)
+            if policy is None:
+                await self.emit(ExecutionResult("EXECUTION_BLOCKED", "AUTHORIZATION_REQUIRED").event(job_id))
+                return
+            outcome = await execute_artifact(result, self.service.workers, policy, policy.execution_stdin)
             await self.emit(outcome.event(job_id, policy.share_outputs))
         except asyncio.CancelledError:
             raise
@@ -146,6 +172,9 @@ class ValidationSession:
 
     async def close(self):
         self.closed = True
+        for result in self.results.values():
+            if result.artifact:
+                result.artifact.valid = False
         for pending in self.revisions.values():
             pending.cancel()
         tasks = list(self.tasks.values())

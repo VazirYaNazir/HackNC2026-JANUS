@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .compiler import CCompiler, CompileResult
 from .isolation import BoundaryUnavailable, IsolationBoundary, ResourceLimitExceeded, ResourceLimits
+from .process import finish_thread
 
 MAX_SOURCE_BYTES = 128 * 1024
 MAX_ATTEMPTS = 3
@@ -18,7 +19,7 @@ NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
 STANDARD_HEADERS = frozenset("assert.h complex.h ctype.h errno.h fenv.h float.h inttypes.h iso646.h limits.h locale.h math.h setjmp.h signal.h stdalign.h stdarg.h stdatomic.h stdbool.h stddef.h stdint.h stdio.h stdlib.h stdnoreturn.h string.h tgmath.h threads.h time.h uchar.h wchar.h wctype.h".split())
 CAPABILITIES = frozenset({"files.read", "files.write", "network", "external.send", "desktop.mouse", "desktop.screen", "audio.volume", "process.inspect", "process.spawn", "admin", "persistent.write"})
 DEPENDENCIES = {
-    "coreaudio": ("Darwin", ("CoreAudio/",), ("CoreAudio", "CoreFoundation")),
+    "coreaudio": ("Darwin", ("CoreAudio/", "CoreFoundation/"), ("CoreAudio", "CoreFoundation")),
     "applicationservices": ("Darwin", ("ApplicationServices/", "CoreGraphics/"), ("ApplicationServices",)),
     "iokit": ("Darwin", ("IOKit/", "CoreFoundation/"), ("IOKit", "CoreFoundation")),
     "imageio": ("Darwin", ("ImageIO/", "CoreGraphics/", "CoreFoundation/"), ("ImageIO", "CoreGraphics", "CoreFoundation")),
@@ -211,7 +212,7 @@ def check_source(source, job, policy):
         "network": r"\b(?:socket|connect|WinHttp\w*|InternetOpen\w*)\s*\(",
     }
     for capability, pattern in checks.items():
-        if capability not in policy.capabilities and re.search(pattern, clean):
+        if capability not in job.capabilities and re.search(pattern, clean):
             raise ValueError("Obvious undeclared capability use")
     return raw
 
@@ -373,7 +374,10 @@ async def validate_job(job, compiler, request_revision, *, policy=None, boundary
             if any(len(value.encode("utf-8", "replace")) > policy.limits.diagnostics_bytes for value in (compiled.stdout, compiled.stderr)):
                 result.status, result.reason = "VALIDATION_FAILED", "RESOURCE_LIMIT"
                 return result
-            if compiled.reason not in (None, "COMPILE_ERROR", "COMPILER_UNAVAILABLE", "COMPILE_TIMEOUT", "RESOURCE_LIMIT"):
+            if compiled.reason not in (None, "COMPILE_ERROR", "COMPILER_UNAVAILABLE", "COMPILE_TIMEOUT", "COMPILE_CANCELLED", "RESOURCE_LIMIT"):
+                result.status, result.reason = "VALIDATION_FAILED", "COMPILER_UNAVAILABLE"
+                return result
+            if compiled.reason is None and (type(compiled.returncode) is not int or (compiled.returncode == 0 and not compiled.executable_exists)):
                 result.status, result.reason = "VALIDATION_FAILED", "COMPILER_UNAVAILABLE"
                 return result
             if compiled.success:
@@ -383,7 +387,8 @@ async def validate_job(job, compiler, request_revision, *, policy=None, boundary
                 if exe.stat().st_size > policy.limits.disk_bytes:
                     result.status, result.reason = "VALIDATION_FAILED", "RESOURCE_LIMIT"
                     return result
-                artifact = CompiledArtifact(exe, digest(exe.read_bytes()), source_hash, job, policy)
+                binary_hash = await finish_thread(lambda: digest(exe.read_bytes()))
+                artifact = CompiledArtifact(exe, binary_hash, source_hash, job, policy)
                 result.artifact, result.build_directory = artifact, directory
                 directory = None
                 await preflight(result, boundary)
@@ -425,7 +430,7 @@ async def validate_job(job, compiler, request_revision, *, policy=None, boundary
 
 
 def valid_output(result, policy):
-    if result.timed_out or result.output_limited or result.unavailable:
+    if result.timed_out or result.output_limited or result.unavailable or result.cancelled:
         return False
     if len(result.stdout.encode()) > policy.limits.stdout_bytes or len(result.stderr.encode()) > policy.limits.stderr_bytes:
         return False
@@ -452,7 +457,7 @@ async def preflight(result, boundary):
     fixtures = policy.fixtures or (Fixture(),)
     try:
         for fixture in fixtures:
-            if not artifact.verify():
+            if not await finish_thread(artifact.verify) or not artifact.valid:
                 raise BoundaryUnavailable("Artifact invalidated")
             outcome = await asyncio.wait_for(boundary.run(artifact.executable, fixture.stdin, policy.limits, frozenset()), policy.limits.run_seconds)
             if not valid_output(outcome, policy) or outcome.returncode != fixture.returncode or (policy.fixtures and outcome.stdout != fixture.stdout):

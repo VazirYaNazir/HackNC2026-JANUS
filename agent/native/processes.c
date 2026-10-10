@@ -168,6 +168,14 @@ static int compare_pid(const void *a,const void *b) {
 static Process *find(Process *items,size_t n,unsigned long pid) {
     Process key={0};key.pid=pid;return bsearch(&key,items,n,sizeof(*items),compare_pid);
 }
+static void measure_cpu(Process *previous,size_t previous_n,uint64_t elapsed) {
+    for(size_t i=0;i<length;i++) {
+        Process *p=&list[i],*old=find(previous,previous_n,p->pid);
+        p->cpu_known=0;p->cpu_percent=0;
+        if(old && p->measured && old->measured && p->birth==old->birth && p->cpu_ns>=old->cpu_ns && elapsed)
+            {p->cpu_percent=100.0*(p->cpu_ns-old->cpu_ns)/(elapsed*1000000.0);p->cpu_known=1;}
+    }
+}
 static Process *parent_of(Process *p) {
     Process *parent=find(list,length,p->ppid);
     /* An OS parent PID can outlive its original process and be reused. */
@@ -213,11 +221,7 @@ int main(int argc,char **argv) {
         pause_ms(interval);
         if(!snapshot(all)) {free(previous);failure("processes","Process snapshot failed",0);return 1;}
         qsort(list,length,sizeof(*list),compare_pid);uint64_t now=monotonic_ms(),elapsed=now-previous_time;previous_time=now;
-        for(size_t i=0;i<length;i++) {
-            Process *p=&list[i],*old=find(previous,previous_n,p->pid);
-            if(old && p->measured && old->measured && p->birth==old->birth && p->cpu_ns>=old->cpu_ns && elapsed)
-                {p->cpu_percent=100.0*(p->cpu_ns-old->cpu_ns)/(elapsed*1000000.0);p->cpu_known=1;}
-        }
+        measure_cpu(previous,previous_n,elapsed);
         free(previous);select_tree(all,root,cpu,ram_mb);
         event_start("telemetry","processes");printf("\"data\":{\"sample_ms\":%llu,\"min_cpu_percent\":%.2f,\"min_ram_bytes\":%.0f,\"processes\":[",(unsigned long long)elapsed,cpu,ram_mb*1048576);
         int comma=0;

@@ -77,13 +77,13 @@ class CCompiler:
         return command
 
     def compile_detailed(self, source: Path, output: Path, timeout: int = 30,
-                         link_args: tuple[str, ...] = (), diagnostic_limit: int = 65536) -> CompileResult:
+                         link_args: tuple[str, ...] = (), diagnostic_limit: int = 65536, *, cancel_event=None) -> CompileResult:
         """Trusted source/toolchain path. Generated source must use a verified build boundary."""
         output.unlink(missing_ok=True)
         result = run_bounded(self.command(source, output, link_args), cwd=source.parent,
-                             timeout=timeout, stdout_limit=diagnostic_limit, stderr_limit=diagnostic_limit)
+                             timeout=timeout, stdout_limit=diagnostic_limit, stderr_limit=diagnostic_limit, cancel_event=cancel_event)
         exists = output.is_file() and not output.is_symlink()
-        reason = ("COMPILER_UNAVAILABLE" if result.unavailable else "COMPILE_TIMEOUT" if result.timed_out
+        reason = ("COMPILE_CANCELLED" if result.cancelled else "COMPILER_UNAVAILABLE" if result.unavailable else "COMPILE_TIMEOUT" if result.timed_out
                   else "RESOURCE_LIMIT" if result.output_limited else "COMPILE_ERROR" if result.returncode != 0
                   else "COMPILER_UNAVAILABLE" if not exists else None)
         if reason:
@@ -92,8 +92,8 @@ class CCompiler:
                              result.elapsed_ms, exists, reason)
 
     def compile(self, source: Path, output: Path, timeout: int = 30,
-                link_args: tuple[str, ...] = ()) -> CompileResult:
-        result = self.compile_detailed(source, output, timeout, link_args)
+                link_args: tuple[str, ...] = (), *, cancel_event=None) -> CompileResult:
+        result = self.compile_detailed(source, output, timeout, link_args, cancel_event=cancel_event)
         if not result.success:
             raise CompilerError(f"Compilation failed ({result.reason}):\n{result.stderr or result.stdout}", result)
         return result
