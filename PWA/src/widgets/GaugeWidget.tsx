@@ -3,7 +3,7 @@ import WidgetTitle from "./WidgetTitle";
 import { isDialWidget, type WidgetProps } from "./types";
 import { levelOf } from "./level";
 
-/* 270° gauge on a 100x100 viewBox, open at the bottom. f runs 0..1 from bottom-left, clockwise. */
+/* 270° gauge on a 100x86 viewBox (cropped below the open end of the arc). f runs 0..1 from bottom-left, clockwise. */
 const C = 50;
 const R = 40;
 const point = (r: number, f: number) => {
@@ -27,7 +27,7 @@ export default function GaugeWidget(props: WidgetProps) {
       <WidgetTitle widget={widget} />
       <div className="jw__gauge">
         <div className="jw__face">
-          <svg viewBox="0 0 100 100" role="img" aria-label={`${widget.label} ${reading ?? "no data"}${unit}`}>
+          <svg viewBox="0 0 100 86" role="img" aria-label={`${widget.label} ${reading ?? "no data"}${unit}`}>
             {TICKS.map((t, i) => (
               <line key={i} className="jw__tick" x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} />
             ))}

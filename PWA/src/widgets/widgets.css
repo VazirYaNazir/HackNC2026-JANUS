@@ -131,7 +131,7 @@
 /* Gauge */
 .jw--gauge { gap: 4px; }
 .jw__gauge {
-  --groove-dark: rgba(0, 0, 0, 0.6);
+  --groove-dark: rgba(0, 0, 0, 0.4);
   --groove-light: rgba(255, 255, 255, 0.05);
   position: relative;
   flex: 1;
@@ -143,7 +143,7 @@
   bottom: 0;
   left: 50%;
   transform: translateX(-50%);
-  aspect-ratio: 1;
+  aspect-ratio: 100 / 86;
   max-width: 100%;
 }
 .jw__face svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -162,9 +162,9 @@
 .jw__arc--critical { color: var(--coral); }
 .jw__dial {
   position: absolute;
-  top: 50%;
+  top: calc(50 / 86 * 100%);
   left: 50%;
-  width: 60%;
+  width: 50%;
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   display: flex;
