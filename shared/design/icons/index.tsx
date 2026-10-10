@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 import {
   Bell, Camera, CircleHelp, Cpu, Folder, Lock, MemoryStick, Mic, Monitor, Moon, Music,
-  Pause, Play, Power, RefreshCw, Save, SkipBack, SkipForward, Sparkles, Sun, Terminal,
+  Pause, Play, Power, RefreshCw, Save, Send, SkipBack, SkipForward, Sparkles, Sun, Terminal,
   Thermometer, Volume2, VolumeX, Wifi, Zap,
   type LucideProps,
 } from "lucide-react";
@@ -18,6 +18,7 @@ export const ICONS = {
   mute: VolumeX,
   mic: Mic,
   power: Power,
+  send: Send,
   refresh: RefreshCw,
   camera: Camera,
   sparkle: Sparkles,

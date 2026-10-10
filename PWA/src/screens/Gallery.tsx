@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GRID } from "@janus/design";
 import { isInput, SCHEMA_VERSION, type Layout, type Widget, type WidgetType } from "@janus/schema";
 import { PanelGrid, WIDGETS, WIDGET_TYPES, type WidgetValue } from "@janus/widgets";
@@ -21,6 +21,8 @@ const ICONS: Partial<Record<WidgetType, string>> = {
   joystick: "monitor",
   dpad: "play",
   knob: "sun",
+  command: "terminal",
+  agent: "sparkle",
 };
 const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
   button: "Backup",
@@ -36,6 +38,8 @@ const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
   joystick: "Mouse",
   dpad: "Arrows",
   knob: "Brightness",
+  command: "Run command",
+  agent: "Gemini",
 };
 const LONG_LABEL = "A very long widget label that cannot fit";
 const UNITS: Partial<Record<WidgetType, string>> = { gauge: "%", bar: "%", ring: "%", line: "%", number: "req/s" };
@@ -69,6 +73,9 @@ const MESSAGES = [
   "wifi signal -52 dBm",
 ];
 const KEYS: Key[] = ["short", "long"];
+const MOCK_SHORT_REPLY = "Your next meeting is at 3pm.";
+const MOCK_LONG_REPLY =
+  "Here is a long answer from the mock agent. It keeps going so the reply line has to clip to one line, or to two lines when the widget is two rows tall.";
 const sourceOf = (type: WidgetType, key: Key) => `demo.${type}.${key}`;
 
 function tick(prev: Record<string, Sample>): Record<string, Sample> {
@@ -127,6 +134,14 @@ function section(type: WidgetType, w: number, h: number): Layout {
 
 export default function Gallery() {
   const data = useTicker();
+  const [states, setStates] = useState<Record<string, string>>(() => ({
+    "agent-4x1-short": MOCK_SHORT_REPLY,
+    "agent-4x1-long": MOCK_LONG_REPLY,
+    "agent-4x2-short": MOCK_SHORT_REPLY,
+    "agent-4x2-long": MOCK_LONG_REPLY,
+  }));
+  const timers = useRef<number[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
   // ?edit renders every widget in edit mode: taps select, nothing triggers.
   const edit = new URLSearchParams(window.location.search).has("edit");
   const [lastInput, setLastInput] = useState<string>("none yet");
@@ -167,9 +182,20 @@ export default function Gallery() {
                 mode={edit ? "edit" : "live"}
                 values={values}
                 data={data}
+                states={states}
                 onSelect={(id) => setLastInput(`select ${id}`)}
                 onTrigger={(widget, value) => {
                   setLastInput(`${widget.id} ${JSON.stringify(value)}`);
+                  if (widget.type === "agent" && typeof value === "string") {
+                    // Mock agent: "thinking" for a moment, then a reply.
+                    setStates((prev) => ({ ...prev, [widget.id]: "running" }));
+                    timers.current.push(
+                      window.setTimeout(() => {
+                        const reply = widget.id.endsWith("long") ? MOCK_LONG_REPLY : `You asked: ${value}`;
+                        setStates((prev) => ({ ...prev, [widget.id]: reply }));
+                      }, 800),
+                    );
+                  }
                   if (value !== undefined) setValues((prev) => ({ ...prev, [widget.id]: value }));
                 }}
               />

@@ -1,4 +1,4 @@
-import { isInput, type DialWidget, type InputWidget, type RunState, type Widget } from "@janus/schema";
+import { isInput, type DialWidget, type InputWidget, type Widget } from "@janus/schema";
 
 /** Joystick position, each axis -1..1 (y is up). */
 export interface Vec2 {
@@ -8,11 +8,14 @@ export interface Vec2 {
 
 export type WidgetValue = number | string | boolean | Vec2;
 
+/** A run state ("running" | "done" | "error"), or for the agent widget, the reply text. */
+export type WidgetState = string;
+
 export interface WidgetProps {
   widget: Widget;
   mode: "edit" | "live";
   value?: WidgetValue;
-  state?: RunState;
+  state?: WidgetState;
   selected?: boolean;
   onSelect?: (id: string) => void;
   onTrigger?: (widget: Widget, value?: WidgetValue) => void;

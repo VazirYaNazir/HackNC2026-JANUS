@@ -1,8 +1,10 @@
 import type { ComponentType } from "react";
 import type { WidgetType } from "@janus/schema";
+import AgentPromptWidget from "./AgentPromptWidget";
 import BarWidget from "./BarWidget";
 import BigNumberWidget from "./BigNumberWidget";
 import ButtonWidget from "./ButtonWidget";
+import CommandWidget from "./CommandWidget";
 import DPadWidget from "./DPadWidget";
 import GaugeWidget from "./GaugeWidget";
 import JoystickWidget from "./JoystickWidget";
@@ -38,6 +40,8 @@ export const WIDGETS: Partial<Record<WidgetType, WidgetDef>> = {
   joystick: { component: JoystickWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 2)] },
   dpad: { component: DPadWidget, defaultSize: size(2, 2), sizes: [size(2, 2)] },
   knob: { component: KnobWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 2)] },
+  command: { component: CommandWidget, defaultSize: size(4, 1), sizes: [size(2, 1), size(4, 1)] },
+  agent: { component: AgentPromptWidget, defaultSize: size(4, 1), sizes: [size(4, 1), size(4, 2)] },
   bar: { component: BarWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1)] },
   gauge: { component: GaugeWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 1), size(2, 2)] },
   line: { component: LineGraphWidget, defaultSize: size(4, 1), sizes: [size(2, 1), size(4, 1), size(4, 2)] },

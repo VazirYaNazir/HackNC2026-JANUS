@@ -479,6 +479,75 @@
 .jw__surface:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
 .jw__surface[aria-disabled="true"] { cursor: pointer; }
 
+/* ---------- Command / agent prompt: inset field + raised amber send key ---------- */
+.jw--command .jw__body, .jw--agent .jw__body { --field-h: 44px; justify-content: center; gap: 6px; padding: 9px 10px; }
+.jw__send { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; }
+.jw__field {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: var(--field-h);
+  padding: 0 12px;
+  border-radius: var(--radius-small);
+  box-shadow: var(--neu-inset-sm);
+  cursor: text;
+}
+/* The visible field can be 40px; this keeps the touch target at 44px. */
+.jw__field::after { content: ""; position: absolute; inset: -2px 0; }
+.jw__field:focus-within { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__field .jw__ico { color: var(--text-muted); }
+.jw--agent .jw__field .jw__ico { color: var(--amber); }
+.jw__field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px stops iOS from zooming the page when the field is focused */
+  text-overflow: ellipsis;
+}
+.jw__field input::placeholder { color: var(--text-muted); opacity: 0.85; text-overflow: ellipsis; }
+.jw__field input:disabled { cursor: default; }
+.jw__key {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--field-h);
+  height: var(--field-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  box-shadow: var(--neu-raised-sm);
+  color: var(--amber);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: box-shadow 0.12s ease;
+}
+.jw__key::after { content: ""; position: absolute; inset: -2px; }
+.jw__key:active:not(:disabled) { box-shadow: var(--neu-inset-sm); }
+.jw__key:disabled { opacity: 0.45; cursor: default; }
+.jw__key:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__reply {
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--jw-font-min);
+  line-height: 1.1;
+  color: var(--text-muted);
+}
+.jw__reply--error { color: var(--coral); }
+
 /* ---------- Unsupported ---------- */
 .jw--unsupported { box-shadow: var(--neu-inset); }
 .jw--unsupported .jw__body { justify-content: center; gap: 4px; }
@@ -620,6 +689,24 @@
   .jw--knob .jw__readout, .jw--knob .jw__pointer { display: none; }
   .jw--knob .jw__dial { width: 80%; background: none; box-shadow: none; }
   .jw--knob .jw__big { display: inline; font-size: var(--jw-font-min); }
+}
+
+/* One-row agent prompt with a reply: 40px field + one reply line fit in 62px. */
+@container jw (max-height: 99px) {
+  .jw--reply .jw__body { --field-h: 40px; gap: 2px; padding: 4px 10px; }
+}
+
+/* Two-row agent prompt: the reply gets two lines. */
+@container jw (min-height: 100px) {
+  .jw--agent .jw__body { gap: 8px; padding: 12px; }
+  .jw--agent .jw__reply {
+    white-space: normal;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
 }
 
 /* Tall button (2x2): icon over a label that may wrap to two lines. */

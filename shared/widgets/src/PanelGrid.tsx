@@ -1,8 +1,8 @@
 import type { CSSProperties } from "react";
 import { GRID } from "@janus/design";
-import type { Layout, RunState } from "@janus/schema";
+import type { Layout } from "@janus/schema";
 import WidgetView from "./WidgetView";
-import { isInputWidget, type WidgetProps, type WidgetValue } from "./types";
+import { isInputWidget, type WidgetProps, type WidgetState, type WidgetValue } from "./types";
 import "./widgets.css";
 
 export interface PanelGridProps {
@@ -12,8 +12,8 @@ export interface PanelGridProps {
   values?: Record<string, WidgetValue>;
   /** Live readings for dials, keyed by `source`. */
   data?: Record<string, number | string>;
-  /** Run state of inputs, keyed by widget id. */
-  states?: Record<string, RunState>;
+  /** Run state (or the agent's reply) of inputs, keyed by widget id. */
+  states?: Record<string, WidgetState>;
   selectedId?: string | null;
   onSelect?: WidgetProps["onSelect"];
   onTrigger?: WidgetProps["onTrigger"];
