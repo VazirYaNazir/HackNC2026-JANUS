@@ -36,5 +36,5 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - run: uv sync --locked --directory agent
-      - run: uv run --locked --directory agent python -m agent.main build
       - run: uv run --locked --directory agent python -m unittest tests.test_agent
+      - run: uv run --locked --directory agent python -m agent.main build

@@ -95,7 +95,8 @@ class CCompiler:
                 link_args: tuple[str, ...] = (), *, cancel_event=None) -> CompileResult:
         result = self.compile_detailed(source, output, timeout, link_args, cancel_event=cancel_event)
         if not result.success:
-            raise CompilerError(f"Compilation failed ({result.reason}):\n{result.stderr or result.stdout}", result)
+            diagnostics = "\n".join(part for part in (result.stderr, result.stdout) if part)
+            raise CompilerError(f"Compilation failed ({result.reason}):\n{diagnostics}", result)
         return result
 
 
