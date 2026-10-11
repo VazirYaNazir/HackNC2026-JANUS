@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 
 from .isolation import BoundaryUnavailable, ResourceLimitExceeded
+from .process import finish_thread
 from .validation import valid_output
 
 
@@ -41,11 +42,19 @@ async def execute_artifact(validation, boundary, policy, stdin_data=""):
         return ExecutionResult("EXECUTION_BLOCKED", "CAPABILITY_DENIED")
     if not boundary.can_run(artifact.job.capabilities):
         return ExecutionResult("EXECUTION_BLOCKED", "EXECUTION_BOUNDARY_UNAVAILABLE")
-    if not artifact.verify():
+    if not await finish_thread(artifact.verify):
         return ExecutionResult("EXECUTION_BLOCKED", "ARTIFACT_INVALID_OR_CONSUMED")
-    if not isinstance(stdin_data, str) or len(stdin_data.encode()) > policy.limits.stdout_bytes:
+    try:
+        input_valid = isinstance(stdin_data, str) and len(stdin_data.encode("utf-8", "strict")) <= policy.limits.stdout_bytes
+    except UnicodeError:
+        input_valid = False
+    if not input_valid:
         return ExecutionResult("EXECUTION_BLOCKED", "INPUT_INVALID")
     # Authorization is single-use, even if execution fails or is cancelled.
+    # Recheck after threaded verification so two concurrent callers cannot both
+    # claim the artifact, or claim one invalidated while its hash was read.
+    if not artifact.valid or artifact.consumed:
+        return ExecutionResult("EXECUTION_BLOCKED", "ARTIFACT_INVALID_OR_CONSUMED")
     artifact.consumed = True
     try:
         result = await asyncio.wait_for(boundary.run(artifact.executable, stdin_data, policy.limits, artifact.job.capabilities), policy.limits.run_seconds)

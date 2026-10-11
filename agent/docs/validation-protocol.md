@@ -224,7 +224,14 @@ A revision without a pending repair is rejected. Job IDs cannot be reused across
 reconnections in the same agent process. The replay ledger allows 256 IDs before
 a local restart; it is not a durable ledger across process restarts. Local apps
 must not reissue consumed authorizations after restart. The service retains at
-most four jobs/artifacts and serializes validation, including revision waits.
+most four distinct jobs/artifacts per connection. A shared worker pool allows up
+to four concurrent build/run operations; a local app can lower this through
+`ValidationService(..., max_parallel=1..4)`. Waiting for a backend revision holds
+no worker slot, so another job can progress. Build/run deadlines include time
+waiting for a slot. Artifact hashing uses threads and does not block the receiver.
+Disconnect invalidates ready artifacts immediately and waits for hash readers
+before removing their files, including handles that Windows cannot delete while
+open.
 The WebSocket receiver keeps handling telemetry, existing controls, and ping/add
 jobs while validation waits. Inbound frames are capped at 1 MiB to accommodate
 JSON escaping; decoded source remains capped at 128 KiB.
@@ -244,6 +251,11 @@ network by default, allow only required compiler/SDK inputs and local job files,
 and expose only locally granted runtime paths/handles/APIs. A runtime adapter
 must reject capabilities it cannot safely enforce. A capability name alone does
 not authorize unrestricted filesystem, network, or desktop access.
+Compile/run methods must yield to the event loop while the native worker operates;
+blocking OS calls belong in worker processes or threads. The adapter must support
+concurrent calls with separate job directories and enforce any ordering required
+by conflicting granted resources. The worker pool bounds concurrency but does
+not provide OS isolation.
 
 Defaults are 30 seconds per build, 3 seconds per run, 64 KiB per compiler output
 stream, 64 KiB runtime stdout, 16 KiB runtime stderr, 512 MiB memory, 64 MiB disk,
@@ -252,6 +264,9 @@ descendants; Python deadlines and output checks provide additional guards. On
 timeout, cancellation, or disconnect the adapter must kill and reap its entire
 worker tree before returning. It must protect the artifact against replacement
 between hash verification and execution.
+These are per-worker budgets: four concurrent workers can require up to 2 GiB of
+memory and 64 worker processes. Choose a smaller local parallel limit or smaller
+resource budgets for machines that cannot provide that capacity.
 
 `CCompiler.compile_detailed` and `run_bounded` are used for trusted repository
 sources/compiler probes. They cap capture/time and return detailed local results,
@@ -264,7 +279,7 @@ installation or repair permission is taken from a cloud message.
 
 ## Verification
 
-Run `uv run --no-sync python -m unittest discover -s tests -v` from `agent/`.
+Run `uv run --locked python -m unittest discover -s tests -v` from `agent/`.
 Protocol tests cover bounded repair, scope/revision rejection, diagnostic privacy,
 missing boundaries, fixtures, artifact tampering, single-use execution, local
 output opt-in, timeout/resource handling, and disconnect cleanup. A real local
@@ -272,3 +287,5 @@ WebSocket test handles ping while awaiting a repair. A trusted author-written
 C fixture tests structured compiler results without executing generated code.
 Native SDK builds run only on macOS/Windows and are skipped on Linux. Real worker
 containment and native permissions still require verification on both targets.
+See [the detailed test matrix](testing.md) for per-module coverage and concurrency
+regressions.

@@ -90,9 +90,16 @@ class NativeProcess:
     def __init__(self, name, process, outbox):
         self.name, self.process, self.outbox = name, process, outbox
         self.pending = None
+        self.command_lock = asyncio.Lock()
 
     async def read(self):
-        while line := await self.process.stdout.readline():
+        while True:
+            try:
+                line = await self.process.stdout.readline()
+            except ValueError as error:
+                raise RuntimeError(f"{self.name}: native output exceeds framing limit") from error
+            if not line:
+                break
             try:
                 event = json.loads(line)
                 if not isinstance(event, dict) or event.get("stream") != self.name or event.get("type") not in ("telemetry", "command_result", "error"):
@@ -107,16 +114,17 @@ class NativeProcess:
         raise RuntimeError(f"{self.name}: native process exited")
 
     async def command(self, line):
-        self.pending = asyncio.get_running_loop().create_future()
-        try:
-            self.process.stdin.write(line.encode("ascii"))
-            await self.process.stdin.drain()
-            return await asyncio.wait_for(self.pending, 2)
-        except TimeoutError as error:
-            # A late acknowledgement could otherwise belong to the next command.
-            raise RuntimeError(f"{self.name}: command acknowledgement timed out") from error
-        finally:
-            self.pending = None
+        async with self.command_lock:
+            self.pending = asyncio.get_running_loop().create_future()
+            try:
+                self.process.stdin.write(line.encode("ascii"))
+                await self.process.stdin.drain()
+                return await asyncio.wait_for(self.pending, 2)
+            except TimeoutError as error:
+                # A late acknowledgement could otherwise belong to the next command.
+                raise RuntimeError(f"{self.name}: command acknowledgement timed out") from error
+            finally:
+                self.pending = None
 
     async def close(self):
         if self.process.returncode is not None:
@@ -140,6 +148,28 @@ class NativeProcess:
 
 
 async def receive_commands(websocket, tools, outbox, validation=None):
+    queues = {name: asyncio.Queue(maxsize=32) for name in tools if name in ("volume", "mouse")}
+
+    async def command_worker(name):
+        while True:
+            request_id, line = await queues[name].get()
+            result = await tools[name].command(line)
+            await outbox.result({**result, "request_id": request_id})
+
+    tasks = [asyncio.create_task(command_worker(name)) for name in queues]
+    tasks.append(asyncio.create_task(read_commands(websocket, queues, outbox, validation)))
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def read_commands(websocket, queues, outbox, validation=None):
+    """Keep receiving jobs/revisions while each device drains its ordered queue."""
     async for payload in websocket:
         message = None
         try:
@@ -174,8 +204,10 @@ async def receive_commands(websocket, tools, outbox, validation=None):
             if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
                 raise ValueError("request_id must be a nonempty string of at most 128 characters")
             name, line = command_line(message)
-            result = await tools[name].command(line)
-            await outbox.result({**result, "request_id": request_id})
+            try:
+                queues[name].put_nowait((request_id, line))
+            except asyncio.QueueFull as error:
+                raise ValueError("Too many pending commands for target") from error
         except (ValueError, TypeError, KeyError) as error:
             is_job = isinstance(message, dict) and message.get("type") == "job"
             await outbox.result({
@@ -201,12 +233,18 @@ async def connected_session(websocket, options, binaries, validation_service=Non
     }
     if options.screen:
         args["screen"] = ["--interval", str(options.screen_interval)]
+
+    async def start(name, argv):
+        process = await asyncio.create_subprocess_exec(str(binaries[name]), *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=MAX_LINE)
+        tools[name] = NativeProcess(name, process, outbox)
+        tasks.append(asyncio.create_task(tools[name].read()))
+
+    startups = [asyncio.create_task(start(name, argv)) for name, argv in args.items()]
     try:
-        for name, argv in args.items():
-            process = await asyncio.create_subprocess_exec(str(binaries[name]), *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=MAX_LINE)
-            tools[name] = NativeProcess(name, process, outbox)
-            tasks.append(asyncio.create_task(tools[name].read()))
-        await outbox.result({"type": "agent_hello", "protocol": 1, "streams": list(tools), "commands": ["volume.set", "mouse.move", "mouse.button", "mouse.scroll"],
+        # Let every spawn finish before cleanup even if one fails or the session
+        # is cancelled, so no concurrently started process escapes shutdown.
+        await asyncio.shield(asyncio.gather(*startups))
+        await outbox.result({"type": "agent_hello", "protocol": 1, "streams": list(args), "commands": ["volume.set", "mouse.move", "mouse.button", "mouse.scroll"],
                              "validation": {"protocol": 1, "max_source_bytes": 131072, "max_attempts": 3,
                                             "build_boundary_available": bool(validation_service and validation_service.boundary.can_build()),
                                             "execution_boundary_available": bool(validation_service and validation_service.boundary.can_run())}})
@@ -219,6 +257,7 @@ async def connected_session(websocket, options, binaries, validation_service=Non
                 # A backend can close normally while a final sample is sending.
                 pass
     finally:
+        await asyncio.gather(*startups, return_exceptions=True)
         if validation:
             await validation.close()
         for task in tasks:
