@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { doctor, report } from './doctor.mjs';
 import { ensureCloudflared, BIN_DIR } from './lib/cloudflared.mjs';
-import { ROOT, forgetProcesses, isJanusProcess, isWindows, killLeftovers, killTree, listenerPid, liveAgent, makeFlags, otherOrchestrator, portInUse, processName, readDevices, readEnvFile, recordProcess, run } from './lib/common.mjs';
+import { ROOT, forgetProcesses, isJanusProcess, isWindows, killLeftovers, killTree, listenerPid, liveAgent, makeFlags, otherOrchestrator, portInUse, processName, readDevices, readEnvFile, recordProcess, run, withIpv4First } from './lib/common.mjs';
 
 const flags = makeFlags();
 const only = flags.value('only');
@@ -35,7 +35,7 @@ function track(name, child) {
   recordProcess(key, child.pid);
 }
 
-function launch(name, command, commandArgs, { cwd = ROOT, env = {} } = {}) {
+function launch(name, command, commandArgs, { cwd = ROOT, env = {}, onExit } = {}) {
   const child = spawn(command, commandArgs, { cwd, env: { ...process.env, ...env }, shell: isWindows, detached: !isWindows, stdio: ['ignore', 'pipe', 'pipe'] });
   const prefix = `[${name}] `;
   for (const stream of [child.stdout, child.stderr]) {
@@ -53,6 +53,7 @@ function launch(name, command, commandArgs, { cwd = ROOT, env = {} } = {}) {
       console.log(`${prefix}exited (${code})`);
       // Closing Studio, or losing the backend, ends the session; a crashed agent does not.
       if (name === 'studio' || name === 'backend' || only) void shutdown(code ?? 0);
+      onExit?.(code);
     }
   });
   track(name, child);
@@ -111,6 +112,21 @@ function device() {
   return first;
 }
 
+const RED = '\x1b[1;31m';
+const RESET = '\x1b[0m';
+
+/** Tells the backend the sidecar is gone so Studio shows "iMessage: off" now rather than after the heartbeat timeout. */
+async function markSidecarDown(token) {
+  try {
+    await fetch(`${BACKEND}/api/messaging/heartbeat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ connected: false }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch { /* the backend may be down too; the heartbeat timeout covers that */ }
+}
+
 /** The sidecar only forwards texts; the backend decides everything. Secrets go to the child env, never to logs. */
 async function startImessage() {
   const env = readEnvFile();
@@ -121,7 +137,15 @@ async function startImessage() {
   await run('npm', ['run', 'build', '--workspace', '@janus/imessage']);
   // The allowlist only tells the sidecar whom to greet at startup; the backend still enforces it on every text.
   const optional = ['IMESSAGE_ALLOWED_SENDERS', 'IMESSAGE_GREETING'].filter((key) => value(key));
-  launch('imessage', 'node', ['dist/index.js'], { cwd: path.join(ROOT, 'imessage'), env: Object.fromEntries([...keys, ...optional].map((key) => [key, value(key)])) });
+  launch('imessage', 'node', ['dist/index.js'], {
+    cwd: path.join(ROOT, 'imessage'),
+    // NODE_OPTIONS keeps whatever the user set and adds IPv4-first DNS; the sidecar also sets it itself on startup.
+    env: { ...Object.fromEntries([...keys, ...optional].map((key) => [key, value(key)])), NODE_OPTIONS: withIpv4First() },
+    onExit: (code) => {
+      console.error(`${RED}iMessage sidecar stopped — texts will not be received${RESET}${code === null ? '' : ` (exit ${code})`}`);
+      void markSidecarDown(value('MESSAGING_SERVICE_TOKEN'));
+    },
+  });
   console.log('iMessage sidecar started (texts from allowlisted numbers only).');
 }
 

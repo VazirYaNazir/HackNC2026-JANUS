@@ -240,6 +240,14 @@ export function isJanusProcess(pid) {
   return false;
 }
 
+/**
+ * NODE_OPTIONS for the iMessage sidecar: whatever the user already has, plus --dns-result-order=ipv4first so Node tries
+ * IPv4 before a broken IPv6 path to Photon. Appended last, so it wins over an earlier dns-result-order.
+ */
+export function withIpv4First(existing = process.env.NODE_OPTIONS) {
+  return `${existing ?? ''} --dns-result-order=ipv4first`.trim();
+}
+
 // ---- flags ---------------------------------------------------------------------------------------------------
 
 /**

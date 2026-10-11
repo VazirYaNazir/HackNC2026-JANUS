@@ -67,6 +67,7 @@ export async function forward(fetchImpl: Fetch, config: BackendConfig, message: 
   return { reply: body.reply, duplicate: body.duplicate === true }
 }
 
-export async function heartbeat(fetchImpl: Fetch, config: BackendConfig): Promise<void> {
-  await post(fetchImpl, config, '/api/messaging/heartbeat', { connected: true })
+/** `connected: false` tells the backend right away that the sidecar is no longer connected to Photon. */
+export async function heartbeat(fetchImpl: Fetch, config: BackendConfig, connected = true): Promise<void> {
+  await post(fetchImpl, config, '/api/messaging/heartbeat', { connected })
 }
