@@ -80,6 +80,32 @@ Remote connections require HTTPS/WSS. See the complete
 [connected-panel workflow and verification commands](backend/app/docs/connected-panels.md)
 for pairing, persistence, permissions, deployment, and current limits.
 
+## AI widgets (optional)
+
+Built-in controls (volume, mouse, metrics, processes, screen) need none of this. AI-generated widgets need two
+things, and Studio’s status line above the assistant says which one is missing before you generate anything.
+`npm run doctor` reports both as warnings.
+
+### Gemini key
+
+The backend generates programs with Gemini. `npm run setup` asks for a key (input is hidden; press Enter to skip) and
+writes it to `backend/.env`. In scripts, set `JANUS_GEMINI_KEY` instead of passing it on the command line. You can
+also set `GEMINI_API_KEY` in `backend/.env` yourself and restart the backend.
+
+### Isolation adapter
+
+Generated C is compiled and run only through a locally installed, audited isolation adapter, selected with
+`AGENT_ISOLATION_ADAPTER=my_local_app.worker:create_boundary` in the agent’s environment (or `--isolation-adapter`).
+No adapter ships with Janus yet, so without one the laptop reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles
+generated source. Neither the backend nor a policy file can enable an adapter. Details:
+[local agent initialization](backend/app/docs/backend-agent.md#local-agent-initialization).
+
+### Local authorization
+
+Running a generated program also needs a grant that only the laptop can create: an entry for that request ID in the
+agent’s local policy file (`--validation-policy`, read when the agent starts). Confirming in Studio or the phone
+never grants OS permissions. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
+
 ## Link a phone
 
 Studio runs at `http://127.0.0.1:5173`. Phones normally use the hosted PWA; with
