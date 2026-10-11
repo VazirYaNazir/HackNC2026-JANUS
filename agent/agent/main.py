@@ -24,6 +24,12 @@ def parser() -> argparse.ArgumentParser:
     stream.add_argument("--min-ram-mb", type=float, default=100)
     stream.add_argument("--temperature-file", help="Optional local sensor-provider file, Celsius")
     stream.add_argument("--validation-policy", help="Local JSON grants by job ID; never supplied by the backend")
+    connection = commands.add_parser("connect", help="Connect a registered device for generated jobs (protocol v2)")
+    connection.add_argument("--url", default=os.getenv("AGENT_BACKEND_URL"))
+    connection.add_argument("--device-id", default=os.getenv("AGENT_DEVICE_ID"))
+    connection.add_argument("--validation-policy", help="Local JSON grants by job ID")
+    connection.add_argument("--workers", type=int, default=4, help="Local concurrent worker limit, 1–4")
+    connection.add_argument("--isolation-adapter", default=os.getenv("AGENT_ISOLATION_ADAPTER"), help="Audited local worker module:factory; never provided by the backend")
     return cli
 
 
@@ -39,6 +45,20 @@ def main(argv=None) -> int:
             binary = build_tools((options.tool,))[options.tool]
             args = options.args[1:] if options.args[:1] == ["--"] else options.args
             return subprocess.call([str(binary), *args])
+        if options.command == "connect":
+            from .transport import run_connection, validate_options as validate_connection_options
+            from .jobs import ValidationService
+            from .validation import load_policies
+            from .isolation import load_boundary
+            validate_connection_options(options)
+            token = os.getenv("AGENT_TOKEN")
+            if not token:
+                cli.error("Set AGENT_TOKEN in your local environment")
+            policies = load_policies(options.validation_policy)
+            compiler = detect_compiler()
+            validation = ValidationService(compiler, policies, boundary=load_boundary(options.isolation_adapter), max_parallel=options.workers)
+            asyncio.run(run_connection(options, token, validation))
+            return 0
         from .bridge import run_bridge, validate_options
         from .jobs import ValidationService
         from .validation import load_policies

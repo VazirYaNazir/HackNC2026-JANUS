@@ -4,7 +4,7 @@ Five **standalone C11 programs** implement native laptop features on macOS and
 Windows. Each `.c` file can be compiled independently, uses OS libraries, accepts
 options/commands, and writes flushed JSON Lines to stdout. A Python bridge runs
 them as persistent subprocesses and forwards samples to an authenticated backend
-WebSocket. Only this `agent/` directory is involved.
+WebSocket. Native tools and local execution code live in this `agent/` directory.
 
 ## Run
 
@@ -51,6 +51,21 @@ Use Ctrl+C to stop. Screen capture starts only with `--screen`, and cannot be
 enabled remotely through the command protocol.
 
 ## Generated C validation and repair
+
+For the device-specific backend/Gemini pipeline, use `python -m agent.main connect`
+with `--device-id`, the matching `/ws/agents/<device-id>` URL, local
+`--validation-policy`, and optional `--workers 1..4`. Set that laptop's
+`AGENT_TOKEN` in its environment. This protocol v2 connection carries job events
+without starting native telemetry or screen capture. It uses heartbeats and
+reconnects with bounded exponential backoff and jitter.
+
+An existing audited local worker can be selected with
+`--isolation-adapter my_local_app.worker:create_boundary` or
+`AGENT_ISOLATION_ADAPTER`. This is a local factory implementing the existing
+`IsolationBoundary`; no cloud command can select it. Interface checks establish
+conformance rather than verifying OS containment. With no adapter, generated C
+validation stays blocked. See the [backend–agent setup, protocol, endpoints, and
+tests](../backend/app/docs/backend-agent.md).
 
 The bridge also routes `validate_job`, `code_revision`, `execute_job`, and
 `cancel_job` messages. Validation enforces a local per-job policy, a 128 KiB C11
