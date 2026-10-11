@@ -50,6 +50,13 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command_line({"target": "mouse", "action": "move", "args": {"x": -0.5, "y": 0.25}}), ("mouse", "move -0.500000 0.250000\n"))
         self.assertEqual(command_line({"target": "mouse", "action": "button", "args": {"button": "left", "state": "down"}}), ("mouse", "button left down\n"))
 
+    def test_lock_translates_to_the_mouse_tool_and_takes_no_arguments(self):
+        self.assertEqual(command_line({"target": "mouse", "action": "lock", "args": {}}), ("mouse", "lock\n"))
+        with self.assertRaises(ValueError):
+            command_line({"target": "mouse", "action": "lock", "args": {"force": True}})
+        with self.assertRaises(ValueError):
+            command_line({"target": "volume", "action": "lock", "args": {}})
+
     def test_remote_requires_tls(self):
         options = SimpleNamespace(url="ws://example.com/ws/agent", screen_interval=1000, min_cpu=1, min_ram_mb=100)
         with self.assertRaises(ValueError):

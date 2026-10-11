@@ -221,6 +221,19 @@ int main(int argc,char **argv) {
         state = json.loads(self.run_tool("mouse", "state").stdout)
         self.assertEqual(state["data"], {"joystick_x": 0.5, "joystick_y": -0.25, "buttons": [True, False, True], "position": None})
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux fallback never locks, so this is safe to run")
+    def test_mouse_lock_command_is_exact_and_denied_where_unsupported(self):
+        result = self.run_tool("mouse", "cli", input_text="lock\nlock now\nlocks\nstop\n")
+        acknowledgements = [event for event in map(json.loads, result.stdout.splitlines()) if event["type"] == "command_result"]
+        self.assertEqual(len(acknowledgements), 3)
+        self.assertTrue(all(not event["ok"] for event in acknowledgements))
+
+    def test_mouse_lock_uses_the_platform_session_lock_apis(self):
+        source = (ROOT / "native" / "mouse.c").read_text()
+        self.assertIn("LockWorkStation()", source)
+        self.assertIn("SACLockScreenImmediate", source)
+        self.assertIn('!strcmp(line,"lock")', source)
+
     def test_metrics_sensor_limits_missing_empty_stale_and_partial_telemetry(self):
         self.assertEqual(self.run_tool("metrics", "cpu_delta").returncode, 0)
         path = Path(self.tmp.name) / "sensor.txt"

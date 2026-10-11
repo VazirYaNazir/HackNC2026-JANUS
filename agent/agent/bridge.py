@@ -52,6 +52,10 @@ def command_line(message):
             return "mouse", f"move {x:.6f} {y:.6f}\n"
         if action == "button" and args.get("button") in ("left", "right", "middle") and args.get("state") in ("up", "down"):
             return "mouse", f"button {args['button']} {args['state']}\n"
+        if action == "lock":
+            if args:
+                raise ValueError("lock takes no arguments")
+            return "mouse", "lock\n"
         if action == "scroll":
             amount = scalar(args.get("amount"), -100, 100)
             if int(amount) != amount:

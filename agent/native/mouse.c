@@ -118,6 +118,7 @@ static int input_line(char *out,size_t capacity) {
 }
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
+#include <dlfcn.h>
 #endif
 #include <signal.h>
 static volatile sig_atomic_t stopped;
@@ -179,6 +180,20 @@ static int mouse_scroll(int amount) {
     (void)amount;return 0;
 #endif
 }
+/* Lock the interactive session. Windows: LockWorkStation. macOS: the login framework's lock call (no public
+ * API exists; resolved at run time so a missing symbol fails the command instead of the build). */
+static int desktop_lock(void) {
+#ifdef _WIN32
+    return LockWorkStation()!=0;
+#elif defined(__APPLE__)
+    void *login=dlopen("/System/Library/PrivateFrameworks/login.framework/login",RTLD_LAZY); if(!login) return 0;
+    int (*lock_screen)(void)=(int (*)(void))dlsym(login,"SACLockScreenImmediate");
+    int ok=lock_screen!=NULL; if(ok) lock_screen();
+    dlclose(login); return ok;
+#else
+    return 0;
+#endif
+}
 static void report_mouse(int command,double x,double y) {
     event_start(command?"command_result":"telemetry","mouse");
     printf("\"ok\":true,\"data\":{\"joystick_x\":%.4f,\"joystick_y\":%.4f,\"buttons\":[%s,%s,%s],\"position\":",x,y,held[0]?"true":"false",held[1]?"true":"false",held[2]?"true":"false");
@@ -206,7 +221,9 @@ int main(int argc,char **argv) {
             int ok=0;
             if(!strcmp(line,"stop")) break;
             double nx,ny;
-            if(sscanf(line,"move %79s %79s %c",a,b,&extra)==2 && number(a,-1,1,&nx) && number(b,-1,1,&ny)) {
+            if(!strcmp(line,"lock")) {
+                ok=desktop_lock();
+            } else if(sscanf(line,"move %79s %79s %c",a,b,&extra)==2 && number(a,-1,1,&nx) && number(b,-1,1,&ny)) {
                 x=nx;y=ny;
                 if(fabs(x)<0.08) x=0; if(fabs(y)<0.08) y=0;
                 updated=monotonic_ms(); ok=mouse_move(0,0);
