@@ -1,8 +1,4 @@
-"""Local boundary interface. No native untrusted-code sandbox is supplied yet.
-
-An adapter must be implemented and audited in the local app. Flags in a cloud
-manifest or policy JSON cannot install or enable an isolation implementation.
-"""
+"""Local execution boundaries. Remote manifests never select an implementation."""
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -64,6 +60,14 @@ class IsolationBoundary:
     def can_run(self, capabilities=frozenset()) -> bool:
         return REQUIRED_GUARANTEES <= self.run_guarantees and capabilities <= self.run_capabilities
 
+    def operation_timeout(self, limits: ResourceLimits, phase: str) -> float:
+        """Outer watchdog; adapters must still enforce every guest budget.
+
+        A contained worker may add bounded trusted provisioning time before
+        its process starts. This never increases generated-code runtime.
+        """
+        return limits.compile_seconds if phase == "compile" else limits.run_seconds
+
     async def compile(self, compiler: CCompiler, source: Path, output: Path,
                       limits: ResourceLimits, link_args: tuple[str, ...]) -> CompileResult:
         raise BoundaryUnavailable("No verified build boundary installed")
@@ -80,7 +84,8 @@ def load_boundary(spec: str | None) -> IsolationBoundary:
     Deployment remains responsible for verifying the selected implementation.
     """
     if not spec:
-        return IsolationBoundary()
+        from .container import create_boundary
+        return create_boundary()
     if not isinstance(spec, str) or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", spec):
         raise ValueError("Local isolation adapter must be module:factory")
     module, name = spec.split(":")

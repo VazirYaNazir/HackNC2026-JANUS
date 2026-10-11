@@ -123,7 +123,7 @@ def approve_session(scope: SessionScope, *, launcher_pipe=False) -> ApprovedSess
         print("  Capabilities: " + (", ".join(sorted(scope.capabilities)) or "none"), file=sys.stderr)
         print("  Libraries: " + (", ".join(sorted(scope.dependencies)) or "none"), file=sys.stderr)
         print(f"  Execute generated jobs: {scope.execute_authorized}; share outputs: {scope.share_outputs}", file=sys.stderr)
-        print("  Generated code still requires an installed isolation adapter.", file=sys.stderr)
+        print("  Generated C uses the verified local Docker worker; unsupported access remains denied.", file=sys.stderr)
         print("Type APPROVE to authorize this local session: ", end="", file=sys.stderr, flush=True)
         try:
             response = sys.stdin.readline(64)

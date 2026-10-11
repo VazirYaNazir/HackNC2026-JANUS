@@ -60,11 +60,21 @@ async def connected_session(websocket, device_id, service, *, on_ready=None, nat
     outbox = Outbox()
     session = service.connect(outbox)
     tasks, cancellations = [], set()
-    target, arch = service.local_platform or (platform.system(), platform.machine())
+    target, arch = getattr(service, "host_platform", None) or service.local_platform or (platform.system(), platform.machine())
     try:
+        if hasattr(service.boundary, "broker"):
+            from .broker import HostBroker
+            service.boundary.broker = HostBroker(native) if native is not None else None
         hello = {
             "platform": target, "architecture": architecture(arch), "max_workers": service.max_parallel, "max_attempts": 3,
             "build_boundary_available": service.boundary.can_build(), "execution_boundary_available": service.boundary.can_run()}
+        describe = getattr(service.boundary, "describe", None)
+        if describe is not None:
+            description = describe()
+            if description["available"] and description["execution_target"] is not None:
+                hello["execution_target"] = description["execution_target"]
+            if description["reason"] is not None:
+                hello["boundary_reason"] = description["reason"]
         if native is not None:
             hello["native_streams"] = native.streams
         await send(websocket, packet(device_id, "agent_hello", None, "CONNECTED", hello))
@@ -147,9 +157,13 @@ async def connected_session(websocket, device_id, service, *, on_ready=None, nat
             for task in cancellations:
                 task.cancel()
             await asyncio.gather(*cancellations, return_exceptions=True)
-            await session.close()
-            if native is not None:
-                await native.close()
+            try:
+                await session.close()
+                if native is not None:
+                    await native.close()
+            finally:
+                if hasattr(service.boundary, "broker"):
+                    service.boundary.broker = None
         closing = asyncio.create_task(cleanup())
         try:
             await asyncio.shield(closing)

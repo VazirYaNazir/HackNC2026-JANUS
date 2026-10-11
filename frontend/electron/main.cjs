@@ -7,13 +7,25 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-// Studio links to setup docs; only those open (in the system browser). Everything else is denied.
-const DOCS_PREFIX = 'https://github.com/VazirYaNazir/HackNC2026-Janus/';
+// Open only repository documentation and the exact official worker prerequisite link.
+const DOCS_PATH = '/VazirYaNazir/HackNC2026-Janus/';
+const DOCKER_DESKTOP_URL = 'https://www.docker.com/products/docker-desktop/';
 const BACKEND_ORIGIN = 'http://127.0.0.1:8000';
 let agentProcess = null;
 let startingAgent = null;
 let studioWindow = null;
 let studioOrigin = null;
+
+function externalSetupUrl(configured) {
+  if (configured === DOCKER_DESKTOP_URL) return configured;
+  if (typeof configured !== 'string' || /\s|\\/.test(configured)) return null;
+  try {
+    const url = new URL(configured);
+    if (url.origin === 'https://github.com' && !url.username && !url.password
+        && !url.search && url.pathname.startsWith(DOCS_PATH)) return url.href;
+  } catch { /* Invalid links never leave the application. */ }
+  return null;
+}
 
 function localUrl(configured, allowFragment = false) {
   if (typeof configured !== 'string' || /\s|\\/.test(configured)) throw new Error('Invalid local URL.');
@@ -102,9 +114,12 @@ ipcMain.handle('janus:agent-start', async (event) => {
       type: 'warning', title: 'Allow JANUS laptop controls?',
       message: 'Allow JANUS controls and paired phones to use this laptop for this session?',
       detail: 'This enables mouse and volume control, screen sharing, locking the desktop, and process inspection. '
-        + 'Generated jobs may read and write files, access the network, send data externally, spawn processes, '
-        + 'request administrator access, and make persistent changes within your local validation policy and isolation worker. '
-        + 'Job outputs may be shared with the backend and paired phones. Generated jobs still require an installed isolation adapter. '
+        + 'The included portable C worker uses Docker Desktop; JANUS may start an existing installation and prepare its image. '
+        + 'Generated jobs can read and write only temporary worker files, spawn bounded worker processes, '
+        + 'and request locally granted native controls through checked commands. The included worker cannot access laptop files, '
+        + 'use the network, send data externally, request administrator access, or make persistent changes. '
+        + 'A custom adapter must independently enforce any additional locally granted permissions. '
+        + 'Job outputs may be shared with the backend and paired phones. '
         + 'Approval ends when the agent stops or JANUS exits.',
       buttons: ['Allow this session', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
     });
@@ -160,7 +175,8 @@ function createWindow() {
   studioWindow = win;
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(DOCS_PREFIX)) void shell.openExternal(url);
+    const setupUrl = externalSetupUrl(url);
+    if (setupUrl) void shell.openExternal(setupUrl);
     return { action: 'deny' };
   });
 

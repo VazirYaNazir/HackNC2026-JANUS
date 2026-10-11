@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 from app.agent_runtime.config import Identity
 from app.agent_runtime.connections import PipelineError
 from app.agent_runtime.llm import ProviderError
-from app.agent_runtime.models import GeneratedProgram, GenerationRequest, SubmitGeneration, SubmitSource
+from app.agent_runtime.models import GeneratedProgram, GenerationRequest, PlanRequest, SubmitGeneration, SubmitSource
 from app.agent_runtime.runtime import AgentRuntime
 
 router = APIRouter(tags=["Agent jobs v2"])
@@ -29,6 +29,15 @@ async def controller(request: Request, service: Annotated[AgentRuntime, Depends(
 
 SERVICE = Annotated[AgentRuntime, Depends(runtime)]
 CONTROLLER = Annotated[Identity, Depends(controller)]
+
+
+def provider_failure(error: ProviderError) -> HTTPException:
+    statuses = {"PROVIDER_NOT_CONFIGURED": 503, "PROVIDER_UNAVAILABLE": 503,
+                "RATE_LIMITED": 429, "PROVIDER_TIMEOUT": 504,
+                "MALFORMED_RESPONSE": 502, "PROVIDER_ERROR": 502,
+                "CAPABILITY_UNAVAILABLE": 403}
+    reason = error.reason if error.reason in statuses else "PROVIDER_ERROR"
+    return HTTPException(statuses[reason], reason)
 
 
 @router.websocket("/ws/agents/{device_id}")
@@ -65,11 +74,7 @@ async def generate_program(payload: GenerationRequest, identity: CONTROLLER, ser
         program = GeneratedProgram.model_validate(generated.model_dump() if isinstance(generated, GeneratedProgram) else generated)
         program.check_scope(payload)
     except ProviderError as error:
-        statuses = {"PROVIDER_NOT_CONFIGURED": 503, "PROVIDER_UNAVAILABLE": 503,
-                    "RATE_LIMITED": 429, "PROVIDER_TIMEOUT": 504,
-                    "MALFORMED_RESPONSE": 502, "PROVIDER_ERROR": 502}
-        reason = error.reason if error.reason in statuses else "PROVIDER_ERROR"
-        raise HTTPException(statuses[reason], reason) from None
+        raise provider_failure(error) from None
     except TimeoutError:
         raise HTTPException(504, "PROVIDER_TIMEOUT") from None
     except (ValueError, TypeError, UnicodeError):
@@ -83,6 +88,47 @@ async def generate_program(payload: GenerationRequest, identity: CONTROLLER, ser
     except (sqlite3.Error, OSError, RuntimeError):
         raise HTTPException(503, "PROGRAM_STORE_UNAVAILABLE") from None
     return {"program_id": program_id, "program": program.model_dump()}
+
+
+@router.post("/api/v1/programs/plan")
+async def plan_program(payload: PlanRequest, identity: CONTROLLER, service: SERVICE) -> dict:
+    """Propose minimal access within this laptop's advertised worker scope.
+
+    Planning does not mint a local grant, create/store a program, or dispatch a
+    job. Offline source generation remains the explicit /programs/generate API.
+    """
+    if service.jobs.closing:
+        raise HTTPException(503, "SERVICE_CLOSING")
+    try:
+        connection = service.hub.get(identity.device_id)
+    except PipelineError as error:
+        raise HTTPException(error.status, error.reason) from None
+    target = connection.hello.execution_target
+    if target is None:
+        raise HTTPException(503, "EXECUTION_TARGET_UNAVAILABLE")
+    if (payload.platform, payload.architecture) != (target.platform, target.architecture):
+        raise HTTPException(422, "TARGET_MISMATCH")
+    if not set(payload.allowed_capabilities) <= set(target.capabilities):
+        raise HTTPException(403, "CAPABILITY_UNAVAILABLE")
+    target_scope = target.model_dump()
+    try:
+        async with asyncio.timeout(25):
+            planned = await service.provider.plan(payload)
+        request = GenerationRequest.model_validate(planned.model_dump() if isinstance(planned, GenerationRequest) else planned)
+        payload.check_scope(request)
+    except ProviderError as error:
+        raise provider_failure(error) from None
+    except TimeoutError:
+        raise HTTPException(504, "PROVIDER_TIMEOUT") from None
+    except (ValueError, TypeError, UnicodeError):
+        raise HTTPException(502, "MALFORMED_RESPONSE") from None
+    except OSError:
+        raise HTTPException(503, "PROVIDER_UNAVAILABLE") from None
+    if service.jobs.closing:
+        raise HTTPException(503, "SERVICE_CLOSING")
+    if connection.closed or service.hub.connections.get(identity.device_id) is not connection or connection.hello.execution_target is None or connection.hello.execution_target.model_dump() != target_scope:
+        raise HTTPException(409, "EXECUTION_TARGET_CHANGED")
+    return request.model_dump()
 
 
 @router.post("/api/v1/agent-jobs/source", status_code=202)

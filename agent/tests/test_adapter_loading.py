@@ -8,10 +8,16 @@ from tests.support import SimulatedBoundary
 
 
 class AdapterLoadingTests(unittest.TestCase):
-    def test_default_stays_blocked_without_importing_a_worker(self):
-        with patch("agent.isolation.importlib.import_module") as imported:
-            self.assertFalse(load_boundary(None).can_build())
+    def test_default_uses_only_the_shipped_worker_readiness_probe(self):
+        blocked = IsolationBoundary()
+        with patch("agent.container.create_boundary", return_value=blocked) as create, patch("agent.isolation.importlib.import_module") as imported:
+            self.assertIs(load_boundary(None), blocked)
+            self.assertFalse(blocked.can_build())
+            create.assert_called_once_with()
             imported.assert_not_called()
+        ready = SimulatedBoundary()
+        with patch("agent.container.create_boundary", return_value=ready):
+            self.assertIs(load_boundary(None), ready)
 
     def test_explicit_local_factory_reuses_existing_async_interface(self):
         boundary = SimulatedBoundary()

@@ -22,8 +22,9 @@ describe('generationStatus', () => {
   it('is ready when a key and an isolation adapter are both present', () => expect(generationStatus(session())).toMatchObject({ tone: 'ready', links: [] }))
   it('says generation works but programs cannot run without an isolation adapter, with a fix link', () => {
     const status = generationStatus(session({}, { execution_boundary_available: false }))
-    expect(status.text).toBe('C source generation is available. Review and download source; running generated programs requires an isolation adapter. Built-in controls still work.')
-    expect(status.links.map((link) => link.href)).toEqual([expect.stringContaining('#isolation-adapter')])
+    expect(status.text).toContain('Start Docker Desktop and restart JANUS')
+    expect(status.text).toContain('Built-in controls still work')
+    expect(status.links.map((link) => link.href)).toEqual(['https://www.docker.com/products/docker-desktop/'])
   })
   it('treats a missing build boundary the same way', () => expect(generationStatus(session({}, { build_boundary_available: false })).tone).toBe('warning'))
   it('reports a missing Gemini key', () => {

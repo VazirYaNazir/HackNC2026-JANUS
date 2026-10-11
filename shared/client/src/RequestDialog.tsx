@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { GeneratedDraft, JobView, Widget, WidgetValue } from '@janus/schema';
 import { PanelClient, type Prepared, type Session } from './api';
+import { executionUnavailable } from './execution';
 import { SourceReview } from './SourceReview';
 
 /** Default location documented in agent/docs/validation-protocol.md; the agent reads it only when it starts. */
@@ -27,7 +28,9 @@ function RequestDialogForm({ client, widget, value, session, onClose, onSubmitte
   const [draft, setDraft] = useState<GeneratedDraft | null>(null);
   const generation = useRef<AbortController | null>(null);
   const preparation = useRef<AbortController | null>(null);
-  const sourceOnly = session !== undefined && (session === null || !session.online || session.target === null || !session.target.build_boundary_available || !session.target.execution_boundary_available);
+  const executionReason = session === undefined ? null : executionUnavailable(session, prepared?.request);
+  const sourceOnly = executionReason !== null;
+  const needsReconfiguration = !!prepared && session?.online === true && session.target?.build_boundary_available === true && session.target.execution_boundary_available === true && !!executionReason;
   const generationUnavailable = session?.generation_available === false;
   useEffect(() => {
     const abort = new AbortController();
@@ -58,10 +61,10 @@ function RequestDialogForm({ client, widget, value, session, onClose, onSubmitte
 
   return <div className="janus-dialog-backdrop"><section className="janus-request" role="dialog" aria-modal="true" aria-labelledby="request-heading">
     <h2 id="request-heading">{sourceOnly ? 'Generate source for' : 'Run'} {widget.label}</h2>
-    <p>{sourceOnly ? 'You can generate and review C source. Execution requires an online laptop, an isolation adapter and local approval.' : 'The laptop must approve this request before it runs.'}</p>
+    <p>{sourceOnly ? `${executionReason} ${needsReconfiguration ? 'Reconfigure this control in Studio for the current worker. Source generation below keeps this control’s saved target and access.' : 'You can still generate and review C source.'}` : 'The laptop must approve this request before it runs.'}</p>
     <form onSubmit={(event) => void submit(event)}>
       {!sourceOnly && <><label>Request ID<input value={jobId} maxLength={128} pattern="[A-Za-z0-9_-]{1,128}" required onChange={(event) => setJobId(event.target.value)} /></label>
-      <p className="janus-muted">Each execution needs a fresh ID. Approval happens on the laptop: JANUS startup asks whether to enable the local policy for this session. If session approval is disabled, add a grant for this exact Request ID to <code>{GRANT_FILE}</code>, pass it with <code>--validation-policy</code>, and restart the agent. Without local approval the request stops at “authorization required”. Generated programs also require an installed isolation adapter.</p></>}
+      <p className="janus-muted">Each execution needs a fresh ID. Approval happens on the laptop: JANUS startup asks whether to enable the local policy for this session. If session approval is disabled, add a grant for this exact Request ID to <code>{GRANT_FILE}</code>, pass it with <code>--validation-policy</code>, and restart the agent. Without local approval the request stops at “authorization required”. Generated programs run in the isolated Docker Desktop worker, which JANUS prepares at startup. Start Docker Desktop and restart JANUS if the worker is unavailable.</p></>}
       {prepared && <><p>{prepared.request.description}</p><p className="janus-muted">Requested access: {prepared.request.capabilities.join(', ') || 'none'}</p></>}
       {!prepared && !error && <p role="status">Checking for reusable programs…</p>}
       {!sourceOnly && (prepared?.matches.length ? <fieldset><legend>Similar programs found — choose whether to reuse</legend>

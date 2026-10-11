@@ -12,21 +12,23 @@ export interface WidgetProps {
   /** Last-hour trend for a dial's `source` (oldest first), when the backend has history for it. */
   history?: number[];
   state?: WidgetState;
+  /** The backend reason for a failed request, separate from its run state. */
+  error?: string;
   /** Native publisher status, including permission or capture failures. */
   telemetryStatus?: string;
   selected?: boolean;
   onSelect?: (id: string) => void;
-  onTrigger?: (widget: Widget, value?: WidgetValue) => void;
+  onTrigger?: (widget: Widget, value?: WidgetValue) => void | Promise<boolean>;
 }
 
 export const isInputWidget = (w: Widget): w is InputWidget => isInput(w.type);
 export const isDialWidget = (w: Widget): w is DialWidget => !isInput(w.type);
 
 /** The only way a widget fires an action. In edit mode it selects instead, never triggers. */
-export function activate(props: WidgetProps, value?: WidgetValue): void {
+export function activate(props: WidgetProps, value?: WidgetValue): void | Promise<boolean> {
   if (props.mode === "edit") {
     props.onSelect?.(props.widget.id);
     return;
   }
-  props.onTrigger?.(props.widget, value);
+  return props.onTrigger?.(props.widget, value);
 }

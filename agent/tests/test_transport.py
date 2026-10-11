@@ -39,6 +39,91 @@ class Socket:
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_portable_worker_hello_keeps_physical_target_and_binds_native_before_description(self):
+        native = SimpleNamespace(streams=["volume", "screen"], tasks=[], start=AsyncMock(), close=AsyncMock())
+        class Described(SimulatedBoundary):
+            broker = None
+            def describe(self):
+                native.start.assert_not_awaited()
+                self.owner.assertIs(self.broker.native, native)
+                return {"available": True, "reason": None, "execution_target": {
+                    "platform": "Linux", "architecture": "x86_64", "profile": "portable-c",
+                    "capabilities": sorted(frozenset({"files.read"}) | self.broker.capabilities), "dependencies": []}}
+        boundary = Described()
+        boundary.owner = self
+        service = ValidationService(COMPILER, {}, boundary, local_platform=("Linux", "x86_64"), host_platform=LOCAL)
+        socket, ready = Socket(), asyncio.Event()
+        socket.put("connection_ready", None, "CONNECTED", {"heartbeat_interval": 1})
+        task = asyncio.create_task(connected_session(socket, "laptop", service, native=native, on_ready=ready.set))
+        await asyncio.wait_for(ready.wait(), 1)
+        hello = (await socket.outgoing.get())["payload"]
+        self.assertEqual((hello["platform"], hello["architecture"]), LOCAL)
+        self.assertEqual(hello["execution_target"]["platform"], "Linux")
+        self.assertEqual(hello["execution_target"]["architecture"], "x86_64")
+        self.assertEqual(set(hello["execution_target"]["capabilities"]), {"files.read", "audio.volume", "desktop.screen"})
+        self.assertNotIn("boundary_reason", hello)
+        native.start.assert_awaited_once()
+        socket.incoming.put_nowait(None)
+        await task
+        self.assertIsNone(boundary.broker)
+        native.close.assert_awaited_once()
+
+    async def test_unavailable_worker_reports_reason_and_clears_stale_reconnection_broker(self):
+        class Described(SimulatedBoundary):
+            broker = object()
+            def describe(self):
+                return {"available": False, "reason": "DOCKER_NOT_RUNNING", "execution_target": None}
+        boundary = Described()
+        boundary.build_guarantees = boundary.run_guarantees = frozenset()
+        service = ValidationService(COMPILER, {}, boundary, local_platform=LOCAL)
+        socket, _, task, hello = await self.start(service=service)
+        self.assertEqual(hello["payload"]["boundary_reason"], "DOCKER_NOT_RUNNING")
+        self.assertNotIn("execution_target", hello["payload"])
+        self.assertFalse(hello["payload"]["build_boundary_available"])
+        self.assertIsNone(boundary.broker)
+        socket.incoming.put_nowait(None)
+        await task
+
+    async def test_broker_is_detached_even_when_native_shutdown_fails(self):
+        class Bound(SimulatedBoundary):
+            broker = None
+        native = SimpleNamespace(streams=["volume"], tasks=[], start=AsyncMock(), close=AsyncMock(side_effect=RuntimeError("failed shutdown")))
+        boundary = Bound()
+        socket, ready = Socket(), asyncio.Event()
+        socket.put("connection_ready", None, "CONNECTED", {"heartbeat_interval": 1})
+        service = ValidationService(COMPILER, {}, boundary, local_platform=LOCAL)
+        task = asyncio.create_task(connected_session(socket, "laptop", service, native=native, on_ready=ready.set))
+        await asyncio.wait_for(ready.wait(), 1)
+        self.assertIs(boundary.broker.native, native)
+        socket.incoming.put_nowait(None)
+        with self.assertRaisesRegex(RuntimeError, "failed shutdown"):
+            await task
+        self.assertIsNone(boundary.broker)
+
+    async def test_large_mirror_sample_returns_bounded_error_without_forwarding_pixels(self):
+        native = SimpleNamespace(streams=["screen"], tasks=[], close=AsyncMock())
+        async def start(outbox):
+            outbox.sample({"type": "telemetry", "stream": "screen", "data": {"base64": "x" * (1024 * 1024)}})
+        native.start = start
+        service = ValidationService(COMPILER, {}, SimulatedBoundary(), local_platform=LOCAL)
+        socket, ready = Socket(), asyncio.Event()
+        socket.put("connection_ready", None, "CONNECTED", {"heartbeat_interval": 1})
+        task = asyncio.create_task(connected_session(socket, "laptop", service, native=native, on_ready=ready.set))
+        await asyncio.wait_for(ready.wait(), 1)
+        await socket.outgoing.get()
+        frame = await asyncio.wait_for(socket.outgoing.get(), 1)
+        self.assertEqual(frame["type"], "native_event")
+        self.assertEqual(frame["payload"]["type"], "error")
+        self.assertNotIn("base64", json.dumps(frame))
+        socket.incoming.put_nowait(None)
+        await task
+
+    async def test_remote_native_command_without_local_tools_closes_before_execution(self):
+        socket, _, task, _ = await self.start()
+        socket.put("native_command", None, "CONNECTED", {"request_id": "remote", "target": "volume", "action": "set", "args": {"value": 20}})
+        with self.assertRaisesRegex(ValueError, "Native tools are not enabled"):
+            await task
+
     def test_connection_options_require_registered_device_tls_path_and_local_worker_limit(self):
         valid = {"url": "wss://backend/ws/agents/laptop", "device_id": "laptop", "workers": 4}
         validate_options(SimpleNamespace(**valid))

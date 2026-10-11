@@ -1,8 +1,33 @@
-import { describe, expect, it } from 'vitest';
-import { fillGenerated, looksLikeApiKey, mergeEnv, setEnvValue } from '../setup.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { fillGenerated, looksLikeApiKey, mergeEnv, prepareSetupWorker, setEnvValue } from '../setup.mjs';
 import { parseEnv } from '../lib/common.mjs';
 
 const example = ['# comment', 'ADMIN_SECRET=', 'APP_ENV=development', 'AGENT_DEVICES_JSON=[]', 'PWA_PUBLIC_URL=', 'NEW_KEY=fresh', '# COMMENTED=1'].join('\n');
+
+describe('portable worker setup', () => {
+  it('keeps setup usable when Docker is missing and reports the actual prerequisite', () => {
+    const env = new Map([['GEMINI_API_KEY', 'fixture-key']]);
+    const readiness = { available: false, reason: 'DOCKER_NOT_INSTALLED', execution_target: null };
+    const probe = vi.fn(() => readiness), log = vi.fn(), warn = vi.fn();
+    expect(prepareSetupWorker(env, { probe, log, warn })).toEqual(readiness);
+    expect(probe).toHaveBeenCalledOnce();
+    expect(probe).toHaveBeenCalledWith(env, { action: 'prepare' });
+    expect(warn.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({
+      level: 'warn', name: 'AI widgets · execution worker', fix: expect.stringContaining('Install Docker Desktop'),
+    })]));
+    expect(log.mock.calls.flat().join(' ')).not.toContain('worker is ready');
+    expect(env.has('AGENT_ISOLATION_ADAPTER')).toBe(false);
+  });
+
+  it('reports a prepared worker while keeping execution dependent on local startup approval', () => {
+    const readiness = { available: true, reason: null, execution_target: { platform: 'Linux', profile: 'portable-c' } };
+    const probe = vi.fn(() => readiness), log = vi.fn(), warn = vi.fn();
+    expect(prepareSetupWorker(new Map(), { probe, log, warn })).toEqual(readiness);
+    expect(log.mock.calls.flat().join(' ')).toContain('still needs local startup approval');
+    expect(probe).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0][0].some((entry) => entry.name === 'AI widgets · execution worker')).toBe(false);
+  });
+});
 
 describe('mergeEnv', () => {
   it('adds only the keys the file lacks and never alters existing values', () => {

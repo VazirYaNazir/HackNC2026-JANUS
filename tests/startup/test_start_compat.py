@@ -255,6 +255,52 @@ class StateDirectoryTests(unittest.TestCase):
         apply.assert_not_called()
 
 
+class WorkerPreparationTests(unittest.TestCase):
+    def prepare(self, response=None, error=None):
+        environment = {"GEMINI_API_KEY": "private-credential"}
+        output = io.StringIO()
+        with patch.object(launcher.subprocess, "run", return_value=response, side_effect=error) as run, \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            report = launcher.prepare_generated_worker(ROOT, environment)
+        return report, output.getvalue(), run, environment
+
+    def test_shipped_worker_is_provisioned_with_locked_agent_environment_and_bounded_wait(self):
+        expected = {"available": True, "reason": None, "execution_target": {"platform": "Linux", "architecture": "x86_64"}}
+        report, output, run, environment = self.prepare(SimpleNamespace(returncode=0, stdout=json.dumps(expected)))
+        self.assertEqual(report, expected)
+        self.assertEqual(run.call_args.args[0], ["uv", "run", "--no-sync", "--directory", str(ROOT / "agent"),
+                                               "python", "-m", "agent.main", "worker", "prepare"])
+        self.assertEqual(run.call_args.kwargs, {"cwd": ROOT, "env": environment, "capture_output": True, "text": True, "timeout": 240})
+        self.assertNotIn(environment["GEMINI_API_KEY"], output)
+        self.assertNotIn(environment["GEMINI_API_KEY"], " ".join(run.call_args.args[0]))
+        self.assertIn("Portable C worker is ready", output)
+
+    def test_missing_prerequisites_are_actionable_and_never_echo_subprocess_diagnostics(self):
+        for reason, remedy in (("DOCKER_NOT_INSTALLED", "Install Docker Desktop"), ("DOCKER_NOT_RUNNING", "Start Docker Desktop"),
+                               ("DOCKER_LINUX_ENGINE_REQUIRED", "Linux containers"), ("WORKER_ENFORCEMENT_UNAVAILABLE", "cgroup v2"),
+                               ("WORKER_IMAGE_MISSING", "included worker image")):
+            with self.subTest(reason=reason):
+                expected = {"available": False, "reason": reason, "execution_target": None}
+                report, output, _, _ = self.prepare(SimpleNamespace(returncode=1, stdout=json.dumps(expected), stderr="private-credential"))
+                self.assertEqual(report, expected)
+                self.assertIn(remedy, output)
+                self.assertNotIn("private-credential", output)
+
+    def test_malformed_failed_or_timed_out_preparation_cannot_claim_worker_readiness(self):
+        responses = (SimpleNamespace(returncode=0, stdout="private-credential"),
+                     SimpleNamespace(returncode=0, stdout='{"available": "yes"}'),
+                     SimpleNamespace(returncode=1, stdout='{"available": true}'))
+        for response in responses:
+            with self.subTest(response=response):
+                report, output, _, _ = self.prepare(response)
+                self.assertFalse(report["available"])
+                self.assertNotIn("private-credential", output)
+        report, output, _, _ = self.prepare(error=subprocess.TimeoutExpired(["private-credential"], 240))
+        self.assertFalse(report["available"])
+        self.assertNotIn("private-credential", output)
+        self.assertIn("worker prepare", output)
+
+
 class LauncherModeTests(unittest.TestCase):
     """A bounded orchestration harness, with no inherited duplicate tests."""
 
@@ -266,6 +312,7 @@ class LauncherModeTests(unittest.TestCase):
         self.environment = {"AGENT_DEVICES_JSON": "[]"}
         self.registration = launcher.Registration("laptop", "owner", "a" * 40, "c" * 40)
         self.services = []
+        self.events = []
         self.output = io.StringIO()
         self.bootstrap = Mock()
         self.bootstrap.start.return_value = self.bootstrap
@@ -277,7 +324,7 @@ class LauncherModeTests(unittest.TestCase):
                                 NODE_OPTIONS="--trace-warnings")
 
     def run_launcher(self, arguments, *, approved=True, piped_approval=True, ready=True,
-                     build_error=None, service_error=None, runtime_exit=None):
+                     build_error=None, service_error=None, runtime_exit=None, worker_ready=True):
         owner = self
 
         class StopEvent:
@@ -296,6 +343,7 @@ class LauncherModeTests(unittest.TestCase):
             if name == service_error:
                 raise OSError("fixture optional service start failure")
             service = Mock()
+            owner.events.append("spawn-" + name)
             service.name, service.command, service.environment = name, command, env
             service.cwd, service.logs_dir, service.options = cwd, logs_dir, options
             service.process = SimpleNamespace(pid=1000 + len(owner.services))
@@ -308,12 +356,16 @@ class LauncherModeTests(unittest.TestCase):
             stack.enter_context(patch.object(launcher, "ROOT", self.root))
             stack.enter_context(patch.object(launcher, "load_environment", return_value=dict(self.environment)))
             self.install = stack.enter_context(patch.object(launcher, "install_dependencies"))
+            self.worker = stack.enter_context(patch.object(launcher, "prepare_generated_worker"))
+            self.worker.side_effect = lambda *_: (self.events.append("worker-prepare"), {"available": worker_ready, "reason": None if worker_ready else "DOCKER_NOT_INSTALLED", "execution_target": None})[1]
             self.ports = stack.enter_context(patch.object(launcher, "check_ports"))
             self.database = stack.enter_context(patch.object(launcher, "ensure_database", return_value=self.root / ".janus" / "janus.sqlite"))
             stack.enter_context(patch.object(launcher, "provision_registration", return_value=self.registration))
             stack.enter_context(patch.object(launcher.platform, "system", return_value="Darwin"))
             self.approval = stack.enter_context(patch.object(launcher, "approve_startup", return_value=approved))
+            self.approval.side_effect = lambda: (self.events.append("local-approval"), approved)[1]
             self.piped_approval = stack.enter_context(patch.object(launcher, "consume_startup_approval", return_value=piped_approval))
+            self.piped_approval.side_effect = lambda: (self.events.append("local-approval"), piped_approval)[1]
             self.policy = stack.enter_context(patch.object(launcher, "ensure_policy", return_value=self.root / "agent" / ".validation-policy.json"))
             self.write_state = stack.enter_context(patch.object(launcher, "atomic_json", wraps=launcher.atomic_json))
             stack.enter_context(patch.object(launcher, "ManagedProcess", side_effect=make_service))
@@ -419,11 +471,45 @@ class LauncherModeTests(unittest.TestCase):
         self.assertIn("--session-approval-stdin", agent.command)
         self.assertEqual(agent.environment["AGENT_TOKEN"], self.registration.agent_token)
         self.assertNotIn(self.registration.agent_token, " ".join(agent.command))
+        self.worker.assert_called_once()
+        self.assertLess(self.events.index("local-approval"), self.events.index("worker-prepare"))
+        self.assertLess(self.events.index("worker-prepare"), self.events.index("spawn-agent"))
+
+    def test_approved_app_prepares_the_default_worker_before_starting_native_controls(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-install", "--no-browser"]), 0)
+        self.worker.assert_called_once()
+        self.assertLess(self.events.index("local-approval"), self.events.index("worker-prepare"))
+        self.assertLess(self.events.index("worker-prepare"), self.events.index("spawn-agent"))
+        agent = next(service for service in self.services if service.name == "agent")
+        self.assertNotIn("--isolation-adapter", agent.command)
+        self.assertIn("--native-tools", agent.command)
+        self.assertEqual(agent.options["input_data"], "JANUS_SESSION_APPROVED\n")
+        self.assertIn("portable C worker ready", self.output.getvalue())
+
+    def test_missing_default_worker_prerequisites_preserve_locally_approved_native_controls(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-install", "--no-browser"], worker_ready=False), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa", "agent"])
+        self.assertIn("worker prerequisites unavailable; native controls remain enabled", self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_custom_local_adapter_preserves_override_without_preparing_the_shipped_image(self):
+        self.environment["AGENT_ISOLATION_ADAPTER"] = "my_local_app.worker:create_boundary"
+        self.assertEqual(self.run_launcher(["--local-only", "--no-install", "--no-browser"]), 0)
+        self.worker.assert_not_called()
+        agent = next(service for service in self.services if service.name == "agent")
+        self.assertEqual(agent.command[agent.command.index("--isolation-adapter") + 1], self.environment["AGENT_ISOLATION_ADAPTER"])
+        self.assertIn("configured custom local adapter", self.output.getvalue())
+
+    def test_unapproved_run_does_not_provision_an_execution_worker(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-install", "--no-browser"], approved=False), 0)
+        self.worker.assert_not_called()
+        self.assertNotIn("agent", [service.name for service in self.services])
 
     def test_solo_agent_denied_pipe_permission_never_starts_or_creates_policy(self):
         self.assertEqual(self.run_launcher(["--only=agent", "--startup-approval-stdin", "--no-install"],
                                            piped_approval=False), 1)
         self.assertFalse(self.services)
+        self.worker.assert_not_called()
         self.policy.assert_not_called()
         self.http.assert_not_called()
         self.write_state.assert_not_called()

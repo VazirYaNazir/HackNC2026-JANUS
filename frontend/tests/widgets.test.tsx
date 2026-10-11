@@ -121,13 +121,27 @@ describe('every widget in the registry', () => {
     view.unmount(); expect(trigger).toHaveBeenLastCalledWith(w, { x: 0, y: 0 });
   });
 
-  it.each(['command', 'agent'] as const)('%s trims submissions, prevents empty requests and clears the field', type => {
-    const w = widget(type), trigger = vi.fn(); render(<WidgetView widget={w} mode="live" state="answer from laptop" onTrigger={trigger} />);
+  it.each(['command', 'agent'] as const)('%s trims submissions, prevents empty requests and clears only after acceptance', async type => {
+    let accept!: (value: boolean) => void;
+    const w = widget(type), trigger = vi.fn(() => new Promise<boolean>(resolve => { accept = resolve; })); render(<WidgetView widget={w} mode="live" state="answer from laptop" onTrigger={trigger} />);
     expect(screen.getByRole('button', { name: `Send ${w.label}` }).hasAttribute('disabled')).toBe(true);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '  inspect apps  ' } });
     fireEvent.submit(screen.getByRole('textbox').closest('form')!);
-    expect(trigger).toHaveBeenCalledWith(w, 'inspect apps'); expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('');
+    expect(trigger).toHaveBeenCalledWith(w, 'inspect apps'); expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('  inspect apps  ');
+    expect((screen.getByRole('textbox') as HTMLInputElement).disabled).toBe(true);
+    await act(async () => accept(true)); expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('textbox') as HTMLInputElement).maxLength).toBe(4096);
     if (type === 'agent') expect(screen.getByText('answer from laptop')).toBeTruthy();
+  });
+
+  it.each(['command', 'agent'] as const)('%s preserves its prompt when request review is cancelled', async type => {
+    const w = widget(type), trigger = vi.fn().mockResolvedValue(false);
+    render(<WidgetView widget={w} mode="live" state="error" error="AUTHORIZATION_REQUIRED" onTrigger={trigger} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'inspect apps' } });
+    await act(async () => { fireEvent.submit(screen.getByRole('textbox').closest('form')!); });
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('inspect apps');
+    expect((screen.getByRole('textbox') as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByText('AUTHORIZATION_REQUIRED')).toBeTruthy();
   });
 
   it.each(['bar', 'gauge', 'ring', 'temperature', 'number', 'line'] as const)('%s handles missing data and escalates thresholds', type => {

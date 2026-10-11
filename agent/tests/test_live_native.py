@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from agent.bridge import Outbox
-from agent.live_native import LiveNative
+from agent.live_native import LiveNative, SampleOutbox
 from agent.transport import connected_session, packet
 from agent.jobs import ValidationService
 from tests.support import COMPILER, LOCAL, SimulatedBoundary
@@ -18,6 +18,14 @@ def options(screen=False):
 
 
 class LiveNativeTests(unittest.IsolatedAsyncioTestCase):
+    def controls(self, outbox=None):
+        native, outbox = LiveNative({"volume": "volume", "mouse": "mouse"}, options()), outbox or Outbox()
+        for name in ("volume", "mouse"):
+            native.queues[name] = asyncio.Queue(32)
+            native.tools[name] = SimpleNamespace(command=AsyncMock(return_value={"type": "command_result", "stream": name, "ok": True}), close=AsyncMock())
+            native.tasks.append(asyncio.create_task(native.worker(name, outbox)))
+        return native, outbox
+
     async def test_all_tools_start_concurrently_and_close_without_orphans(self):
         native = LiveNative({name: name for name in ("volume", "mouse", "metrics", "processes", "screen")}, options(True))
         started, gate, processes = [], asyncio.Event(), {}
@@ -54,6 +62,148 @@ class LiveNativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item["request_id"] for item in results}, {"v1", "v2", "m1"})
         self.assertEqual([call.args[0] for call in native.tools["volume"].command.await_args_list], ["set 50.000000\n", "set 60.000000\n"])
         await native.close()
+
+    async def test_generated_and_frontend_commands_share_one_ordered_tool_queue(self):
+        native, outbox = self.controls()
+        started, release = asyncio.Event(), asyncio.Event()
+        async def command(line):
+            if line == "set 10.000000\n":
+                started.set()
+                await release.wait()
+            return {"type": "command_result", "stream": "volume", "ok": True, "data": {"value": float(line.split()[1])}}
+        native.tools["volume"].command.side_effect = command
+        native.command({"request_id": "frontend", "target": "volume", "action": "set", "args": {"value": 10}})
+        await started.wait()
+        generated = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 30}}))
+        await asyncio.sleep(0)
+        self.assertFalse(generated.done())
+        release.set()
+        result = await asyncio.wait_for(generated, 1)
+        self.assertEqual(result["data"], {"value": 30})
+        self.assertEqual((await outbox.get())["request_id"], "frontend")
+        self.assertEqual([call.args[0] for call in native.tools["volume"].command.await_args_list], ["set 10.000000\n", "set 30.000000\n"])
+        self.assertTrue(outbox.results.empty())
+        self.assertEqual(native.snapshot("volume"), {"value": 30})
+        await native.close()
+
+    async def test_generated_mouse_runs_while_a_volume_acknowledgement_waits(self):
+        native, _ = self.controls()
+        waiting = asyncio.Event()
+        async def volume(_):
+            waiting.set()
+            await asyncio.Event().wait()
+        native.tools["volume"].command.side_effect = volume
+        first = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 30}}))
+        await waiting.wait()
+        result = await asyncio.wait_for(native.execute({"target": "mouse", "action": "scroll", "args": {"amount": 1}}), 1)
+        self.assertTrue(result["ok"])
+        self.assertFalse(first.done())
+        await native.close()
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+
+    async def test_cancelled_queued_generated_command_never_reaches_the_tool(self):
+        native = LiveNative({"volume": "volume"}, options())
+        native.queues["volume"] = asyncio.Queue(32)
+        native.tools["volume"] = SimpleNamespace(command=AsyncMock(return_value={"type": "command_result", "stream": "volume", "ok": True}), close=AsyncMock())
+        pending = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 70}}))
+        await asyncio.sleep(0)
+        pending.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await pending
+        outbox = Outbox()
+        native.tasks.append(asyncio.create_task(native.worker("volume", outbox)))
+        native.command({"request_id": "next", "target": "volume", "action": "set", "args": {"value": 20}})
+        self.assertEqual((await asyncio.wait_for(outbox.get(), 1))["request_id"], "next")
+        native.tools["volume"].command.assert_awaited_once_with("set 20.000000\n")
+        await native.close()
+
+    async def test_inflight_cancellation_drains_the_ack_before_next_frontend_command(self):
+        native, outbox = self.controls()
+        started, release = asyncio.Event(), asyncio.Event()
+        async def command(line):
+            if line == "set 70.000000\n":
+                started.set()
+                await release.wait()
+            return {"type": "command_result", "stream": "volume", "ok": True}
+        native.tools["volume"].command.side_effect = command
+        pending = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 70}}))
+        await started.wait()
+        pending.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await pending
+        native.command({"request_id": "next", "target": "volume", "action": "set", "args": {"value": 20}})
+        await asyncio.sleep(0)
+        self.assertEqual(native.tools["volume"].command.await_count, 1)
+        release.set()
+        self.assertEqual((await asyncio.wait_for(outbox.get(), 1))["request_id"], "next")
+        self.assertEqual(native.tools["volume"].command.await_count, 2)
+        await native.close()
+
+    async def test_close_cancels_active_and_queued_generated_acks_without_late_actions(self):
+        native, _ = self.controls()
+        started = asyncio.Event()
+        async def blocked(_):
+            started.set()
+            await asyncio.Event().wait()
+        native.tools["volume"].command.side_effect = blocked
+        first = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 70}}))
+        await started.wait()
+        queued = asyncio.create_task(native.execute({"target": "volume", "action": "set", "args": {"value": 20}}))
+        await asyncio.sleep(0)
+        await native.close()
+        for pending in (first, queued):
+            with self.assertRaises(asyncio.CancelledError):
+                await pending
+        self.assertEqual(native.tools["volume"].command.await_count, 1)
+        self.assertTrue(native.queues["volume"].empty())
+        self.assertFalse(native.control_available("volume"))
+
+    async def test_generated_ack_failure_is_owned_and_closes_the_worker(self):
+        native, _ = self.controls()
+        native.tools["volume"].command.side_effect = RuntimeError("missing acknowledgement")
+        with self.assertRaisesRegex(RuntimeError, "missing acknowledgement"):
+            await native.execute({"target": "volume", "action": "set", "args": {"value": 20}})
+        self.assertIsInstance(native.tasks[0].exception(), RuntimeError)
+        await native.close()
+
+    async def test_frontend_worker_failure_is_observed_and_other_tools_close(self):
+        native, _ = self.controls()
+        native.tools["volume"].command.side_effect = RuntimeError("missing acknowledgement")
+        native.command({"request_id": "frontend", "target": "volume", "action": "set", "args": {"value": 20}})
+        with self.assertRaisesRegex(RuntimeError, "missing acknowledgement"):
+            await native.tasks[0]
+        await native.close()
+        self.assertTrue(all(task.done() for task in native.tasks))
+
+    async def test_generated_commands_reject_extra_fields_disabled_tools_and_full_queues(self):
+        native = LiveNative({"volume": "volume"}, options())
+        valid = {"target": "volume", "action": "set", "args": {"value": 20}}
+        with self.assertRaises(ValueError):
+            await native.execute({**valid, "request_id": "remote"})
+        with self.assertRaises(ValueError):
+            await native.execute(valid)
+        native.queues["volume"] = asyncio.Queue(1)
+        native.tools["volume"] = SimpleNamespace(close=AsyncMock())
+        native.queues["volume"].put_nowait(("frontend", "set 20\n"))
+        with self.assertRaisesRegex(ValueError, "full"):
+            await native.execute(valid)
+        await native.close()
+
+    def test_telemetry_tee_retains_copied_snapshots_and_keeps_live_events(self):
+        native, outbox = LiveNative({}, options()), Outbox()
+        tee = SampleOutbox(native, outbox)
+        event = {"type": "telemetry", "stream": "volume", "data": {"value": 20}}
+        tee.sample(event)
+        self.assertIs(outbox.samples["volume"], event)
+        event["data"]["value"] = 30
+        snapshot = native.snapshot("volume")
+        self.assertEqual(snapshot, {"value": 20})
+        snapshot["value"] = 40
+        self.assertEqual(native.snapshot("volume"), {"value": 20})
+        tee.sample({"type": "error", "stream": "volume", "error": "permission denied"})
+        self.assertIsNone(native.snapshot("volume"))
+        self.assertEqual(outbox.samples["volume"]["type"], "error")
 
     async def test_command_validation_disabled_targets_and_full_queues(self):
         native = LiveNative({}, options()); native.queues["volume"] = asyncio.Queue(1)

@@ -261,3 +261,35 @@ describe('execution with an available isolation adapter', () => {
     expect(fetch.mock.calls.some(([url]) => path(url).endsWith('/generate'))).toBe(false);
   });
 });
+
+
+describe('portable worker request review', () => {
+  const portable: Session = { ...session, target: { ...session.target!, build_boundary_available: true, execution_boundary_available: true, execution_target: { platform: 'Linux', architecture: 'arm64', profile: 'portable-c', capabilities: ['files.read'], dependencies: [] } } };
+  const portablePrepared: Prepared = { ...prepared, request: { ...prepared.request, platform: 'Linux' } };
+  it('dispatches a supported portable widget request only after explicit review and reuse choice', async () => {
+    const next = client(), submitted = vi.fn(), close = vi.fn();
+    vi.spyOn(next, 'prepare').mockResolvedValue(portablePrepared);
+    const dispatch = vi.spyOn(next, 'dispatch').mockResolvedValue({ job_id: 'fresh', state: 'QUEUED' } as JobView);
+    render(<RequestDialog client={next} widget={laptopProject().widgets[2]} session={portable} onClose={close} onSubmitted={submitted} />);
+    await screen.findByText(/Requested access: files.read/);
+    expect(dispatch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('radio', { name: /Folder size/ }));
+    fireEvent.change(screen.getByLabelText('Request ID'), { target: { value: 'fresh' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reuse and request execution' }));
+    await waitFor(() => expect(submitted).toHaveBeenCalled());
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ job_id: 'fresh', program_id: 'saved-program', request_sha256: 'request-digest' }));
+    expect(close).toHaveBeenCalled();
+  });
+  it.each([
+    [{ ...portablePrepared.request, platform: 'Darwin' }, 'different system'],
+    [{ ...portablePrepared.request, capabilities: ['network'] }, 'does not support the requested access: network'],
+    [{ ...portablePrepared.request, dependencies: ['coreaudio'] }, 'does not provide these libraries: coreaudio'],
+  ] as const)('explains an incompatible saved request and prevents execution (%j)', async (request, reason) => {
+    const next = client(); vi.spyOn(next, 'prepare').mockResolvedValue({ ...portablePrepared, request: { ...request, capabilities: [...request.capabilities], dependencies: [...request.dependencies] } });
+    const dispatch = vi.spyOn(next, 'dispatch');
+    render(<RequestDialog client={next} widget={laptopProject().widgets[2]} session={portable} onClose={() => {}} onSubmitted={() => {}} />);
+    await screen.findByText(new RegExp(reason));
+    expect(screen.queryByRole('button', { name: /request execution/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Generate source' })).toBeTruthy(); expect(dispatch).not.toHaveBeenCalled();
+  });
+});

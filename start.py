@@ -204,11 +204,15 @@ def approve_startup(input_stream=None, input_fn=input, output_stream=None) -> bo
         print("Laptop permissions require an interactive terminal. Use --no-agent for web development.", file=destination)
         return False
     print("\nAllow JANUS controls and paired phones to use this laptop for this session?", file=destination)
-    print("This enables mouse/volume control, screen sharing, process inspection, and generated jobs", file=destination)
+    print("This enables mouse/volume control, screen sharing and process inspection.", file=destination)
     print("Optional iMessage commands can also lock the desktop.", file=destination)
-    print("with file read/write, network/external sending, process spawning, admin and persistent-write", file=destination)
-    print("capabilities within the local policy and isolation worker. Job outputs may be shared.", file=destination)
-    print("Generated jobs still require an installed isolation adapter. Approval ends when JANUS exits.", file=destination)
+    print("JANUS may start an installed Docker Desktop and prepare the portable C worker image.", file=destination)
+    print("Generated jobs get temporary worker files, bounded worker processes and locally granted", file=destination)
+    print("native controls through checked commands. The included worker cannot access laptop files,", file=destination)
+    print("use the network, send data externally, request admin access or make persistent changes.", file=destination)
+    print("Custom adapters must enforce any additional locally granted permissions independently.", file=destination)
+    print("Job outputs may be shared with the backend and paired phones.", file=destination)
+    print("Approval ends when JANUS exits.", file=destination)
     try:
         answer = input_fn("Type yes to approve, or press Enter to decline: ")
     except (EOFError, KeyboardInterrupt):
@@ -659,6 +663,37 @@ def install_dependencies(root: Path, env: dict[str, str], electron: bool, skip: 
         raise RuntimeError("JavaScript dependencies missing; run npm ci from the repository root")
 
 
+def prepare_generated_worker(root: Path, env: dict[str, str]) -> dict:
+    """Provision the trusted shipped worker after local consent; missing prerequisites keep native controls usable."""
+    print("Preparing the portable C worker (first image build may take two minutes)…", flush=True)
+    command = ["uv", "run", "--no-sync", "--directory", str(root / "agent"), "python", "-m", "agent.main", "worker", "prepare"]
+    try:
+        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=240)
+        report = json.loads(result.stdout.strip().splitlines()[-1])
+        if not isinstance(report, dict) or type(report.get("available")) is not bool:
+            raise ValueError("Invalid worker readiness report")
+        if report["available"] and result.returncode != 0:
+            raise ValueError("Worker preparation failed")
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        report = {"available": False, "reason": "WORKER_PREPARATION_FAILED", "execution_target": None}
+    if report["available"]:
+        print("Portable C worker is ready; generated jobs still require this session's local approval.", flush=True)
+    else:
+        instructions = {
+            "DOCKER_NOT_INSTALLED": "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ and restart JANUS.",
+            "DOCKER_NOT_RUNNING": "Start Docker Desktop, wait for its engine to be ready, then restart JANUS.",
+            "DOCKER_LINUX_ENGINE_REQUIRED": "Switch Docker Desktop to Linux containers, then restart JANUS.",
+            "DOCKER_LOCAL_ENGINE_REQUIRED": "Select Docker Desktop's local context instead of a remote Docker host, then restart JANUS.",
+            "WORKER_IMAGE_MISSING": "Start Docker Desktop and restart JANUS to build the included worker image.",
+            "WORKER_ENFORCEMENT_UNAVAILABLE": "Use Docker Desktop's Linux engine with cgroup v2 CPU, memory and process limits, then restart JANUS.",
+            "WORKER_BUILD_FAILED": "Check Docker Desktop's access to its pinned image, then restart JANUS to retry the worker build.",
+            "WORKER_ARCHITECTURE_UNSUPPORTED": "Use a 64-bit x86 or ARM Docker Desktop Linux engine, then restart JANUS.",
+        }
+        print("Generated worker unavailable. " + instructions.get(report.get("reason"),
+              "Check Docker Desktop and run `uv run --directory agent python -m agent.main worker prepare` to retry."), file=sys.stderr, flush=True)
+    return report
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Start JANUS backend/database, Studio, phone PWA, tunnels and locally approved laptop controls")
     parser.add_argument("--local-only", action="store_true", help="Skip public phone tunnels")
@@ -702,6 +737,7 @@ def main(argv=None) -> int:
     public_urls = state_dir / "public-urls.json"
     owns_public_urls = False
     sidecar_attempted = False
+    worker_report = None
     stopped = threading.Event()
     old_handlers = {}
     try:
@@ -763,12 +799,15 @@ def main(argv=None) -> int:
             return service
 
         def start_agent():
+            nonlocal worker_report
+            if not env.get("AGENT_ISOLATION_ADAPTER", "").strip():
+                worker_report = prepare_generated_worker(ROOT, env)
             command = ["uv", "run", "--no-sync", "--directory", str(ROOT / "agent"), "python", "-m", "agent.main", "connect", "--url", f"ws://127.0.0.1:{options.backend_port}/ws/agents/{registration.device_id}",
                        "--device-id", registration.device_id, "--workers", "4", "--native-tools", "--validation-policy", str(policy), "--session-approval-stdin"]
             if not options.no_screen:
                 command.append("--screen")
-            if env.get("AGENT_ISOLATION_ADAPTER"):
-                command.extend(["--isolation-adapter", env["AGENT_ISOLATION_ADAPTER"]])
+            if env.get("AGENT_ISOLATION_ADAPTER", "").strip():
+                command.extend(["--isolation-adapter", env["AGENT_ISOLATION_ADAPTER"].strip()])
             return launch("agent", command, extra_env={"AGENT_TOKEN": registration.agent_token}, input_data="JANUS_SESSION_APPROVED\n")
 
         if options.only:
@@ -878,7 +917,8 @@ def main(argv=None) -> int:
         print("Gemini: " + ("configured" if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") else "no key configured; built-in tools remain available"))
         print("Tiger Data history: " + ("configured; backend reports connection/migration failures" if env.get("TIGER_DATABASE_URL") else "optional; SQLite panel and request history remains available"))
         if approved:
-            print("Generated jobs: " + ("configured local isolation adapter" if env.get("AGENT_ISOLATION_ADAPTER") else "blocked until a local isolation adapter is installed"))
+            print("Generated jobs: " + ("configured custom local adapter" if env.get("AGENT_ISOLATION_ADAPTER", "").strip()
+                  else "portable C worker ready" if worker_report and worker_report["available"] else "worker prerequisites unavailable; native controls remain enabled"))
         print("Press Ctrl+C to stop all JANUS services and revoke this session's approval.\n")
         for signum in (signal.SIGINT, signal.SIGTERM):
             signal.signal(signum, lambda *_: stopped.set())

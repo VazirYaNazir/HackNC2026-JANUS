@@ -1,5 +1,5 @@
-// Preflight checks. `setup` and `start` run these automatically and print only failures;
-// `npm run doctor` runs them directly and confirms when everything passes.
+// Setup prerequisites and read-only checks. The Python launcher owns live startup;
+// `npm run doctor` checks services directly and reports actionable prerequisites.
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,15 +51,44 @@ function configuredValue(name, env) {
   return (process.env[name] ?? env?.get(name) ?? '').trim();
 }
 
-/** Gemini generates source drafts; running them separately requires local isolation and authorization. */
-export function aiChecks(env = readEnvFile()) {
+/** Query the same local worker that the agent uses. No generated program runs during this check. */
+export function workerStatus(env = readEnvFile(), { action = 'status', run = capture } = {}) {
+  const result = run('uv', ['run', '--no-sync', '--directory', path.join(ROOT, 'agent'), 'python', '-m', 'agent.main', 'worker', action], {
+    cwd: ROOT, env: { ...Object.fromEntries(env ?? []), ...process.env }, timeout: action === 'prepare' ? 240_000 : 60_000,
+  });
+  try {
+    const report = JSON.parse(result.stdout.trim().split('\n').pop() ?? '');
+    if (typeof report.available !== 'boolean' || report.available && result.code !== 0) throw new Error('Invalid worker report');
+    return report;
+  } catch {
+    return { available: false, reason: 'WORKER_PROBE_FAILED', execution_target: null };
+  }
+}
+
+function workerRemedy(reason) {
+  const remedies = {
+    DOCKER_NOT_INSTALLED: 'Install Docker Desktop from https://www.docker.com/products/docker-desktop/, then run npm start and approve the local session.',
+    DOCKER_NOT_RUNNING: 'Start Docker Desktop and wait for its engine, then restart JANUS.',
+    DOCKER_LINUX_ENGINE_REQUIRED: 'Switch Docker Desktop to Linux containers, then restart JANUS.',
+    DOCKER_LOCAL_ENGINE_REQUIRED: 'Select Docker Desktop’s local context instead of a remote Docker host, then restart JANUS.',
+    WORKER_IMAGE_MISSING: 'Run npm start and approve the local session to build the included worker image, or run npm run setup.',
+    WORKER_ENFORCEMENT_UNAVAILABLE: 'Use Docker Desktop’s Linux engine with cgroup v2 CPU, memory and process limits, then restart JANUS.',
+    WORKER_BUILD_FAILED: 'Check Docker Desktop’s access to its pinned image, then restart JANUS to retry the worker build.',
+    WORKER_ARCHITECTURE_UNSUPPORTED: 'Use a 64-bit x86 or ARM Docker Desktop Linux engine, then restart JANUS.',
+  };
+  return remedies[reason] ?? 'Check Docker Desktop or your custom local adapter, then run uv run --directory agent python -m agent.main worker status.';
+}
+
+/** Gemini generates drafts; the shipped worker is checked independently of the API key. */
+export function aiChecks(env = readEnvFile(), { probe = workerStatus } = {}) {
   const key = configuredValue('GEMINI_API_KEY', env) || configuredValue('GOOGLE_API_KEY', env);
   const results = [];
   if (!key) {
     results.push({ level: 'warn', name: 'AI widgets · Gemini key', message: 'No Gemini key found, so AI source generation is unavailable. Built-in controls (volume, mouse, metrics, processes, screen) work without it.', fix: 'Run `npm run setup` to enter one, or set GEMINI_API_KEY in backend/.env.' });
   }
-  if (!configuredValue('AGENT_ISOLATION_ADAPTER', env)) {
-    results.push({ level: 'warn', name: 'AI widgets · isolation adapter', message: 'No isolation adapter is configured (AGENT_ISOLATION_ADAPTER), so this laptop cannot run generated programs. With a Gemini key you can generate and review C source without an online agent. JANUS does not ship an isolation adapter yet.', fix: 'Set AGENT_ISOLATION_ADAPTER in backend/.env or the process environment to an installed local worker; see README → AI widgets → Isolation adapter.' });
+  const worker = probe(env);
+  if (!worker.available) {
+    results.push({ level: 'warn', name: 'AI widgets · execution worker', message: 'The local portable C worker is unavailable. You can still generate and review C source with a Gemini key; native controls remain available.', fix: workerRemedy(worker.reason) });
   }
   return results;
 }

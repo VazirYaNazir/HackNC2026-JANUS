@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, PanelClient, activeJob, backendHost, jobText, pairBackend } from '@janus/client'
+import { ApiError, PanelClient, activeJob, backendHost, jobText, pairBackend, widgetStates, widgetErrors } from '@janus/client'
 import { parseServerMessage, type GeneratedDraft, type GenerationRequest, type JobView } from '@janus/schema'
 import { mergeHistory, recordJob } from '../../shared/client/src/jobs'
 
@@ -69,6 +69,36 @@ describe('shared frontend transport', () => {
     abort.abort(); expect(init.signal.aborted).toBe(true); expect(fetch).toHaveBeenCalledTimes(1)
     fetch.mockResolvedValue(new Response(JSON.stringify({ detail: 'PROVIDER_UNAVAILABLE' }), { status: 503 }))
     await expect(client.generate(request)).rejects.toMatchObject({ status: 503, message: 'PROVIDER_UNAVAILABLE' })
+  })
+
+  it('plans bounded worker access and submits only exact reviewed source under scoped credentials', async () => {
+    const request: GenerationRequest = { description: 'Volume', operation: 'audio.volume', platform: 'Linux', architecture: 'arm64', capabilities: ['audio.volume'], dependencies: [], output_protocol: 'json-v1' }
+    const program = { ...request, language: 'c11' as const, summary: 'Volume', source: 'int main(void) { return 0; }' }
+    const job = { job_id: 'fresh', state: 'QUEUED' }
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(request))).mockResolvedValueOnce(new Response(JSON.stringify(job), { status: 202 }))
+    vi.stubGlobal('fetch', fetch)
+    const client = new PanelClient({ host: 'https://backend.example', token: 'controller-secret' }), abort = new AbortController()
+    expect(await client.plan('Volume', request, ['audio.volume'], abort.signal)).toEqual(request)
+    expect(String(fetch.mock.calls[0][0])).toBe('https://backend.example/api/v1/programs/plan')
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ description: 'Volume', platform: 'Linux', architecture: 'arm64', allowed_capabilities: ['audio.volume'] })
+    expect(await client.submitSource('laptop', 'fresh', request, program, abort.signal)).toEqual(job)
+    const [url, init] = fetch.mock.calls[1]
+    expect(String(url)).toBe('https://backend.example/api/v1/agent-jobs/source')
+    expect(JSON.parse(init.body)).toEqual({ device_id: 'laptop', job_id: 'fresh', request, program })
+    expect(init.headers.get('Authorization')).toBe('Bearer controller-secret')
+    expect(init.signal).toBe(abort.signal)
+    abort.abort(); expect(fetch.mock.calls[0][1].signal.aborted).toBe(true)
+  })
+
+  it('displays portable JSON values and concrete failures in command and agent widgets', () => {
+    const completed = { job_id: 'completed', widget_id: 'command', state: 'COMPLETED', result: { stdout: '{"version":1,"value":{"volume":60},"janus":[]}' } } as JobView
+    expect(jobText(completed)).toBe('{"volume":60}')
+    expect(jobText({ ...completed, result: { stdout: '{"version":1,"value":"Done"}' } })).toBe('Done')
+    const denied = { ...completed, job_id: 'denied', widget_id: 'agent', state: 'REJECTED', reason: 'CAPABILITY_DENIED', result: null }
+    expect(widgetStates([completed, denied])).toEqual({ command: '{"volume":60}', agent: 'error' })
+    expect(widgetErrors([completed, denied])).toEqual({ agent: 'CAPABILITY_DENIED' })
+    expect(widgetErrors([{ ...denied, result: { stdout: 'partial output', reason: 'TIMEOUT' }, reason: 'EXECUTION_FAILED' }])).toEqual({ agent: 'EXECUTION_FAILED' })
+    expect(widgetErrors([{ ...denied, state: 'EXECUTING' }, denied])).toEqual({})
   })
 
   it('distinguishes pairing network failures, rate limits, and server failures from bad codes', async () => {

@@ -5,10 +5,10 @@ import type { WidgetProps } from "./types";
 const RUN_STATES = ["running", "done", "error"];
 
 export default function AgentPromptWidget(props: WidgetProps) {
-  const { widget, state } = props;
+  const { widget, state, error } = props;
   // `state` is a run state while the agent works, or the reply text once it has answered.
   const reply = state !== undefined && !RUN_STATES.includes(state) ? state : undefined;
-  const status = state === "running" ? "Thinking…" : state === "error" ? "Something went wrong." : reply;
+  const status = state === "running" ? "Thinking…" : state === "error" ? error ?? "Something went wrong." : reply;
 
   return (
     <Frame props={props} selectable className={status ? "jw--reply" : ""}>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GRID, Icon } from "@janus/design";
 import { isNativeAction, type SavedPanel, type Widget, type WidgetValue } from "@janus/schema";
 import { PanelGrid, isInputWidget } from "@janus/widgets";
-import { RequestDialog, activeJob, jobText, useMetricHistory, useNativeControls, usePanel, widgetStates } from "@janus/client";
+import { RequestDialog, activeJob, jobText, useMetricHistory, useNativeControls, usePanel, widgetStates, widgetErrors } from "@janus/client";
 import "@janus/client/styles.css";
 import { createClient, demoValues, isDemoPanel } from "../lib/demo";
 import { loadCachedDocument, saveCachedDocument } from "../lib/layoutCache";
@@ -15,6 +15,9 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
   const [values, setValues] = useState<Record<string, WidgetValue>>(() => (demo ? demoValues : {}));
   const [pending, setPending] = useState<{ widget: Widget; value?: WidgetValue } | null>(null);
   const [error, setError] = useState("");
+  const promptAcceptance = useRef<((accepted: boolean) => void) | null>(null);
+  const closeRequest = () => { promptAcceptance.current?.(false); promptAcceptance.current = null; setPending(null); };
+  useEffect(() => () => { promptAcceptance.current?.(false); promptAcceptance.current = null; }, [client]);
   const controls = useNativeControls(client, setError);
 
   // The last valid layout is kept on the phone, so the panel can be shown (view-only) while the PC is unreachable.
@@ -48,7 +51,10 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
       if (!widget.confirm || window.confirm(`Run ${widget.label} on ${panel.pcName}?`)) controls.send(widget, value);
       return;
     }
-    if (!pending) setPending({ widget, value });
+    if (!pending) {
+      setPending({ widget, value });
+      if (widget.type === 'agent' || widget.type === 'command') return new Promise<boolean>(resolve => { promptAcceptance.current = resolve; });
+    }
   };
 
   return <main className="panel" style={{ padding: `${GRID.padding}px` }}>
@@ -65,13 +71,13 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
       : <p role="status">{live.session?.online ? `Laptop online · ${live.status}` : `Laptop offline · ${live.status}`}</p>}
     {(live.error || error) && <p className="error" role="alert">{error || live.error}</p>}
     {!live.document && cached && <p className="panel__cached">Showing your last saved layout.</p>}
-    {shown ? <PanelGrid fit="content" layout={shown.layout} values={values} data={live.readings} history={history} states={states} onTrigger={handleTrigger} readOnly={!online} onBlocked={() => showNotice(blockedMessage)} /> : unauthorized ? null : live.error ? <p>This panel can't be shown right now.</p> : live.status === "disconnected" ? <p>Can't reach your PC. This panel will appear when it connects.</p> : <p>Loading your saved panel…</p>}
+    {shown ? <PanelGrid fit="content" layout={shown.layout} values={values} data={live.readings} history={history} states={states} errors={widgetErrors(live.jobs)} onTrigger={handleTrigger} readOnly={!online} onBlocked={() => showNotice(blockedMessage)} /> : unauthorized ? null : live.error ? <p>This panel can't be shown right now.</p> : live.status === "disconnected" ? <p>Can't reach your PC. This panel will appear when it connects.</p> : <p>Loading your saved panel…</p>}
     {shown?.layout.widgets.length === 0 && <p>Add controls in the desktop Studio, then choose Save &amp; Push.</p>}
     {live.jobs.length > 0 && <section className="panel__jobs" aria-label="Recent requests"><h2>Recent requests</h2>{live.jobs.slice(0, 10).map((job) => <article key={job.job_id}>
       <strong>{job.state}</strong><small>{job.job_id}</small><p>{jobText(job)}</p>
       {activeJob(job) && <button type="button" className="btn" onClick={() => void client.cancel(job.job_id).then(live.recordJob).catch((reason) => setError(String(reason.message)))}>Cancel request</button>}
     </article>)}</section>}
     {notice && <p className="toast" role="status">{notice}</p>}
-    {pending && <RequestDialog client={client} session={live.session} {...pending} onClose={() => setPending(null)} onSubmitted={live.recordJob} />}
+    {pending && <RequestDialog client={client} session={live.session} {...pending} onClose={closeRequest} onSubmitted={(job) => { promptAcceptance.current?.(true); promptAcceptance.current = null; live.recordJob(job); }} />}
   </main>;
 }

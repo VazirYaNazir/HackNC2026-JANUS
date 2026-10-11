@@ -167,6 +167,24 @@ class EnvironmentAndRegistrationTests(unittest.TestCase):
 
 
 class ApprovalAndOriginTests(unittest.TestCase):
+    def test_startup_discloses_actual_shipped_worker_scope_before_approval(self):
+        output = io.StringIO()
+        observed = []
+        def approve(_):
+            observed.append(output.getvalue())
+            return "yes"
+        self.assertTrue(launcher.approve_startup(input_stream=TTY(), input_fn=approve, output_stream=output))
+        self.assertEqual(len(observed), 1)
+        disclosure = observed[0]
+        for text in ("mouse/volume control", "screen sharing", "process inspection", "lock the desktop",
+                     "start an installed Docker Desktop", "prepare the portable C worker image",
+                     "temporary worker files", "bounded worker processes", "locally granted",
+                     "native controls through checked commands", "Custom adapters must enforce",
+                     "Job outputs may be shared with the backend and paired phones", "Approval ends"):
+            self.assertIn(text, disclosure)
+        self.assertIn("The included worker cannot access laptop files,\nuse the network, send data externally, request admin access or make persistent changes.", disclosure)
+        self.assertNotIn("with file read/write, network/external sending", disclosure)
+
     def test_startup_is_denied_without_a_terminal_and_never_prompts(self):
         ask = Mock(return_value="yes")
         result = launcher.approve_startup(input_stream=io.StringIO(), input_fn=ask, output_stream=io.StringIO())
@@ -964,6 +982,7 @@ class LauncherOrchestrationTests(unittest.TestCase):
             stack.enter_context(patch.object(launcher, "ROOT", self.root))
             stack.enter_context(patch.object(launcher, "load_environment", return_value=dict(self.environment)))
             stack.enter_context(patch.object(launcher, "install_dependencies"))
+            self.worker = stack.enter_context(patch.object(launcher, "prepare_generated_worker", return_value={"available": False, "reason": "DOCKER_NOT_INSTALLED", "execution_target": None}))
             stack.enter_context(patch.object(launcher, "check_ports"))
             stack.enter_context(patch.object(launcher.platform, "system", return_value="Darwin" if approved else "Linux"))
             self.approval = stack.enter_context(patch.object(launcher, "approve_startup", return_value=approved))
