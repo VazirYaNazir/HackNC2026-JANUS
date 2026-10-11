@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { GRID } from "@janus/design";
+import { logicalRectStyle, normalizeLayout } from "@janus/design";
 import type { Layout } from "@janus/schema";
 import WidgetView from "./WidgetView";
 import { isInputWidget, type WidgetProps, type WidgetState, type WidgetValue } from "./types";
@@ -19,15 +19,7 @@ export interface PanelGridProps {
   onTrigger?: WidgetProps["onTrigger"];
 }
 
-const gridStyle: CSSProperties = {
-  display: "grid",
-  alignContent: "start",
-  gridTemplateColumns: `repeat(${GRID.columns}, minmax(0, 1fr))`,
-  gridAutoRows: `${GRID.rowHeight}px`,
-  gap: `${GRID.gap}px`,
-};
-
-/** Renders a Layout on the phone grid. Widget x/y/w/h are grid cells. */
+/** Renders both legacy grid layouts and version 2 logical layouts through one normalized canvas. */
 export default function PanelGrid({
   layout,
   mode = "live",
@@ -38,13 +30,25 @@ export default function PanelGrid({
   onSelect,
   onTrigger,
 }: PanelGridProps) {
+  let normalized;
+  try {
+    normalized = normalizeLayout(layout);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid layout.";
+    return <div className="jw-grid-error" role="alert">{message}</div>;
+  }
+
+  const canvasStyle: CSSProperties = {
+    aspectRatio: `${normalized.canvas.width} / ${normalized.canvas.height}`,
+  };
+
   return (
-    <div className="jw-grid" style={gridStyle}>
-      {layout.widgets.map((widget) => (
+    <div className="jw-grid" style={canvasStyle}>
+      {normalized.widgets.map((widget) => (
         <div
           key={widget.id}
           className="jw-cell"
-          style={{ gridColumn: `${widget.x + 1} / span ${widget.w}`, gridRow: `${widget.y + 1} / span ${widget.h}` }}
+          style={logicalRectStyle(widget) as CSSProperties}
         >
           <WidgetView
             widget={widget}

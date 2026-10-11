@@ -1,4 +1,5 @@
-export const SCHEMA_VERSION = 1;
+export const LEGACY_SCHEMA_VERSION = 1 as const;
+export const SCHEMA_VERSION = 2 as const;
 
 /* ---------- Layout (GET /api/layout) ---------- */
 
@@ -24,8 +25,9 @@ export interface WidgetBase {
   label: string;         // "Run Backup"
   icon?: string;         // built-in name ("lock") or "asset:<id>"
   color?: "amber" | "cyan" | "green" | "graphite" | "coral";
-  x: number; y: number;  // grid cell (4 columns on phone)
-  w: number; h: number;  // span in cells
+  /** Geometry units are defined by the enclosing layout's schema version. */
+  x: number; y: number;
+  w: number; h: number;
 }
 
 export interface InputWidget extends WidgetBase {
@@ -46,12 +48,25 @@ export interface DialWidget extends WidgetBase {
 
 export type Widget = InputWidget | DialWidget;
 
-export interface Layout {
-  schemaVersion: number;
+export interface LegacyGridLayout {
+  schemaVersion: typeof LEGACY_SCHEMA_VERSION;
   name: string;          // "Desk Control"
   columns: number;       // 4 on phone
   widgets: Widget[];
 }
+
+export interface LogicalCanvasLayout {
+  schemaVersion: typeof SCHEMA_VERSION;
+  coordinateSpace: "logical";
+  canvas: {
+    width: number;
+    height: number;
+  };
+  name: string;
+  widgets: Widget[];
+}
+
+export type Layout = LegacyGridLayout | LogicalCanvasLayout;
 
 /* ---------- Pairing (POST /api/pair) ---------- */
 

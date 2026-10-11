@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { GRID } from "@janus/design";
-import { isInput, SCHEMA_VERSION, type Layout, type Widget, type WidgetType } from "@janus/schema";
+import { isInput, LEGACY_SCHEMA_VERSION, type Layout, type Widget, type WidgetType } from "@janus/schema";
 import { PanelGrid, WIDGETS, WIDGET_TYPES, type WidgetValue } from "@janus/widgets";
 import "./Gallery.css";
 
@@ -155,7 +155,7 @@ function section(type: WidgetType, w: number, h: number): Layout {
       ? { ...base, type, action: "gallery.demo", min: 0, max: 100, step: 1, ...(push && { variant: "push" as const }) }
       : { ...base, type, source: sourceOf(type, key), unit: UNITS[type], ...THRESHOLDS[type] };
   });
-  return { schemaVersion: SCHEMA_VERSION, name: `${type} ${w}x${h}`, columns: GRID.columns, widgets };
+  return { schemaVersion: LEGACY_SCHEMA_VERSION, name: `${type} ${w}x${h}`, columns: GRID.columns, widgets };
 }
 
 export default function Gallery() {
