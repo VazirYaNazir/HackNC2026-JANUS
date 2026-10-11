@@ -11,7 +11,7 @@ cd PWA && npm run dev -- --host
 
 The dev server runs over https (self-signed) so the camera works on a phone. Accept the certificate warning once.
 
-Typecheck: `npx tsc -b`. Lint: `npm run lint`. Production build: `npm run build` (output in `dist/`).
+Typecheck: `npx tsc -b`. Lint: `npm run lint`. Tests: `npm test` (vitest; pure logic only, in `tests/`). Production build: `npm run build` (output in `dist/`).
 
 ## Deploy to Vercel
 
