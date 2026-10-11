@@ -5,13 +5,16 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite .",
-    "electron": "electron .",
+    "dev": "vite . --host 127.0.0.1",
+    "electron": "concurrently --kill-others --success first \"npm:dev\" \"npm:electron:app\"",
+    "electron:app": "wait-on http://127.0.0.1:5173 && node electron/launch.cjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@janus/design": "*",
+    "@janus/widgets": "*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

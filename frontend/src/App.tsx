@@ -1,16 +1,19 @@
+import '@janus/design/tokens.css'
 import { TopBar } from './components/TopBar'
-import { Sidebar } from './components/Sidebar'
-import { Canvas } from './components/Canvas'
+import { WidgetPalette } from './components/WidgetPalette'
+import { EditorCanvas } from './components/EditorCanvas'
+import { Inspector } from './components/Inspector'
 import { BottomBar } from './components/BottomBar'
-import './App.css'
+import './styles/glass.css'
+import './styles/studio.css'
 
 function App() {
   return <div className="studio-shell">
     <TopBar />
     <div className="studio-body">
-      <Sidebar side="left" />
-      <Canvas />
-      <Sidebar side="right" />
+      <WidgetPalette />
+      <EditorCanvas />
+      <Inspector />
     </div>
     <BottomBar />
   </div>
