@@ -4,7 +4,8 @@
   "workspaces": [
     "shared/*",
     "PWA",
-    "frontend"
+    "frontend",
+    "imessage"
   ],
   "scripts": {
     "test": "node scripts/test.mjs all",
@@ -13,7 +14,9 @@
     "test:e2e": "node scripts/test.mjs browser",
     "setup": "node scripts/setup.mjs",
     "start": "node scripts/start.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "start:imessage": "node scripts/start.mjs --imessage",
+    "start:demo": "node scripts/start.mjs --imessage --screen --tunnel"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^5.0.3",
