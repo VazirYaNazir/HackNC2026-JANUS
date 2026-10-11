@@ -81,6 +81,20 @@ class MainTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
         detect.assert_not_called()
 
+    def test_registered_native_tools_and_screen_opt_in_use_the_same_connection(self):
+        compiler = CCompiler("clang", "fixture", "Darwin")
+        for screen in (False, True):
+            with patch.dict("os.environ", {"AGENT_TOKEN": "private-fixture-token"}, clear=True), patch("agent.main.detect_compiler", return_value=compiler), patch("agent.main.build_tools", return_value={"volume": "fixture"}) as build, patch("agent.transport.run_connection", AsyncMock()) as connection:
+                args = ["connect", "--device-id", "laptop", "--url", "wss://fixture/ws/agents/laptop", "--native-tools"] + (["--screen"] if screen else [])
+                code, _, _ = self.call(args)
+                self.assertEqual(code, 0); self.assertEqual(connection.call_args.args[3], {"volume": "fixture"})
+                self.assertEqual("screen" in build.call_args.args[0], screen)
+
+    def test_screen_without_local_native_enablement_is_rejected(self):
+        with patch("agent.main.detect_compiler") as compiler:
+            code, _, stderr = self.call(["connect", "--device-id", "laptop", "--url", "wss://fixture/ws/agents/laptop", "--screen"])
+        self.assertEqual(code, 1); self.assertIn("requires --native-tools", stderr); compiler.assert_not_called()
+
     def test_invalid_stream_options_are_reported_without_starting_build(self):
         for args in (["--url", "ws://remote/ws/agent"], ["--url", "wss://fixture/ws/agent", "--screen-interval", "0"]):
             with self.subTest(args=args), patch("agent.main.build_tools") as build:

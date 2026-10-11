@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GRID, Icon } from "@janus/design";
-import type { SavedPanel, Widget, WidgetValue } from "@janus/schema";
+import { isNativeAction, type SavedPanel, type Widget, type WidgetValue } from "@janus/schema";
 import { PanelGrid, isInputWidget } from "@janus/widgets";
-import { RequestDialog, activeJob, jobText, usePanel } from "@janus/client";
+import { RequestDialog, activeJob, jobText, useNativeControls, usePanel } from "@janus/client";
 import "@janus/client/styles.css";
 import { createClient, demoValues, isDemoPanel } from "../lib/demo";
 import { loadCachedDocument, saveCachedDocument } from "../lib/layoutCache";
@@ -15,6 +15,7 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
   const [values, setValues] = useState<Record<string, WidgetValue>>(() => (demo ? demoValues : {}));
   const [pending, setPending] = useState<{ widget: Widget; value?: WidgetValue } | null>(null);
   const [error, setError] = useState("");
+  const controls = useNativeControls(client, setError);
 
   // The last valid layout is kept on the phone, so the panel can be shown (view-only) while the PC is unreachable.
   const [cached] = useState(() => (demo ? null : loadCachedDocument(panel.id)));
@@ -43,6 +44,10 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
     if (!isInputWidget(widget)) return;
     if (!online) return showNotice(blockedMessage);
     if (value !== undefined) setValues((current) => ({ ...current, [widget.id]: value }));
+    if (!demo && isNativeAction(widget.action)) {
+      if (!widget.confirm || window.confirm(`Run ${widget.label} on ${panel.pcName}?`)) controls.send(widget, value);
+      return;
+    }
     if (!pending) setPending({ widget, value });
   };
 

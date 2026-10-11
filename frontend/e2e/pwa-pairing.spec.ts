@@ -25,7 +25,7 @@ async function studio(page: Page) {
   const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/studio/pairing'))
   await page.getByRole('button', { name: 'Pair Device' }).click()
   const result = await (await response).json() as { code: string; host: string }
-  await expect(page.getByRole('img', { name: 'Janus pairing QR code' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'JANUS pairing QR code' })).toBeVisible()
   return result
 }
 
@@ -152,11 +152,11 @@ test('Studio removes expired QR codes and generates a fresh code on demand', asy
   const { code } = await studio(page)
   await page.clock.fastForward(61000)
   await expect(page.getByRole('dialog', { name: 'Pair your phone' }).getByRole('status')).toContainText('Code expired')
-  await expect(page.getByRole('img', { name: 'Janus pairing QR code' })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: 'JANUS pairing QR code' })).toHaveCount(0)
   const response = page.waitForResponse((value) => value.url().endsWith('/api/v1/studio/pairing'))
   await page.getByRole('button', { name: 'New code' }).click()
   expect((await (await response).json()).code).not.toBe(code)
-  await expect(page.getByRole('img', { name: 'Janus pairing QR code' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'JANUS pairing QR code' })).toBeVisible()
 })
 
 test('re-pairing preserves panel identity and rejects a code belonging to another laptop', async ({ page, request }) => {
@@ -199,7 +199,7 @@ test('the real phone camera scanner decodes Studio’s rendered QR and pairs exa
   await studio(page)
   // Feed the actual displayed QR to Chromium's fake video device. The app still
   // runs its real getUserMedia + html5-qrcode decoder and its real HTTP exchange.
-  const pixels = await page.getByRole('img', { name: 'Janus pairing QR code' }).evaluate(async (element: HTMLImageElement) => {
+  const pixels = await page.getByRole('img', { name: 'JANUS pairing QR code' }).evaluate(async (element: HTMLImageElement) => {
     await element.decode()
     const canvas = document.createElement('canvas')
     canvas.width = 640; canvas.height = 480

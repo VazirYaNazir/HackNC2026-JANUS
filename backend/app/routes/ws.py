@@ -36,6 +36,8 @@ async def websocket_endpoint(websocket: WebSocket):
             raise ValueError("Unauthorized")
         subscriber = runtime.events.subscribe(identity)
         await websocket.send_json({"type": "auth_ok"})
+        for source, value in runtime.native.latest.get(identity, {}).items():
+            runtime.events.send(subscriber, {"type": "data", "source": source, "value": value})
 
         async def writer():
             while True:

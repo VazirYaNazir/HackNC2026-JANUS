@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 /** Curated icons for PC control. Widgets reference these by name (`widget.icon`). */
+// Curated static icon metadata is shared by both apps and the editor inspector.
 export const ICONS = {
   save: Save,
   back: ChevronLeft,
@@ -57,6 +58,7 @@ export const ICONS = {
 } satisfies Record<string, ComponentType<LucideProps>>;
 
 export type IconName = keyof typeof ICONS;
+// eslint-disable-next-line react-refresh/only-export-components
 export const ICON_NAMES = Object.keys(ICONS) as IconName[];
 
 export interface IconProps extends Omit<LucideProps, "ref"> {

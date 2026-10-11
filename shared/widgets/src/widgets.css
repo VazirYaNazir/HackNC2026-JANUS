@@ -787,3 +787,8 @@
   }
   .jw--icon .jw__ico { display: inline-block; width: 20px; height: 20px; }
 }
+.jw__processes { overflow: auto; min-height: 0; font-size: 11px; }
+.jw__processes table { width: 100%; border-collapse: collapse; text-align: left; }
+.jw__processes th, .jw__processes td { padding: 4px; }
+.jw__processes td:first-child { overflow-wrap: anywhere; }
+.jw__processes small, .jw__process-context { opacity: .65; }

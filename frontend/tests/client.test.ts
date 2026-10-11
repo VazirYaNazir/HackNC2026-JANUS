@@ -20,7 +20,8 @@ describe('shared frontend transport', () => {
     expect(mergeHistory([completed], [{ ...completed, job_id: 'other' }])).toHaveLength(2)
   })
   it('rejects malformed or unknown frames before changing UI state', () => {
-    for (const raw of ['null', '[]', 'bad json', '{"type":"unknown"}', '{"type":"job_update"}', '{"type":"agent_presence"}', '{"type":"error","message":1}', '{"type":"data","source":"cpu","value":null}']) expect(parseServerMessage(raw)).toBeNull()
+    for (const raw of ['null', '[]', 'bad json', '{"type":"unknown"}', '{"type":"job_update"}', '{"type":"agent_presence"}', '{"type":"error","message":1}', '{"type":"data","source":"cpu","value":{}}']) expect(parseServerMessage(raw)).toBeNull()
+    expect(parseServerMessage('{"type":"data","source":"cpu","value":null}')).toEqual({ type: 'data', source: 'cpu', value: null })
     expect(parseServerMessage('{"type":"auth_ok"}')).toEqual({ type: 'auth_ok' })
   })
   it('allows verified HTTPS or loopback HTTP and rejects credential-bearing addresses', () => {

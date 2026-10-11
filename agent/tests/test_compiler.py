@@ -57,12 +57,13 @@ class CompilerCommandTests(unittest.TestCase):
                     self.assertEqual(runner.call_args.kwargs["timeout"], 2)
 
     def test_legacy_compile_error_contains_structured_result(self):
-        result = CompileResult("gcc", 1, "diagnostic on stdout", "", 10, False, "COMPILE_ERROR")
+        result = CompileResult("gcc", 1, "diagnostic on stdout", "warning on stderr", 10, False, "COMPILE_ERROR")
         compiler = CCompiler("gcc", "not-run", "Darwin")
         with patch.object(CCompiler, "compile_detailed", return_value=result), self.assertRaises(CompilerError) as caught:
             compiler.compile(Path("program.c"), Path("program"))
         self.assertIs(caught.exception.result, result)
         self.assertIn("diagnostic on stdout", str(caught.exception))
+        self.assertIn("warning on stderr", str(caught.exception))
         with patch.object(CCompiler, "compile_detailed", return_value=CompileResult("gcc", 0, "", "", 1, True)):
             self.assertTrue(compiler.compile(Path("program.c"), Path("program")).success)
 

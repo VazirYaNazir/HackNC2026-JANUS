@@ -12,6 +12,8 @@ from app.agent_runtime.similarity import suggestions
 from app.panels import DispatchRequest, PairRequest, SaveLayout, action_request, dispatch
 from app.routes.agent_jobs import CONTROLLER, SERVICE
 from app.tunnel import get_tunnel_url
+from app.agent_runtime.native import NATIVE_ACTIONS
+from app.panels import checked_value
 
 router = APIRouter(tags=["Connected panels"])
 
@@ -128,5 +130,24 @@ async def prepare(payload: DispatchRequest, identity: CONTROLLER, service: SERVI
 async def submit(payload: DispatchRequest, identity: CONTROLLER, service: SERVICE):
     try:
         return (await dispatch(service, identity, payload)).view()
+    except PipelineError as error:
+        raise HTTPException(error.status, error.reason) from None
+
+
+@router.post("/api/v1/native/commands")
+async def native_command(payload: DispatchRequest, identity: CONTROLLER, service: SERVICE):
+    try:
+        document = await service.store.layout(identity)
+        widget = next((item for item in document["layout"]["widgets"] if item["id"] == payload.widget_id), None)
+        allowed = {"native_volume": {"slider", "knob"}, "native_mouse": {"joystick"},
+                   "native_left_click": {"button"}, "native_right_click": {"button"}, "native_scroll": {"slider", "knob"}}
+        if widget is None or widget.get("action") not in NATIVE_ACTIONS or widget["type"] not in allowed[widget["action"]]:
+            raise PipelineError("NATIVE_ACTION_NOT_FOUND", 404)
+        checked_value(widget, payload.value)
+        if widget["action"] == "native_volume" and not 0 <= payload.value <= 100:
+            raise PipelineError("INVALID_WIDGET_VALUE", 422)
+        if widget["action"] == "native_scroll" and (not -100 <= payload.value <= 100 or int(payload.value) != payload.value):
+            raise PipelineError("INVALID_WIDGET_VALUE", 422)
+        return await service.native.command(identity, widget["action"], payload.value)
     except PipelineError as error:
         raise HTTPException(error.status, error.reason) from None

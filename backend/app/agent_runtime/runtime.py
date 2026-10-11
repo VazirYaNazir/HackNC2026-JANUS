@@ -8,6 +8,7 @@ from .jobs import JobManager
 from .llm import GeminiProvider, LLMProvider
 from .events import PanelEvents
 from .store import SQLiteStore
+from .native import NativeManager
 
 
 @dataclass
@@ -18,6 +19,7 @@ class AgentRuntime:
     provider: LLMProvider
     store: SQLiteStore | None = None
     events: PanelEvents | None = None
+    native: NativeManager | None = None
 
     @classmethod
     def create(cls, registry: DeviceRegistry | None = None, provider: LLMProvider | None = None,
@@ -32,7 +34,18 @@ class AgentRuntime:
         hub.on_presence = lambda connection, online: events.publish(connection.identity, {
             "type": "agent_presence", "session": {"device_id": connection.identity.device_id,
                 "online": online, "target": connection.hello.model_dump() if online else None}})
-        return cls(registry, hub, JobManager(hub, provider, settings, store=store, notify=events.publish), provider, store, events)
+        jobs = JobManager(hub, provider, settings, store=store, notify=events.publish)
+        native = NativeManager(hub, events)
+        async def receive(connection, frame):
+            if frame.type == "native_event":
+                await native.receive(connection, frame)
+            else:
+                await jobs.receive(connection, frame)
+        async def disconnected(connection):
+            native.disconnected(connection)
+            await jobs.disconnected(connection)
+        hub.on_event, hub.on_disconnect = receive, disconnected
+        return cls(registry, hub, jobs, provider, store, events, native)
 
     @classmethod
     async def persisted(cls) -> "AgentRuntime":

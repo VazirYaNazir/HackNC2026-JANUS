@@ -17,6 +17,7 @@ function createWindow() {
     height: 900,
     show: false,
     autoHideMenuBar: true,
+    icon: path.join(__dirname, '../public', process.platform === 'win32' ? 'favicon.ico' : 'icon-512.png'),
     backgroundColor: useNativeBackdrop ? '#00000000' : '#11151c',
     ...(useNativeBackdrop ? { backgroundMaterial: 'acrylic' } : {}),
     webPreferences: {
@@ -38,6 +39,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && app.dock) app.dock.setIcon(path.join(__dirname, '../public/icon-512.png'));
   createWindow();
 
   app.on('activate', () => {

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 import { Frame } from "./Frame";
 import WidgetTitle from "./WidgetTitle";
 import { activate, type Vec2, type WidgetProps } from "./types";
@@ -21,6 +21,33 @@ export default function JoystickWidget(props: WidgetProps) {
   const [pos, setPos] = useState<Vec2>(CENTER);
   const [active, setActive] = useState(false);
   const { push, sendNow } = useThrottledSend<Vec2>((v) => activate(props, v), SEND_INTERVAL_MS);
+  const native = 'action' in widget && widget.action === 'native_mouse' && mode === 'live';
+  const held = useRef(false);
+  const latestSend = useRef(sendNow);
+  useEffect(() => { held.current = active; latestSend.current = sendNow; }, [active, sendNow]);
+  // The native mouse has a dead-man timeout; a held stick renews its movement lease.
+  useEffect(() => {
+    if (!native || !active) return;
+    const timer = setInterval(() => sendNow(pos), 150);
+    return () => clearInterval(timer);
+  }, [active, native, pos, sendNow]);
+  useEffect(() => {
+    if (!native) return;
+    const stop = () => {
+      if (!held.current) return;
+      held.current = false; setActive(false); setPos(CENTER); latestSend.current(CENTER);
+    };
+    const hidden = () => { if (document.hidden) stop(); };
+    window.addEventListener('blur', stop);
+    window.addEventListener('pagehide', stop);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('blur', stop);
+      window.removeEventListener('pagehide', stop);
+      document.removeEventListener('visibilitychange', hidden);
+      if (held.current) latestSend.current(CENTER);
+    };
+  }, [native]);
 
   const moveTo = (v: Vec2) => {
     setPos(v);

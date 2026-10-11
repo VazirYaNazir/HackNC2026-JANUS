@@ -4,7 +4,7 @@ export const SCHEMA_VERSION = 2 as const;
 /* ---------- Layout (GET /api/layout) ---------- */
 
 export type InputType = "button" | "toggle" | "slider" | "joystick" | "dpad" | "knob" | "command" | "agent";
-export type DialType = "gauge" | "bar" | "line" | "ring" | "temperature" | "number" | "log" | "stream";
+export type DialType = "gauge" | "bar" | "line" | "ring" | "temperature" | "number" | "log" | "stream" | "processes";
 export type WidgetType = InputType | DialType;
 
 /** Joystick position, each axis -1..1 (y is up). */
@@ -18,6 +18,8 @@ export type WidgetValue = number | string | boolean | Vec2;
 
 export const INPUT_TYPES: readonly InputType[] = ["button", "toggle", "slider", "joystick", "dpad", "knob", "command", "agent"];
 export const isInput = (t: WidgetType): t is InputType => (INPUT_TYPES as readonly string[]).includes(t);
+export const NATIVE_ACTIONS = ['native_volume', 'native_mouse', 'native_left_click', 'native_right_click', 'native_scroll'] as const;
+export const isNativeAction = (action: string): boolean => (NATIVE_ACTIONS as readonly string[]).includes(action);
 
 export interface WidgetBase {
   id: string;            // "w1"
@@ -76,7 +78,7 @@ export interface PanelDocument { layout: Layout; revision: number }
 export interface PairRequest { code: string; name: string; }      // name: "Ana's iPhone"
 export interface PairResponse { token: string; deviceId: string; agentDeviceId: string; pcName: string; }
 
-/** A pairing link, parsed. The PC's QR code encodes `<host>?pairing_code=<6 hex characters>`. */
+/** A pairing link, parsed. New codes contain 12 hex characters; legacy 6-character codes are accepted. */
 export interface PairQR { host: string; code: string; }          // host: "https://abc.trycloudflare.com"
 
 /* ---------- WebSocket (/ws) ---------- */
@@ -94,7 +96,7 @@ export type ServerMessage =
   | { type: "auth_ok" }
   | { type: "status"; widget: string; action: string; state: RunState; output?: string }
   | { type: "confirm_pending"; widget: string; action: string }      // waiting for approval on the PC
-  | { type: "data"; source: string; value: number | string }
+  | { type: "data"; source: string; value: number | string | null }
   | { type: "layout_updated" }
   | { type: "pong" }
   | { type: "job_update"; job: JobView }
@@ -171,7 +173,7 @@ function validServerMessage(msg: unknown): msg is ServerMessage {
   switch (msg.type) {
     case 'auth_ok': case 'layout_updated': case 'pong': return true;
     case 'error': return typeof msg.message === 'string';
-    case 'data': return typeof msg.source === 'string' && (typeof msg.value === 'string' || finite(msg.value));
+    case 'data': return typeof msg.source === 'string' && (msg.value === null || typeof msg.value === 'string' || finite(msg.value));
     case 'confirm_pending': return typeof msg.widget === 'string' && typeof msg.action === 'string';
     case 'status': return typeof msg.widget === 'string' && typeof msg.action === 'string' && ['running', 'done', 'error'].includes(String(msg.state)) && (msg.output === undefined || typeof msg.output === 'string');
     case 'job_update': {
@@ -205,7 +207,7 @@ const fail = (path: string, expected: string): never => {
   throw new PanelDocumentError(`The saved panel is invalid: ${path} must be ${expected}.`);
 };
 
-const isDialType = (type: string) => (['gauge', 'bar', 'line', 'ring', 'temperature', 'number', 'log', 'stream'] as string[]).includes(type);
+const isDialType = (type: string) => (['gauge', 'bar', 'line', 'ring', 'temperature', 'number', 'log', 'stream', 'processes'] as string[]).includes(type);
 const optional = (value: unknown, ok: (v: unknown) => boolean) => value === undefined || ok(value);
 
 function checkWidget(raw: unknown, path: string): void {
@@ -237,7 +239,7 @@ export function parsePanelDocument(raw: unknown): PanelDocument {
   if (!record(layout)) return fail('layout', 'an object');
   const version = layout.schemaVersion;
   if (version !== LEGACY_SCHEMA_VERSION && version !== SCHEMA_VERSION) {
-    throw new PanelDocumentError(`This panel uses layout version ${String(version)}, which this app can't show. Update Janus.`);
+    throw new PanelDocumentError(`This panel uses layout version ${String(version)}, which this app can't show. Update JANUS.`);
   }
   if (typeof layout.name !== 'string') fail('layout.name', 'a string');
   if (version === SCHEMA_VERSION) {

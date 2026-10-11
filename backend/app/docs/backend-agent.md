@@ -103,9 +103,10 @@ uv run --locked python -m agent.main connect \
 
 Set `AGENT_TOKEN` to that laptop's agent credential in its local environment.
 `AGENT_BACKEND_URL`, `AGENT_DEVICE_ID`, and `AGENT_ISOLATION_ADAPTER` can supply
-defaults. The `connect` command carries only generated-job events; it does not
-start screen, process-tree, mouse, volume, or other telemetry uploads. The
-existing `stream` command remains the separate telemetry/control workflow.
+defaults. Add `--native-tools` to start the built-in volume, mouse, metrics and
+relevant-process tools through this same registered connection. Add `--screen`
+to opt into screen sharing too. The legacy `stream` command remains available
+for older integrations; Studio and the PWA use the registered v2 connection.
 
 The existing local grants are keyed by job ID. Choose a fresh ID locally, grant
 only the intended operation/capabilities, and submit that same ID through the

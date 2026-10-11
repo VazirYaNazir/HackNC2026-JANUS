@@ -64,6 +64,7 @@ export class PanelClient {
   prepare(payload: Dispatch, signal?: AbortSignal) { return this.request<Prepared>('/api/v1/panel-actions/prepare', { method: 'POST', body: JSON.stringify(payload), signal }); }
   dispatch(payload: Dispatch) { return this.request<JobView>('/api/v1/panel-actions/dispatch', { method: 'POST', body: JSON.stringify(payload) }); }
   cancel(jobId: string) { return this.request<JobView>(`/api/v1/agent-jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }); }
+  native(payload: Dispatch) { return this.request<{ ok: boolean; request_id: string }>('/api/v1/native/commands', { method: 'POST', body: JSON.stringify(payload) }); }
 
   subscribe(receive: (message: ServerMessage) => void, status: (value: string) => void): () => void {
     let socket: WebSocket | undefined;

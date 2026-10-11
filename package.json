@@ -1,4 +1,19 @@
 {
   "private": true,
-  "workspaces": ["shared/*", "PWA", "frontend"]
+  "type": "module",
+  "workspaces": [
+    "shared/*",
+    "PWA",
+    "frontend"
+  ],
+  "scripts": {
+    "test": "node scripts/test.mjs all",
+    "test:unit": "node scripts/test.mjs unit",
+    "test:coverage": "node scripts/test.mjs coverage",
+    "test:e2e": "node scripts/test.mjs browser"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.3",
+    "vitest": "^5.0.3"
+  }
 }

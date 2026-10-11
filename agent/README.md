@@ -32,7 +32,21 @@ The builder compiles independent tools in up to five threads. Each build stages
 its output before replacing the cache; interruption or failure cancels active
 compiler commands and removes unfinished staging directories.
 
-For streaming, configure `AGENT_TOKEN` securely in the local environment to match
+For Studio and the PWA, use the registered v2 connection instead of the legacy
+streaming path:
+
+```sh
+uv run --locked python -m agent.main connect --url ws://127.0.0.1:8000/ws/agents/my-laptop --device-id my-laptop --native-tools --screen
+```
+
+Set `AGENT_TOKEN` to this registered laptop's agent credential. `--native-tools`
+enables trusted built-in controls and telemetry; `--screen` independently opts
+into screen sharing. The four non-screen tools run without `--screen`. Use
+`--min-cpu`, `--min-ram-mb`, `--screen-interval` and `--temperature-file` to tune
+native sampling. Repository-owned tools do not require a generated-job grant;
+generated C still uses the existing local grants and isolation boundaries.
+
+For legacy streaming, configure `AGENT_TOKEN` securely in the local environment to match
 the backend's agent token; configure `AGENT_BACKEND_URL` to its `/ws/agent` URL.
 No credentials are printed or stored by the agent. Remote connections require
 `wss://`; `ws://` is accepted only for localhost/loopback development.

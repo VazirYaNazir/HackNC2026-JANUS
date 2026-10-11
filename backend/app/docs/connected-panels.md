@@ -156,9 +156,12 @@ Gemini. Semantic matching is advisory; review the candidate's original request.
 Provider calls share the bounded Gemini pool and deadlines with generation and
 repair.
 
-This integration carries generated jobs and results. It does not start the
-agent's separate continuous `stream` workflow or introduce continuous native
-volume, mouse, screen, process-tree, or CPU telemetry transport. JSON fields
+This integration carries generated jobs, results and optional built-in native
+telemetry. Start `agent.main connect` with `--native-tools` for volume, mouse,
+metrics and process trees, and `--screen` for screen frames. **Project → Laptop
+controls starter** supplies ready-made bindings. Native data is scoped to the
+registered laptop and reaches both apps; transient samples remain in memory
+instead of writing every joystick/frame update into SQLite. JSON fields
 from locally shared job output can drive PWA display widgets by their `source`
 key. Backend host CPU/RAM is no longer broadcast as laptop telemetry.
 

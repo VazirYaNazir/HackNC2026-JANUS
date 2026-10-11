@@ -184,11 +184,11 @@ class RunningServer:
         self.agent_tasks, self.sockets = [], []
         return self
 
-    async def agent(self, service, device=1):
+    async def agent(self, service, device=1, native=None):
         websocket = await connect(f"ws://127.0.0.1:{self.port}/ws/agents/device-{device}",
                                   additional_headers={"Authorization": f"Bearer agent-{device}-" + "a" * 32})
         ready = asyncio.Event()
-        task = asyncio.create_task(connected_session(websocket, f"device-{device}", service, on_ready=ready.set))
+        task = asyncio.create_task(connected_session(websocket, f"device-{device}", service, on_ready=ready.set, native=native))
         self.sockets.append(websocket)
         self.agent_tasks.append(task)
         await asyncio.wait_for(ready.wait(), 2)

@@ -56,25 +56,37 @@ async def send(websocket, message) -> None:
     await websocket.send(json.dumps(message, separators=(",", ":"), ensure_ascii=True, allow_nan=False))
 
 
-async def connected_session(websocket, device_id, service, *, on_ready=None) -> None:
+async def connected_session(websocket, device_id, service, *, on_ready=None, native=None) -> None:
     outbox = Outbox()
     session = service.connect(outbox)
     tasks, cancellations = [], set()
     target, arch = service.local_platform or (platform.system(), platform.machine())
     try:
-        await send(websocket, packet(device_id, "agent_hello", None, "CONNECTED", {
+        hello = {
             "platform": target, "architecture": architecture(arch), "max_workers": service.max_parallel, "max_attempts": 3,
-            "build_boundary_available": service.boundary.can_build(), "execution_boundary_available": service.boundary.can_run()}))
+            "build_boundary_available": service.boundary.can_build(), "execution_boundary_available": service.boundary.can_run()}
+        if native is not None:
+            hello["native_streams"] = native.streams
+        await send(websocket, packet(device_id, "agent_hello", None, "CONNECTED", hello))
         ready = decode(await asyncio.wait_for(websocket.recv(), 10), device_id)
         if ready["type"] != "connection_ready" or ready["job_id"] is not None or ready["state"] != "CONNECTED" or set(ready["payload"]) != {"heartbeat_interval"}:
             raise ValueError("Expected connection acknowledgement")
+        if native is not None:
+            await native.start(outbox)
         if on_ready is not None:
             on_ready()
 
         async def writer():
             while True:
                 event = await outbox.get()
-                kind, job_id = event["type"], event["job_id"]
+                kind, job_id = event["type"], event.get("job_id")
+                if kind in ("telemetry", "error", "command_result"):
+                    message = packet(device_id, "native_event", None, "CONNECTED", event)
+                    if len(json.dumps(message).encode()) <= MAX_FRAME_BYTES:
+                        await send(websocket, message)
+                    else:
+                        await send(websocket, packet(device_id, "native_event", None, "CONNECTED", {"type": "error", "stream": event["stream"], "error": "Native sample exceeded the frame limit"}))
+                    continue
                 payload = {key: value for key, value in event.items() if key not in ("type", "job_id")}
                 state = "ACCEPTED" if kind == "job_ack" else "CONNECTED" if kind == "pong" else "REPAIRING" if kind == "repair_requested" else event["status"]
                 await send(websocket, packet(device_id, kind, job_id, state, payload))
@@ -91,6 +103,14 @@ async def connected_session(websocket, device_id, service, *, on_ready=None) -> 
             async for raw in websocket:
                 frame = decode(raw, device_id)
                 kind, job_id, payload = frame["type"], frame["job_id"], frame["payload"]
+                if kind == "native_command":
+                    if job_id is not None or frame["state"] != "CONNECTED" or native is None:
+                        raise ValueError("Native tools are not enabled")
+                    try:
+                        native.command(payload)
+                    except ValueError as error:
+                        await outbox.result({"type": "command_result", "stream": payload.get("target", "volume"), "request_id": payload.get("request_id"), "ok": False, "error": str(error)})
+                    continue
                 if kind == "ping":
                     if job_id is not None or frame["state"] != "CONNECTED" or set(payload) != {"nonce"} or not isinstance(payload["nonce"], str) or len(payload["nonce"]) > 128:
                         raise ValueError("Invalid heartbeat")
@@ -110,6 +130,8 @@ async def connected_session(websocket, device_id, service, *, on_ready=None) -> 
                     await session.handle(message)
 
         tasks = [asyncio.create_task(writer()), asyncio.create_task(reader())]
+        if native is not None:
+            tasks.extend(native.tasks)
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             try:
@@ -126,6 +148,8 @@ async def connected_session(websocket, device_id, service, *, on_ready=None) -> 
                 task.cancel()
             await asyncio.gather(*cancellations, return_exceptions=True)
             await session.close()
+            if native is not None:
+                await native.close()
         closing = asyncio.create_task(cleanup())
         try:
             await asyncio.shield(closing)
@@ -141,7 +165,7 @@ async def connected_session(websocket, device_id, service, *, on_ready=None) -> 
             raise
 
 
-async def run_connection(options, token, service) -> None:
+async def run_connection(options, token, service, binaries=None) -> None:
     retry = 1
     def ready():
         nonlocal retry
@@ -151,7 +175,9 @@ async def run_connection(options, token, service) -> None:
         try:
             async with connect(options.url, additional_headers={"Authorization": f"Bearer {token}"},
                                max_size=MAX_FRAME_BYTES, ping_interval=20, ping_timeout=20, close_timeout=3) as websocket:
-                await connected_session(websocket, options.device_id, service, on_ready=ready)
+                from .live_native import LiveNative
+                native = LiveNative(binaries, options) if binaries else None
+                await connected_session(websocket, options.device_id, service, on_ready=ready, native=native)
         except (ConnectionClosed, InvalidHandshake, OSError, RuntimeError, ValueError) as error:
             print(f"Agent connection interrupted ({type(error).__name__}); retrying", file=sys.stderr)
         await asyncio.sleep(random.uniform(retry / 2, retry))

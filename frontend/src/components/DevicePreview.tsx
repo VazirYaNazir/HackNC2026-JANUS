@@ -12,6 +12,7 @@ interface DevicePreviewProps {
   snapToGrid: boolean
   mode: EditorMode
   values: Record<string, WidgetValue>
+  data?: Record<string, number | string | null>
   onSelect: (id: string | null) => void
   onInsert: (type: WidgetType, rect: Rect) => boolean
   onGeometryChange: (id: string, rect: Rect) => boolean
@@ -137,7 +138,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, onSel
   </div>
 }
 
-export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
+export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, data = {}, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
   const [placement, setPlacement] = useState<DraftGeometry | null>(null)
 
   function proposedPlacement(event: DragEvent<HTMLDivElement>): DraftGeometry | null {
@@ -181,7 +182,7 @@ export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mod
         selected={selectedId === widget.id}
         snapToGrid={snapToGrid}
         mode={mode}
-        value={isInputWidget(widget) ? values[widget.id] : undefined}
+        value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
         onSelect={onSelect}
         onGeometryChange={onGeometryChange}
         onTrigger={onTrigger}

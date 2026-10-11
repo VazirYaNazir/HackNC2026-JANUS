@@ -18,6 +18,7 @@ import StreamWidget from "./StreamWidget";
 import TemperatureWidget from "./TemperatureWidget";
 import ToggleWidget from "./ToggleWidget";
 import UnsupportedWidget from "./UnsupportedWidget";
+import ProcessTreeWidget from './ProcessTreeWidget';
 import type { WidgetProps } from "./types";
 
 /** Size in grid cells (columns x rows). */
@@ -39,6 +40,7 @@ export interface WidgetDef {
 const size = (w: number, h: number): WidgetSize => ({ w, h });
 
 export const WIDGETS: Partial<Record<WidgetType, WidgetDef>> = {
+  processes: { label: 'Process Tree', category: 'Displays', icon: 'cpu', component: ProcessTreeWidget, defaultSize: size(4, 2), sizes: [size(4, 2), size(4, 3)] },
   button: { label: "Button", category: "Controls", icon: "zap", component: ButtonWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1), size(2, 2)] },
   toggle: { label: "Toggle", category: "Controls", icon: "power", component: ToggleWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1)] },
   slider: { label: "Slider", category: "Controls", icon: "volume", component: SliderWidget, defaultSize: size(2, 1), sizes: [size(2, 1), size(4, 1)] },

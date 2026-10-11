@@ -26,8 +26,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Janus',
-        short_name: 'Janus',
+        name: 'JANUS',
+        short_name: 'JANUS',
         description: 'Custom control panels for your PC, on your phone.',
         start_url: '/',
         scope: '/',

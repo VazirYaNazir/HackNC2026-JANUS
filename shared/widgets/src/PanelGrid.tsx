@@ -11,7 +11,7 @@ export interface PanelGridProps {
   /** Current value of stateful inputs (toggle, slider), keyed by widget id. */
   values?: Record<string, WidgetValue>;
   /** Live readings for dials, keyed by `source`. */
-  data?: Record<string, number | string>;
+  data?: Record<string, number | string | null>;
   /** Run state (or the agent's reply) of inputs, keyed by widget id. */
   states?: Record<string, WidgetState>;
   selectedId?: string | null;
@@ -68,7 +68,7 @@ export default function PanelGrid({
               <WidgetView
                 widget={widget}
                 mode={mode}
-                value={isInputWidget(widget) ? values[widget.id] : data[widget.source]}
+                value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
                 state={states[widget.id]}
                 selected={selectedId === widget.id}
                 onSelect={onSelect}

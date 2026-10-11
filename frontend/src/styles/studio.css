@@ -163,7 +163,7 @@
   .studio-body { grid-template-columns: 150px minmax(0, 1fr) 180px; }
   .top-bar { gap: 10px; padding-inline: 12px; }
   .studio-brand div > span, .project-name > span, .toolbar-divider { display: none; }
-  .project-name strong { max-width: 105px; }
+  .project-name input { max-width: 105px; }
   .studio-button { width: 34px; padding: 0; }
   .studio-button > span { display: none; }
   .panel-heading { padding-inline: 12px; }
@@ -182,7 +182,7 @@
   .studio-brand { gap: 6px; }
   .brand-mark { width: 30px; height: 30px; }
   .studio-brand h1 { font-size: 12px; }
-  .project-name strong { max-width: 72px; font-size: 10px; }
+  .project-name input { max-width: 72px; font-size: 10px; }
   .panel-heading { padding: 13px 8px 10px; }
   .panel-heading h2 { font-size: 12px; }
   .panel-eyebrow, .panel-count, .palette-item-copy, .palette-note { display: none; }
@@ -201,3 +201,5 @@
 @media (prefers-reduced-motion: reduce) {
   .category-chevron, .palette-item { transition: none; }
 }
+.project-name input { display: block; width: 150px; border: 0; background: transparent; color: #cbd1dc; font-size: 12px; }
+.brand-mark { object-fit: contain; padding: 2px; background: transparent; border: 0; }

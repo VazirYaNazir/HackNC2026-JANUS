@@ -113,7 +113,7 @@ export default function ScanScreen({ onDone, repairing, initialTarget, method = 
               lastScan.current = key;
               void startPairingRef.current(parsed, "scan");
             }
-            else setError("That isn't a Janus QR code.");
+            else setError("That isn't a JANUS QR code.");
           },
           undefined,
         )

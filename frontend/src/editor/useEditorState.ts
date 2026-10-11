@@ -4,6 +4,7 @@ import type { LogicalCanvasLayout, Widget, WidgetType } from '@janus/schema'
 import { createWidget, type WidgetValue } from '@janus/widgets'
 import { commitHistory, createHistory, redoHistory, undoHistory } from './history'
 import { createEmptyLayout, deleteWidget, insertWidget, nextWidgetId, updateWidget, updateWidgetGeometry, type LayoutMutation } from './layout'
+import { validateProject } from './project'
 
 export type EditorMode = 'edit' | 'preview'
 
@@ -27,6 +28,7 @@ export function useEditorState() {
       setError(mutation.message)
       return false
     }
+    try { validateProject(mutation.layout) } catch (reason) { setError(reason instanceof Error ? reason.message : 'Invalid project.'); return false }
     setHistory((current) => commitHistory(current, mutation.layout))
     setError(null)
     return true
@@ -71,6 +73,8 @@ export function useEditorState() {
   return {
     layout,
     loadLayout,
+    replaceLayout: (layout: LogicalCanvasLayout) => { const ok = commit({ ok: true, layout }); if (ok) { setSelectedId(null); setValues({}); } return ok },
+    renameLayout: (name: string) => name === layout.name || commit({ ok: true, layout: { ...layout, name } }),
     selectedId: selectedWidget ? selectedId : null,
     selectedWidget,
     snapToGrid,

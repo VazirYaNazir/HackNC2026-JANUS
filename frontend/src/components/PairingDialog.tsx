@@ -55,12 +55,12 @@ export function PairingDialog({ client, onClose }: { client: PanelClient; onClos
 
   return <div className="janus-dialog-backdrop"><section className="janus-request" role="dialog" aria-modal="true" aria-labelledby="pair-heading">
     <h2 id="pair-heading">Pair your phone</h2>
-    <p>Open the Janus phone app, choose <strong>Scan to add panel</strong>, and scan this QR. You can also choose <strong>Enter code instead</strong> and enter the address and code below.</p>
-    {pairing?.pwa_url && <p>Scanning with your phone’s Camera app opens Janus with the pairing details filled in. Tap Pair to connect.</p>}
+    <p>Open the JANUS phone app, choose <strong>Scan to add panel</strong>, and scan this QR. You can also choose <strong>Enter code instead</strong> and enter the address and code below.</p>
+    {pairing?.pwa_url && <p>Scanning with your phone’s Camera app opens JANUS with the pairing details filled in. Tap Pair to connect.</p>}
     <label>Phone backend address<input value={host} onChange={(event) => { setImage(''); setHost(event.target.value) }} inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} /></label>
     {loopback && <p className="janus-error" role="alert">Your phone needs an HTTPS backend address. Enter the URL printed by your backend tunnel.</p>}
     {addressError && <p className="janus-error" role="alert">{addressError}</p>}
-    {!loading && !expired && payload && image && <img src={image} width="256" height="256" alt="Janus pairing QR code" />}
+    {!loading && !expired && payload && image && <img src={image} width="256" height="256" alt="JANUS pairing QR code" />}
     {pairing && !expired && <><p>Pairing code: <strong>{pairing.code}</strong></p>
       {link && <label>Pairing link<input readOnly value={link} onFocus={(event) => event.target.select()} /></label>}
     </>}

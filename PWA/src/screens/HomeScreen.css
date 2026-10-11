@@ -89,3 +89,4 @@
 }
 .home__bar > button { width: 100%; max-width: 384px; pointer-events: auto; }
 .home__scan { width: 100%; max-width: 384px; pointer-events: auto; }
+.home__title { display: flex; align-items: center; gap: 12px; }

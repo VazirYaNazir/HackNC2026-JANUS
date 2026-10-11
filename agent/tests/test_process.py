@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -120,8 +121,18 @@ class ProcessTests(unittest.TestCase):
         child = int(result.stdout.strip())
         if sys.platform.startswith("linux"):
             status = Path(f"/proc/{child}/stat")
-            if status.exists():
-                self.assertEqual(status.read_text().rsplit(")", 1)[1].split()[0], "Z")
+            # SIGKILL is asynchronous: pipe handles can close before the kernel
+            # finishes transitioning the orphan to a zombie or reaping it.
+            deadline = time.monotonic() + 2
+            while True:
+                try:
+                    state = status.read_text().rsplit(")", 1)[1].split()[0]
+                except FileNotFoundError:
+                    break
+                if state == "Z":
+                    break
+                self.assertLess(time.monotonic(), deadline, f"Child {child} remains alive in state {state}")
+                time.sleep(0.01)
 
     @unittest.skipIf(os.name == "nt", "POSIX interruption fixture")
     def test_interrupt_kills_and_reaps_trusted_compiler_process(self):
