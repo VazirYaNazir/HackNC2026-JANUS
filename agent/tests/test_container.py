@@ -64,6 +64,41 @@ class BoundaryFixtures:
 
 
 class ClientConfigurationTests(BoundaryFixtures, unittest.TestCase):
+    def test_private_config_discovers_mac_bundled_homebrew_and_user_plugins_without_auth(self):
+        existing = {"/user/.docker/cli-plugins", "/Applications/Docker.app/Contents/Resources/cli-plugins", "/opt/homebrew/lib/docker/cli-plugins"}
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "private", "HOME": "/user"}, clear=True), \
+             patch("agent.container.Path.home", return_value=Path("/user")), \
+             patch("agent.container.platform.system", return_value="Darwin"), \
+             patch("agent.container.Path.is_dir", lambda path: str(path) in existing):
+            boundary = self.boundary(False)
+            config = json.loads((Path(boundary._config.name) / "config.json").read_text())
+            self.assertEqual(config, {"cliPluginsExtraDirs": ["/user/.docker/cli-plugins", "/Applications/Docker.app/Contents/Resources/cli-plugins", "/opt/homebrew/lib/docker/cli-plugins"]})
+            self.assertNotIn("private", json.dumps(config))
+            self.assertNotIn("GEMINI_API_KEY", container.client_environment())
+
+    def test_windows_plugin_paths_respect_original_config_but_never_copy_credentials(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "original"
+            (original / "cli-plugins").mkdir(parents=True)
+            (original / "config.json").write_text('{"auths":{"registry":"private"},"credsStore":"desktop","currentContext":"remote"}')
+            program_files = Path(folder) / "apps"
+            bundled = program_files / "Docker" / "Docker" / "resources" / "cli-plugins"
+            bundled.mkdir(parents=True)
+            with patch.dict(os.environ, {"DOCKER_CONFIG": str(original), "ProgramFiles": str(program_files)}, clear=True), \
+                 patch("agent.container.platform.system", return_value="Windows"):
+                boundary = self.boundary(False)
+                config = json.loads((Path(boundary._config.name) / "config.json").read_text())
+                self.assertEqual(config, {"cliPluginsExtraDirs": [str(original / "cli-plugins"), str(bundled)]})
+                self.assertNotEqual(Path(boundary._config.name), original)
+                self.assertNotIn("DOCKER_CONFIG", container.client_environment())
+                self.assertEqual(set(config), {"cliPluginsExtraDirs"})
+
+    def test_missing_plugin_directories_produce_only_empty_discovery_config(self):
+        with patch.dict(os.environ, {}, clear=True), patch("agent.container.platform.system", return_value="Linux"), \
+             patch("agent.container.Path.home", return_value=Path("/missing")), patch("agent.container.Path.is_dir", return_value=False):
+            boundary = self.boundary(False)
+            self.assertEqual(json.loads((Path(boundary._config.name) / "config.json").read_text()), {"cliPluginsExtraDirs": []})
+
     def test_trusted_creation_allowance_is_separate_from_guest_limits(self):
         boundary = self.boundary()
         self.assertEqual(boundary.operation_timeout(ResourceLimits(), "compile"), 50)
@@ -266,6 +301,31 @@ class ReadinessProbeTests(BoundaryFixtures, unittest.TestCase):
                 boundary, calls = self.probe(engine={**engine, key: value})
                 self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
                 self.assertFalse(any("create" in args for args, _ in calls))
+
+    def test_new_docker_info_without_legacy_cpu_fields_still_requires_real_guest_attestation(self):
+        engine = {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
+                  "SwapLimit": True, "PidsLimit": True, "SecurityOptions": ["seccomp"], "Architecture": "arm64"}
+        boundary, calls = self.probe(engine=engine)
+        self.assertTrue(boundary.available)
+        self.assertTrue(boundary.can_run())
+        self.assertTrue(any("start" in args for args, _ in calls))
+        self.assertIn("rm", calls[-1][0])
+        boundary, calls = self.probe(engine=engine, response={"ready": False, "error": "Verified cgroup v2 resource enforcement is required"})
+        self.assertFalse(boundary.available)
+        self.assertFalse(boundary.can_run())
+        self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
+        self.assertIn("rm", calls[-1][0])
+
+    def test_explicit_legacy_cpu_failure_or_invalid_summary_is_not_ignored(self):
+        engine = {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
+                  "SwapLimit": True, "PidsLimit": True, "SecurityOptions": ["seccomp"], "Architecture": "amd64"}
+        for key in ("CpuCfsPeriod", "CpuCfsQuota"):
+            for value in (False, None, 1, "true"):
+                with self.subTest(key=key, value=value):
+                    boundary, calls = self.probe(engine={**engine, key: value})
+                    self.assertFalse(boundary.can_build())
+                    self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
+                    self.assertFalse(any("create" in args for args, _ in calls))
 
     def test_mutable_tag_wrong_digest_and_invalid_image_ids_cannot_attest_worker(self):
         for metadata in ([{}], [{"Config": {"Labels": {"org.janus.worker.digest": "wrong"}}, "Id": "sha256:" + "a" * 64}],
