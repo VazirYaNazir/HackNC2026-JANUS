@@ -48,5 +48,5 @@ Thumbs.db
 .DS_Store
 *.db
 
-# Janus local tooling (pidfile, pinned cloudflared)
+# JANUS local tooling (pidfile, pinned cloudflared)
 .janus/

@@ -35,4 +35,4 @@ if (mode === 'all' || mode === 'browser') {
   await run(npm, ['run', 'build', '--workspace', '@janus/pwa']);
   await run(npm, ['run', 'test:e2e', '--workspace', 'frontend']);
 }
-console.log(`\nJanus ${mode} checks passed.`);
+console.log(`\nJANUS ${mode} checks passed.`);
