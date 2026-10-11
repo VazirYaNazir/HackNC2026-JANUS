@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@janus/client": "*",
     "@janus/design": "*",
     "@janus/schema": "*",
     "@janus/widgets": "*",

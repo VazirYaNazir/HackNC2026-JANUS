@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { Rect } from '@janus/design'
-import type { Widget, WidgetType } from '@janus/schema'
+import type { LogicalCanvasLayout, Widget, WidgetType } from '@janus/schema'
 import { createWidget, type WidgetValue } from '@janus/widgets'
 import { commitHistory, createHistory, redoHistory, undoHistory } from './history'
 import { createEmptyLayout, deleteWidget, insertWidget, nextWidgetId, updateWidget, updateWidgetGeometry, type LayoutMutation } from './layout'
@@ -15,6 +15,12 @@ export function useEditorState() {
   const [error, setError] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, WidgetValue>>({})
   const layout = history.present
+  const loadLayout = useCallback((layout: LogicalCanvasLayout) => {
+    setHistory(createHistory(layout))
+    setSelectedId(null)
+    setError(null)
+    setValues({})
+  }, [])
 
   const commit = useCallback((mutation: LayoutMutation) => {
     if (!mutation.ok) {
@@ -59,12 +65,12 @@ export function useEditorState() {
   const selectedWidget = useMemo(() => layout.widgets.find(({ id }) => id === selectedId) ?? null, [layout, selectedId])
 
   const triggerWidget = useCallback((widget: Widget, value?: WidgetValue) => {
-    console.info('[studio preview]', { widget: widget.id, value })
     if (value !== undefined) setValues((current) => ({ ...current, [widget.id]: value }))
   }, [])
 
   return {
     layout,
+    loadLayout,
     selectedId: selectedWidget ? selectedId : null,
     selectedWidget,
     snapToGrid,

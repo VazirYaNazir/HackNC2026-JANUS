@@ -22,7 +22,7 @@ function write(panels: SavedPanel[]): SavedPanel[] {
 
 export const listPanels = (): SavedPanel[] => read() ?? [];
 
-export function addPanel(input: Pick<SavedPanel, "name" | "pcName" | "host" | "token">): SavedPanel[] {
+export function addPanel(input: Pick<SavedPanel, "name" | "pcName" | "host" | "token" | "agentDeviceId">): SavedPanel[] {
   const panel: SavedPanel = { ...input, id: crypto.randomUUID(), addedAt: Date.now() };
   return write([...listPanels(), panel]);
 }

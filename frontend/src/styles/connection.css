@@ -1,0 +1,9 @@
+.assistant-options { position: relative; color: var(--text); font-size: 12px; }
+.assistant-options summary { cursor: pointer; white-space: nowrap; }
+.assistant-options > div { position: absolute; right: 0; bottom: 38px; z-index: 10; width: 340px; max-height: 70vh; overflow: auto; padding: 20px; border-radius: 16px; background: var(--surface); box-shadow: var(--neu-raised); }
+.assistant-options label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.assistant-options input, .assistant-options select { color: var(--text); background: var(--surface-raised); border: 1px solid var(--graphite); padding: 6px; border-radius: 8px; }
+.studio-notice { position: absolute; top: 82px; left: 50%; transform: translateX(-50%); z-index: 9; padding: 12px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--neu-raised); max-width: 70vw; font-size: 13px; }
+.studio-notice button { margin-left: 8px; border: 0; background: transparent; color: var(--amber); cursor: pointer; }
+.janus-request article { border-top: 1px solid var(--graphite); padding: 12px 0; }
+.janus-request pre, .janus-request article p { white-space: pre-wrap; overflow-wrap: anywhere; }

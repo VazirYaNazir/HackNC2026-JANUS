@@ -1,188 +1,111 @@
+"""Authenticated panel updates and laptop dispatch; never execute on the server."""
 import asyncio
 import json
-import logging
-import subprocess
-import sys
-from typing import Dict
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-import psutil
-
-from app.db import get_script_by_id, validate_device_token
-
-logger = logging.getLogger("uvicorn.error")
+from app.agent_runtime.connections import PipelineError
+from app.panels import DispatchRequest, action_request, dispatch
 
 router = APIRouter(tags=["WebSocket"])
 ws_router = router
 
-# Active Connection Pool: socket -> metadata dict
-connected_clients: Dict[WebSocket, dict] = {}
-
-
-def _execute_script(code: str) -> dict:
-    try:
-        process = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return {
-            "status": "success" if process.returncode == 0 else "error",
-            "returncode": process.returncode,
-            "stdout": process.stdout.strip(),
-            "stderr": process.stderr.strip(),
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "timeout",
-            "returncode": -1,
-            "stdout": "",
-            "stderr": "Script execution timed out (5s limit)",
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Execution error: {str(exc)}",
-        }
-
 
 async def broadcast_system_stats_loop():
-    """Broadcasts CPU and RAM stats to all connected clients every 2 seconds."""
-    # Prime psutil measurement
-    psutil.cpu_percent(interval=None)
-    try:
-        while True:
-            await asyncio.sleep(2)
-            if not connected_clients:
-                continue
-
-            cpu_usage = psutil.cpu_percent(interval=None)
-            ram_usage = psutil.virtual_memory().percent
-
-            stats_msg = {
-                "type": "stats_update",
-                "data": {
-                    "cpu_percent": cpu_usage,
-                    "ram_percent": ram_usage,
-                    "cpu": cpu_usage,
-                    "ram": ram_usage,
-                },
-            }
-
-            disconnected = []
-            for ws in list(connected_clients.keys()):
-                try:
-                    await ws.send_json(stats_msg)
-                except Exception:
-                    disconnected.append(ws)
-
-            for ws in disconnected:
-                connected_clients.pop(ws, None)
-    except asyncio.CancelledError:
-        pass
+    # Kept for lifecycle compatibility. Cloud CPU/RAM is not laptop telemetry.
+    await asyncio.Future()
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    runtime = websocket.app.state.agent_runtime
+    if runtime.hub.settings.require_tls and websocket.url.scheme != "wss":
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
-
-    # 1. Authentication Handshake (wait up to 10 seconds)
+    subscriber, tasks, commands = None, [], set()
     try:
-        auth_raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
-        auth_data = json.loads(auth_raw)
-    except asyncio.TimeoutError:
-        try:
-            await websocket.send_json({"type": "error", "message": "Authentication timed out."})
-            await websocket.close(code=4003)
-        except Exception:
-            pass
-        return
-    except (json.JSONDecodeError, WebSocketDisconnect):
-        try:
-            await websocket.send_json({"type": "error", "message": "Invalid authentication message."})
-            await websocket.close(code=4003)
-        except Exception:
-            pass
-        return
+        raw = await asyncio.wait_for(websocket.receive_text(), 10)
+        if len(raw.encode()) > 4096:
+            raise ValueError("Invalid authentication")
+        auth = json.loads(raw)
+        if not isinstance(auth, dict) or set(auth) != {"type", "token"} or auth["type"] != "auth" or not isinstance(auth["token"], str):
+            raise ValueError("Invalid authentication")
+        token = auth["token"]
+        identity = await runtime.authenticate(token)
+        if identity is None:
+            raise ValueError("Unauthorized")
+        subscriber = runtime.events.subscribe(identity)
+        await websocket.send_json({"type": "auth_ok"})
 
-    if not isinstance(auth_data, dict) or auth_data.get("type") != "auth" or not auth_data.get("token"):
-        try:
-            await websocket.send_json({"type": "error", "message": "Missing or invalid authentication credentials."})
-            await websocket.close(code=4003)
-        except Exception:
-            pass
-        return
+        async def writer():
+            while True:
+                event = await subscriber.queue.get()
+                if event["type"] == "disconnect":
+                    await websocket.close(code=1013)
+                    return
+                if await runtime.authenticate(token) != identity:
+                    raise ValueError("Revoked credentials")
+                async with asyncio.timeout(5):
+                    await websocket.send_json(event)
 
-    token = auth_data["token"]
-    device_info = validate_device_token(token)
-    if not device_info:
-        try:
-            await websocket.send_json({"type": "error", "message": "Invalid or revoked device token."})
-            await websocket.close(code=4003)
-        except Exception:
-            pass
-        return
+        def error(message):
+            runtime.events.send(subscriber, {"type": "error", "message": message})
 
-    # Add to pool & acknowledge
-    connected_clients[websocket] = device_info
-    await websocket.send_json({"type": "auth_ok"})
-
-    # 2. Message Handling Loop
-    try:
-        while True:
-            raw_msg = await websocket.receive_text()
+        async def trigger(message):
             try:
-                msg = json.loads(raw_msg)
-            except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "Invalid JSON format."})
-                continue
+                payload = DispatchRequest(widget_id=message["widget"], job_id=message["job_id"],
+                    value=message.get("value"), program_id=message.get("program_id"), request_sha256=message.get("request_sha256"))
+                widget, _ = await action_request(runtime, identity, payload)
+                if message.get("action") != widget["action"]:
+                    raise PipelineError("ACTION_MISMATCH", 422)
+                await dispatch(runtime, identity, payload)
+            except (ValueError, KeyError):
+                error("INVALID_TRIGGER")
+            except PipelineError as failure:
+                error(failure.reason)
+            except Exception:
+                error("REQUEST_FAILED")
 
-            if not isinstance(msg, dict):
-                await websocket.send_json({"type": "error", "message": "Expected JSON object."})
-                continue
+        def finished(task):
+            commands.discard(task)
+            if not task.cancelled():
+                task.exception()
 
-            msg_type = msg.get("type")
-
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong"})
-
-            elif msg_type == "trigger":
-                script_id = msg.get("script_id")
-                if not script_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Missing script_id.",
-                    })
+        async def reader():
+            while True:
+                raw = await websocket.receive_text()
+                if len(raw.encode()) > 16384:
+                    raise ValueError("Oversize control frame")
+                if await runtime.authenticate(token) != identity:
+                    raise ValueError("Revoked credentials")
+                try:
+                    message = json.loads(raw)
+                    if not isinstance(message, dict):
+                        raise ValueError("Invalid message")
+                except ValueError:
+                    error("INVALID_MESSAGE")
                     continue
+                if message.get("type") == "ping":
+                    runtime.events.send(subscriber, {"type": "pong"})
+                elif message.get("type") == "trigger" and len(commands) < 4:
+                    task = asyncio.create_task(trigger(message))
+                    commands.add(task)
+                    task.add_done_callback(finished)
+                else:
+                    error("INVALID_MESSAGE_OR_CAPACITY")
 
-                script = get_script_by_id(script_id)
-                if not script:
-                    await websocket.send_json({
-                        "type": "trigger_result",
-                        "script_id": script_id,
-                        "status": "error",
-                        "message": "Script not found.",
-                    })
-                    continue
-
-                execution_result = await asyncio.to_thread(_execute_script, script["code"])
-                await websocket.send_json({
-                    "type": "trigger_result",
-                    "script_id": script_id,
-                    **execution_result,
-                })
-
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Unknown message type: {msg_type}",
-                })
-
-    except WebSocketDisconnect:
-        pass
-    except Exception as exc:
-        logger.warning(f"WebSocket client error: {exc}")
+        tasks = [asyncio.create_task(reader()), asyncio.create_task(writer())]
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+    except (ValueError, KeyError, TimeoutError, WebSocketDisconnect, RuntimeError):
+        try:
+            await websocket.close(code=4003)
+        except (RuntimeError, WebSocketDisconnect):
+            pass
     finally:
-        connected_clients.pop(websocket, None)
+        if subscriber is not None:
+            runtime.events.unsubscribe(subscriber)
+        for task in tasks + list(commands):
+            task.cancel()
+        await asyncio.gather(*tasks, *commands, return_exceptions=True)

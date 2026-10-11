@@ -108,7 +108,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
   const save = (e: FormEvent) => {
     e.preventDefault();
     if (!paired || !name.trim()) return;
-    addPanel({ name: name.trim(), pcName: paired.pcName, host: paired.host, token: paired.token });
+    addPanel({ name: name.trim(), pcName: paired.pcName, host: paired.host, token: paired.token, agentDeviceId: paired.agentDeviceId });
     onDone();
   };
 
