@@ -60,7 +60,7 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
       : <p role="status">{live.session?.online ? `Laptop online · ${live.status}` : `Laptop offline · ${live.status}`}</p>}
     {(live.error || error) && <p className="error" role="alert">{error || live.error}</p>}
     {!live.document && cached && <p className="panel__cached">Showing your last saved layout.</p>}
-    {shown ? <PanelGrid layout={shown.layout} values={values} data={live.readings} states={states} onTrigger={handleTrigger} readOnly={!online} onBlocked={() => showNotice(blockedMessage)} /> : unauthorized ? null : live.error ? <p>This panel can't be shown right now.</p> : live.status === "disconnected" ? <p>Can't reach your PC. This panel will appear when it connects.</p> : <p>Loading your saved panel…</p>}
+    {shown ? <PanelGrid fit="content" layout={shown.layout} values={values} data={live.readings} states={states} onTrigger={handleTrigger} readOnly={!online} onBlocked={() => showNotice(blockedMessage)} /> : unauthorized ? null : live.error ? <p>This panel can't be shown right now.</p> : live.status === "disconnected" ? <p>Can't reach your PC. This panel will appear when it connects.</p> : <p>Loading your saved panel…</p>}
     {shown?.layout.widgets.length === 0 && <p>Add controls in the desktop Studio, then choose Save &amp; Push.</p>}
     {live.jobs.length > 0 && <section className="panel__jobs" aria-label="Recent requests"><h2>Recent requests</h2>{live.jobs.slice(0, 10).map((job) => <article key={job.job_id}>
       <strong>{job.state}</strong><small>{job.job_id}</small><p>{jobText(job)}</p>

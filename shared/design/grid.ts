@@ -184,6 +184,11 @@ export function normalizeLayout(layout: Layout): LogicalCanvasLayout {
   throw new LayoutGeometryError("unsupported-version", `Unsupported layout schema version: ${String(version)}.`);
 }
 
+/** The lowest edge of any rect (y + h), in logical units. 0 when there are none. */
+export function contentBottom(rects: readonly Rect[]): number {
+  return rects.reduce((bottom, rect) => Math.max(bottom, rect.y + rect.h), 0);
+}
+
 export function logicalRectStyle(
   rect: Rect,
   canvas: { width: number; height: number } = LOGICAL_CANVAS,

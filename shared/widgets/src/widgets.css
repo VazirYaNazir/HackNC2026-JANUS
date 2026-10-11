@@ -8,6 +8,8 @@
 
 /* ---------- Grid ---------- */
 .jw-grid { position: relative; width: 100%; overflow: hidden; }
+/* Trimmed to its content: nothing sticks out except the widgets' shadows, which should not be clipped. */
+.jw-grid--fit { overflow: visible; }
 .jw-cell { position: absolute; display: flex; min-width: 0; min-height: 0; }
 .jw-cell > .jw { flex: 1; }
 /* View-only inputs: dimmed, with a transparent button on top that catches taps. */

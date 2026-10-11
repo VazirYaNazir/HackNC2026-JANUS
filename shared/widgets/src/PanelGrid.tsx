@@ -1,5 +1,5 @@
 import { Fragment, type CSSProperties } from "react";
-import { logicalRectStyle, normalizeLayout } from "@janus/design";
+import { contentBottom, logicalRectStyle, normalizeLayout } from "@janus/design";
 import type { Layout, Widget } from "@janus/schema";
 import WidgetView from "./WidgetView";
 import { isInputWidget, type WidgetProps, type WidgetState, type WidgetValue } from "./types";
@@ -23,6 +23,11 @@ export interface PanelGridProps {
    */
   readOnly?: boolean;
   onBlocked?: (widget: Widget) => void;
+  /**
+   * "canvas" (default) is the full logical canvas, as in the builder. "content" cuts the empty space below the
+   * lowest widget. The width scale is the same either way, so every widget keeps the size it has in the builder.
+   */
+  fit?: "canvas" | "content";
 }
 
 /** Renders both legacy grid layouts and version 2 logical layouts through one normalized canvas. */
@@ -37,6 +42,7 @@ export default function PanelGrid({
   onTrigger,
   readOnly = false,
   onBlocked,
+  fit = "canvas",
 }: PanelGridProps) {
   let normalized;
   try {
@@ -46,14 +52,14 @@ export default function PanelGrid({
     return <div className="jw-grid-error" role="alert">{message}</div>;
   }
 
-  const canvasStyle: CSSProperties = {
-    aspectRatio: `${normalized.canvas.width} / ${normalized.canvas.height}`,
-  };
+  // Percent positions are relative to the box, so a shorter box needs positions measured against its own height.
+  const canvas = fit === "content" ? { width: normalized.canvas.width, height: contentBottom(normalized.widgets) } : normalized.canvas;
+  const canvasStyle: CSSProperties = canvas.height > 0 ? { aspectRatio: `${canvas.width} / ${canvas.height}` } : { height: 0 };
 
   return (
-    <div className="jw-grid" style={canvasStyle}>
+    <div className={`jw-grid${fit === "content" ? " jw-grid--fit" : ""}`} style={canvasStyle}>
       {normalized.widgets.map((widget) => {
-        const rect = logicalRectStyle(widget) as CSSProperties;
+        const rect = logicalRectStyle(widget, canvas) as CSSProperties;
         const blocked = readOnly && mode === "live" && isInputWidget(widget);
         return (
           <Fragment key={widget.id}>
