@@ -8,6 +8,7 @@ import base64
 import binascii
 import ctypes
 import errno
+import fcntl
 import json
 import math
 import os
@@ -170,6 +171,31 @@ def _network_interfaces():
     return interfaces
 
 
+def _network_interface_states():
+    """Read namespace-local link flags, closing the inspection socket first."""
+    names = _network_interfaces()
+    if len(names) > 32 or any(not name.isascii() or not 1 <= len(name) <= 15
+                             or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-" for character in name)
+                             for name in names):
+        raise ValueError("Verified network interface flags are required")
+    states = []
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as inspector:
+        for name in sorted(names):
+            response = fcntl.ioctl(inspector.fileno(), 0x8913, struct.pack("256s", name.encode("ascii")))
+            flags = struct.unpack_from("H", response, 16)[0]
+            states.append({"name": name, "loopback": bool(flags & 0x8), "up": bool(flags & 0x1)})
+    return states
+
+
+def _network_isolated(states=None):
+    states = _network_interface_states() if states is None else states
+    # LinuxKit can register dormant fallback tunnels in every network
+    # namespace. DOWN links cannot transmit, and raising them requires the
+    # CAP_NET_ADMIN capability that the worker and its children lack.
+    return (any(state["name"] == "lo" and state["loopback"] for state in states)
+            and all(state["name"] == "lo" or not state["up"] for state in states))
+
+
 def _proc_network_interfaces(path=Path("/proc/self/net/dev")):
     """Supplemental proc view for diagnostics, never the isolation authority."""
     lines = path.read_text(encoding="ascii").splitlines()
@@ -206,7 +232,7 @@ def assert_runtime(limits):
         scratch_bytes += shm.f_blocks * shm.f_frsize
     if scratch_bytes > limits["disk_bytes"] or not os.access(WORK, os.W_OK):
         raise ValueError("Writable storage exceeds the disk budget")
-    if _network_interfaces() != {"lo"}:
+    if not _network_isolated():
         raise ValueError("Worker networking must be disabled")
     if set(os.environ) - {"PATH", "HOSTNAME", "HOME", "LANG", "LC_ALL", "TERM"}:
         raise ValueError("Worker environment must not contain host credentials")

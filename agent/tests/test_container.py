@@ -369,7 +369,7 @@ class WorkerDiagnosticTests(BoundaryFixtures, unittest.TestCase):
             report = boundary.diagnose()
         command.assert_not_called()
         self.assertEqual(set(boundary.describe()), {"available", "reason", "execution_target"})
-        self.assertEqual(report["probe_version"], 3)
+        self.assertEqual(report["probe_version"], 4)
         self.assertEqual(report["diagnostics"], [{"stage": "docker_client", "outcome": "failed"}])
 
     def test_failed_engine_limits_report_exact_checks_without_raw_metadata(self):
@@ -464,6 +464,36 @@ class WorkerDiagnosticTests(BoundaryFixtures, unittest.TestCase):
             self.assertIn("rm", next(arguments for arguments, _ in calls if "rm" in arguments))
         report, _ = self.guest(remove_code=1)
         self.assertEqual(report["code"], "WORKER_CLEANUP_UNVERIFIED")
+
+    def test_bounded_interface_facts_are_forwarded_without_changing_availability(self):
+        from agent.worker_diagnostics import DIAGNOSTIC_CHECKS
+        facts = [{"name": "lo", "loopback": True, "up": True},
+                 {"name": "ip6tnl0", "loopback": False, "up": False}]
+        response = {"ready": False, "code": "WORKER_NETWORK_UNAVAILABLE",
+                    "checks": {key: False for key in DIAGNOSTIC_CHECKS},
+                    "network_interfaces": facts, "extra": "fixture-secret"}
+        report, _ = self.guest(response)
+        self.assertEqual(report["network_interfaces"], facts)
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["code"], "WORKER_NETWORK_UNAVAILABLE")
+        self.assertNotIn("fixture-secret", json.dumps(report))
+
+    def test_malformed_interface_facts_are_omitted_without_hiding_checks(self):
+        from agent.worker_diagnostics import DIAGNOSTIC_CHECKS
+        valid = {"name": "lo", "loopback": True, "up": True}
+        invalid = [None, {}, [], [valid] * 33, [valid, valid],
+                   *([{**valid, "name": value}] for value in ("", "a" * 16, "lo\n", "é", "/private/home", 1)),
+                   [{**valid, "up": 1}], [{**valid, "loopback": "fixture-secret"}],
+                   [{**valid, "extra": "fixture-secret"}], [{"name": "lo", "up": True}]]
+        for facts in invalid:
+            with self.subTest(facts=facts):
+                response = {"ready": True, "code": None,
+                            "checks": {key: True for key in DIAGNOSTIC_CHECKS},
+                            "network_interfaces": facts}
+                report, _ = self.guest(response)
+                self.assertEqual(set(report), {"ready", "code", "checks"})
+                self.assertTrue(report["ready"])
+
 
 
 class ResultValidationTests(unittest.TestCase):
