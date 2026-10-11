@@ -41,7 +41,7 @@ From the root in separate terminals:
 
 ```sh
 npm run dev --workspace frontend
-npm run dev --workspace @janus/pwa -- --host
+npm run dev --workspace @janus/pwa -- --host 0.0.0.0 --port 5174 --strictPort
 ```
 
 Studio's **Connect backend** accepts a backend origin and the laptop's
@@ -69,11 +69,17 @@ macOS/Windows isolation adapter is included. Without one the agent returns
    the expected revision; concurrent edits return `LAYOUT_REVISION_CONFLICT`.
    Phones refresh automatically. Studio offers **Load saved panel** explicitly
    so a remote update does not overwrite unsaved work.
-3. Use **Pair Device** and scan its QR in the PWA, or enter the backend address
-   and code manually. Codes last 60 seconds and are consumed transactionally
-   once. A phone gets a separate credential bound to one laptop, never the
-   laptop's agent/controller credential. Phones cannot edit layouts or mint
-   more pairing codes.
+3. Use **Pair Device** and scan its QR in the PWA, choose **Enter code instead**
+   from the home screen to enter its phone backend address and full 12-character
+   code, or use **Paste pairing link**. Studio chooses the backend's existing
+   HTTPS origin, its automatic Cloudflare tunnel for local connections, or an
+   explicit `PUBLIC_BACKEND_URL`. **Phone backend address** can also be edited
+   to a manually started tunnel's HTTPS URL. Codes last 60 seconds and are
+   consumed transactionally once. Expired QR codes disappear; **New code**
+   creates a fresh code. A phone gets a separate credential bound to one laptop,
+   never the laptop's agent/controller credential. Its connection is saved
+   before naming, and failed manual attempts preserve entered values. Phones
+   cannot edit layouts or mint more pairing codes.
 4. Trigger a control in Studio preview or the PWA. Both display the effective
    request, requested access, a fresh editable request ID, and reuse options.
    Slider/knob/toggle/joystick values are validated and included in the effective
@@ -90,10 +96,18 @@ macOS/Windows isolation adapter is included. Without one the agent returns
    never resubmits a job. Delayed HTTP/history updates cannot replace a later
    terminal result. Switching laptops clears the displayed scope.
 
-All remote clients require HTTPS/WSS. Use Studio through the remotely reachable
-backend origin before pairing: a physical phone's loopback address points to
-that phone. Trust the PWA development certificate for camera access, or deploy
-it using its existing hosting setup. Set `APP_ENV` to a value other than
+All remote clients require HTTPS/WSS. A physical phone's loopback address points
+to that phone; Studio warns when its phone pairing address is still loopback.
+Trust the PWA development certificate for camera access, or deploy it using its
+existing hosting setup. Manual address/code entry requires no camera permission.
+Set optional `PWA_PUBLIC_URL` to the deployed phone app's HTTPS origin and restart
+the backend to make the QR open the PWA directly from the phone's Camera app.
+The launch link fills a review form; the user presses **Pair** before the code
+is exchanged. Without this setting, scan the JSON QR inside the PWA. Both
+origins must exclude paths, query parameters, and credentials. If a tunnel URL
+changes, **Options → Pair again** updates a saved panel's connection while
+retaining its name and ID; codes for a different laptop are rejected.
+Set `APP_ENV` to a value other than
 `development` in deployment, and configure the existing TLS proxy's trusted
 forwarded scheme. Use one backend Uvicorn worker; active socket routing is local
 to that process.
@@ -161,7 +175,7 @@ exchange. Only controller credentials can use Studio mutation/pairing paths.
 | `PUT /api/v1/studio/layout` | `{layout, revision}`; revision conflict is HTTP 409. |
 | `PUT /api/v1/studio/actions/{id}` | Structured `GenerationRequest` action template. |
 | `GET /api/v1/studio/actions/{id}` | Scoped configured request template. |
-| `POST /api/v1/studio/pairing` | `{code, expires_in_seconds}`. |
+| `POST /api/v1/studio/pairing` | `{code, expires_in_seconds, host, pwa_url}`; public backend address and optional deployed PWA origin. |
 | `POST /api/pair` | `{code, name?}` → `{deviceId, agentDeviceId, token, pcName}`. |
 | `GET /api/v1/agent-jobs` | Up to 50 recent scoped persisted job views. |
 | `POST /api/v1/programs/similar` | `GenerationRequest` → `{matches, checked}`. |
@@ -211,18 +225,24 @@ npm run lint --workspace frontend
 npm run lint --workspace @janus/pwa
 npx eslint --config PWA/eslint.config.js shared/client
 npm run test --workspace frontend
+npm run test --workspace @janus/pwa
 npx playwright install chromium
 npm run test:e2e --workspace frontend
 ```
 
-The browser test serves the actual production builds and uses real loopback
+The browser tests serve the actual production builds and use real loopback
 HTTP/WebSocket connections and a temporary database. Studio publishes and runs
 a control, the PWA pairs, explicitly chooses exact program reuse, both receive
 live results, and the PWA reload restores its panel and history. The two
 executions require one mocked generation call. The test-only agent actually
 compiles/runs an exact allowlist of author-written C fixtures; its mocked
 isolation flags do not prove native OS containment. It cannot execute arbitrary
-or live-generated source.
+or live-generated source. Additional cases cover manual address/code entry,
+pasted links, PWA launch links requiring approval, immediate credential
+persistence, expiry/replay, unavailable cameras, network retries, code refresh,
+and laptop-scoped re-pairing. A recorded camera feed contains Studio's actual
+rendered QR; Chromium runs the real `getUserMedia` and `html5-qrcode` decoding
+path and exchanges the code with the real test backend exactly once.
 
 Unit/integration tests also cover atomic pairing, expiration/revocation,
 cross-owner/device isolation, credential imports, additive schema migration,

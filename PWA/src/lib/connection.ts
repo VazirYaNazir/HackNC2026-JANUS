@@ -1,6 +1,7 @@
-import type { PairQR } from "@janus/schema";
 import { pairBackend, PanelClient } from "@janus/client";
 import { isDemoHost } from "./demo";
+
+export { parsePairingLink } from "@janus/client";
 
 /** What the PC returns after a successful pairing. */
 export interface PairResult {
@@ -10,28 +11,10 @@ export interface PairResult {
 }
 
 /**
- * Reads a pairing link, `<host>?pairing_code=<6 hex characters>`: the text the PC's QR code encodes, and what
- * you can paste instead. The scheme is optional (https is assumed). Returns null if it isn't one.
- */
-export function parsePairingLink(text: string): PairQR | null {
-  const raw = text.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    const code = (url.searchParams.get("pairing_code") ?? "").toUpperCase();
-    if (!/^[0-9A-F]{6}$/.test(code)) return null;
-    return { host: url.origin, code };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Exchange a single-use laptop-bound code for a scoped phone credential.
  */
-export async function pair(host: string, code: string): Promise<PairResult> {
-  return pairBackend(host, code);
+export async function pair(host: string, code: string, signal?: AbortSignal): Promise<PairResult> {
+  return pairBackend(host, code, 'Mobile phone', signal);
 }
 
 /** True when this phone's authenticated laptop session is online. */

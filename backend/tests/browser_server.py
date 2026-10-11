@@ -27,6 +27,18 @@ async def main():
         @backend.app.get("/test/metrics")
         async def metrics():
             return {"generation_calls": len(backend.sdk.calls)}
+        @backend.app.post("/test/pairing/{code}/expire")
+        async def expire_pairing(code: str):
+            def expire():
+                with db.get_db() as connection:
+                    connection.execute("UPDATE panel_pairing SET expires_at=0 WHERE code=?", (code,))
+                    connection.commit()
+            await store.call(expire)
+            return {"expired": True}
+        @backend.app.post("/test/phones/{device_id}/revoke")
+        async def revoke_phone(device_id: str):
+            await store.call(db.revoke_device_by_id, device_id)
+            return {"revoked": True}
         stopped = asyncio.Event()
         for name in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().add_signal_handler(name, stopped.set)

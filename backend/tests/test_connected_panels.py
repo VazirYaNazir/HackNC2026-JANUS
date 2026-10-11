@@ -55,6 +55,41 @@ class ConnectedPanelsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json(), {"Authorization": "Bearer " + response.json()["token"]}
 
+    async def test_pairing_advertises_tunnel_public_origin_and_optional_phone_app(self):
+        with patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": ""}), patch("app.routes.studio.get_tunnel_url", return_value="https://active.trycloudflare.com"):
+            response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["host"], "https://active.trycloudflare.com")
+        self.assertEqual(len(response.json()["code"]), 12)
+        self.assertEqual(response.json()["expires_in_seconds"], 60)
+        self.assertIsNone(response.json()["pwa_url"])
+        with patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "https://backend.example/", "PWA_PUBLIC_URL": "https://phone.example/"}):
+            configured = (await self.backend.http.post("/api/v1/studio/pairing", headers=headers())).json()
+        self.assertEqual(configured["host"], "https://backend.example")
+        self.assertEqual(configured["pwa_url"], "https://phone.example")
+        self.assertNotIn("token", configured)
+
+    async def test_pairing_keeps_https_request_origin_and_has_a_local_development_fallback(self):
+        # Exercise the route through ASGI so its scheme is really HTTPS, without a TLS fixture server.
+        import httpx
+        with patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": ""}), patch("app.routes.studio.get_tunnel_url", return_value="https://other.trycloudflare.com"):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.backend.app), base_url="https://connected.example") as client:
+                response = await client.post("/api/v1/studio/pairing", headers=headers())
+            self.assertEqual(response.json()["host"], "https://connected.example")
+        with patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": ""}), patch("app.routes.studio.get_tunnel_url", return_value=None):
+            fallback = (await self.backend.http.post("/api/v1/studio/pairing", headers=headers())).json()
+        self.assertEqual(fallback["host"], f"http://127.0.0.1:{self.backend.port}")
+
+    async def test_pairing_rejects_invalid_public_configuration_before_minting_a_code(self):
+        for name in ("PUBLIC_BACKEND_URL", "PWA_PUBLIC_URL"):
+            for value in ("http://remote.example", "https://user:secret@host.example", "https://host.example/path", "https://host.example?token=secret", "https://host.example#fragment", "https://host.example:99999", "https://bad host.example", "https://[bad"):
+                with self.subTest(name=name, value=value), patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": "", name: value}):
+                    response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["detail"], f"INVALID_{name}")
+        with db.get_db() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM panel_pairing").fetchone()[0], 0)
+
     async def browser(self, token):
         socket = await connect(f"ws://127.0.0.1:{self.backend.port}/ws")
         await socket.send(json.dumps({"type": "auth", "token": token}))

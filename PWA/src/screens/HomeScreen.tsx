@@ -11,6 +11,8 @@ import "./HomeScreen.css";
 interface HomeScreenProps {
   onOpen: (panel: SavedPanel) => void;
   onScan: () => void;
+  onManual: () => void;
+  onRepair: (panel: SavedPanel) => void;
 }
 
 type Sheet = { kind: "menu" | "rename" | "remove"; panel: SavedPanel } | null;
@@ -18,7 +20,7 @@ type Status = "checking" | "online" | "offline";
 
 const LONG_PRESS_MS = 500;
 
-export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
+export default function HomeScreen({ onOpen, onScan, onManual, onRepair }: HomeScreenProps) {
   const [panels, setPanels] = useState(listPanels);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [name, setName] = useState("");
@@ -64,7 +66,7 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
       {panels.length === 0 ? (
         <>
           <InstallBanner prominent />
-          <p className="home__empty">Open Janus on your PC and scan its QR code to add your first panel.</p>
+          <p className="home__empty">Choose Pair Device in desktop Studio, then scan its QR code or enter its address and code to add your first panel.</p>
           <p className="home__demo">
             <button type="button" className="home__link" onClick={() => setPanels(addDemoPanel())}>
               Add demo panel
@@ -123,10 +125,15 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
           <Icon name="scan" size={20} />
           Scan to add panel
         </button>
+        <button type="button" className="btn" onClick={onManual}>Enter code instead</button>
       </div>
 
       {sheet?.kind === "menu" && (
         <Dialog title={sheet.panel.name} onClose={close}>
+          {!isDemoPanel(sheet.panel) && <button type="button" className="btn" onClick={() => {
+            const panel = sheet.panel;
+            close(); onRepair(panel);
+          }}>Pair again</button>}
           <button
             type="button"
             className="btn"
