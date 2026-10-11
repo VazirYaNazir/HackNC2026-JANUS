@@ -90,6 +90,45 @@ class ConnectedPanelsTests(unittest.IsolatedAsyncioTestCase):
         with db.get_db() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM panel_pairing").fetchone()[0], 0)
 
+    async def test_launcher_origins_are_dynamic_and_unavailable_backend_does_not_mint_code(self):
+        origins = Path(self.folder.name) / "public-urls.json"
+        environment = {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": "", "JANUS_PUBLIC_URLS_FILE": str(origins)}
+        with patch.dict("os.environ", environment):
+            for content in (None, {"backend": None, "pwa": None}):
+                if content is not None:
+                    origins.write_text(json.dumps(content))
+                response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["detail"], "PUBLIC_BACKEND_UNAVAILABLE")
+            with db.get_db() as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM panel_pairing").fetchone()[0], 0)
+            for prefix in ("initial", "replacement"):
+                document = {"backend": f"https://{prefix}.trycloudflare.com", "pwa": f"https://{prefix}-phone.trycloudflare.com"}
+                temporary = origins.with_suffix(".tmp")
+                temporary.write_text(json.dumps(document))
+                temporary.replace(origins)
+                response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["host"], document["backend"])
+                self.assertEqual(response.json()["pwa_url"], document["pwa"])
+                self.assertEqual(response.json()["status"], "ready")
+            with patch.dict("os.environ", {"PUBLIC_BACKEND_URL": "https://stable.example", "PWA_PUBLIC_URL": "https://stable-phone.example"}):
+                response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+                self.assertEqual(response.json()["host"], "https://stable.example")
+                self.assertEqual(response.json()["pwa_url"], "https://stable-phone.example")
+
+    async def test_launcher_origin_file_rejects_unsafe_values_without_echoing_them(self):
+        origins = Path(self.folder.name) / "public-urls.json"
+        environment = {"PUBLIC_BACKEND_URL": "", "PWA_PUBLIC_URL": "", "JANUS_PUBLIC_URLS_FILE": str(origins)}
+        for document in ('private secret', json.dumps({"backend": "http://remote.example", "pwa": None}), json.dumps({"backend": "https://user:private@host.example", "pwa": None}), json.dumps({"backend": None, "pwa": 42}), json.dumps({"backend": None}), 'x' * 4097):
+            origins.write_text(document)
+            with self.subTest(document_type=type(document)), patch.dict("os.environ", environment):
+                response = await self.backend.http.post("/api/v1/studio/pairing", headers=headers())
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["detail"], "INVALID_JANUS_PUBLIC_URLS_FILE")
+        with db.get_db() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM panel_pairing").fetchone()[0], 0)
+
     async def browser(self, token):
         socket = await connect(f"ws://127.0.0.1:{self.backend.port}/ws")
         await socket.send(json.dumps({"type": "auth", "token": token}))

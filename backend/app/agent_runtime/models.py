@@ -65,7 +65,7 @@ class GeneratedProgram(StrictModel):
 
     def manifest(self, job_id: str) -> dict[str, Any]:
         return {"type": "validate_job", "job_id": job_id, "attempt": 1,
-                **self.model_dump(exclude={"summary", "output_protocol"})}
+                **self.model_dump(exclude={"summary"})}
 
 
 class SubmitGeneration(StrictModel):

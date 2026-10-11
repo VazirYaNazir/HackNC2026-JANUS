@@ -34,7 +34,12 @@ function createWindow() {
   if (app.isPackaged) {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   } else {
-    win.loadURL('http://127.0.0.1:5173');
+    const configured = process.env.JANUS_STUDIO_URL || 'http://127.0.0.1:5173';
+    const url = new URL(configured);
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname) || url.username || url.password || url.pathname !== '/') {
+      throw new Error('JANUS_STUDIO_URL must address the local Studio server');
+    }
+    win.loadURL(url.href);
   }
 }
 

@@ -72,8 +72,10 @@ macOS/Windows isolation adapter is included. Without one the agent returns
 3. Use **Pair Device** and scan its QR in the PWA, choose **Enter code instead**
    from the home screen to enter its phone backend address and full 12-character
    code, or use **Paste pairing link**. Studio chooses the backend's existing
-   HTTPS origin, its automatic Cloudflare tunnel for local connections, or an
-   explicit `PUBLIC_BACKEND_URL`. **Phone backend address** can also be edited
+   HTTPS origin, the full launcher's current backend/PWA tunnels, its standalone
+   automatic tunnel, or an explicit `PUBLIC_BACKEND_URL`. Managed pairing waits
+   for a published backend origin; it never creates a phone QR with loopback
+   while the launcher tunnel is unavailable. **Phone backend address** can also be edited
    to a manually started tunnel's HTTPS URL. Codes last 60 seconds and are
    consumed transactionally once. Expired QR codes disappear; **New code**
    creates a fresh code. A phone gets a separate credential bound to one laptop,

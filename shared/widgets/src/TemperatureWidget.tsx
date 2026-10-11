@@ -25,6 +25,7 @@ export default function TemperatureWidget(props: WidgetProps) {
         {reading === undefined ? "—" : Math.round(reading)}
         <small>{unit}</small>
       </span>
+      {reading === undefined && props.telemetryStatus && props.telemetryStatus !== 'Live' && <small className="jw__data-status">{props.telemetryStatus}</small>}
     </Frame>
   );
 }

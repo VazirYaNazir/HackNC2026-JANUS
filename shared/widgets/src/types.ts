@@ -10,6 +10,8 @@ export interface WidgetProps {
   mode: "edit" | "live";
   value?: WidgetValue;
   state?: WidgetState;
+  /** Native publisher status, including permission or capture failures. */
+  telemetryStatus?: string;
   selected?: boolean;
   onSelect?: (id: string) => void;
   onTrigger?: (widget: Widget, value?: WidgetValue) => void;

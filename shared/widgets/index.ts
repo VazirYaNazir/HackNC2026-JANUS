@@ -5,4 +5,5 @@ export { WIDGETS, WIDGET_TYPES, createWidget, getWidgetComponent, getWidgetDef, 
 export type { WidgetDef, WidgetSize } from "./src/registry";
 export { isDialWidget, isInputWidget } from "./src/types";
 export { getWidgetAccent } from './src/accent';
+export { builtinActions, builtinSources, defaultBinding, sourceUnit, telemetryStatus } from './src/bindings';
 export type { Vec2, WidgetProps, WidgetState, WidgetValue } from "./src/types";

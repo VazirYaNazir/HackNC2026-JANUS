@@ -50,8 +50,35 @@ uv run --no-sync python -m agent.main stream \
 This registers grants; generated builds remain blocked until the local app
 provides a verified boundary. Unknown policy fields are rejected, including
 worker commands and purported sandbox-verification flags. The policy file is
-limited to 256 KiB and 256 grants. Resource limits can be reduced by a local
-Python application through `ExecutionPolicy(limits=ResourceLimits(...))`.
+limited to 256 KiB and 256 explicit grants. Resource limits can be reduced by a
+local Python application through `ExecutionPolicy(limits=ResourceLimits(...))`.
+
+For approval once at local startup, a policy may instead contain `jobs: []` and a
+`session` scope. [The complete example](../validation-policy.example.json) includes
+all eleven capabilities, all supported dependencies, every operation (`["*"]`),
+output sharing, three compilation attempts, 128 KiB source, and the existing
+bounded worker budgets. The full launcher chooses only dependencies for the
+current OS when preparing its default `.validation-policy.json`.
+
+**A session JSON file never grants approval by itself.** Direct `connect` launches
+must add `--approve-session`, disclose the local scope, and receive `APPROVE` from
+an interactive terminal. Noninteractive input and any other answer stop startup.
+The full local launcher asks once for its combined native/generated scope, then
+starts the agent with `--session-approval-stdin` and sends exactly
+`JANUS_SESSION_APPROVED\n` through its local stdin pipe. These two flags are
+mutually exclusive. This is a local CLI facility: WebSocket messages cannot set
+these flags, provide approval, or change the session scope. Approval exists only
+in memory for the current agent process and is not persisted in the policy file.
+
+An approved scope mints a separate immutable `ExecutionPolicy` for each fresh
+request ID after parsing its full manifest. It preserves the operation, requested
+capability/dependency subset, and `output_protocol`; names outside the local scope
+are denied. Explicit per-job grants take precedence. Grant consumption, artifact
+integrity, reconnection replay protection and the four-worker limit still apply.
+Neither session consent nor broad capability names supply an isolation adapter.
+The session `limits` object can reduce the documented worker budgets but cannot
+exceed their supported maxima. A narrowed scope may list specific `operations`
+instead of `"*"`, and restrict `output_protocols` to `text` or `json-v1`.
 
 `execute_authorized` defaults to false and must represent local authorization
 for that particular job. `share_outputs` is a separate local opt-in to transfer
@@ -83,9 +110,9 @@ Available dependency declarations map to fixed local compiler arguments:
 
 Use the existing authenticated agent WebSocket. Its `agent_hello.validation`
 field advertises protocol version 1, source/attempt limits, and whether the local
-build and execution boundaries are available. The repository backend still
-needs handlers for these messages; this change does not implement backend LLM
-calls or frontend forwarding.
+build and execution boundaries are available. The registered backend connection
+wraps these messages in its version 2 authenticated device envelope and forwards
+job events to connected Studio/PWA clients.
 
 An initial job has exactly these fields:
 
@@ -100,7 +127,8 @@ An initial job has exactly these fields:
   "platform": "Darwin",
   "architecture": "arm64",
   "capabilities": [],
-  "dependencies": []
+  "dependencies": [],
+  "output_protocol": "json-v1"
 }
 ```
 
@@ -109,6 +137,8 @@ use lowercase ASCII letters, digits, dots, underscores, or hyphens, begin with a
 letter, and are at most 64 characters. Platforms are `Darwin` or `Windows` and
 must match the machine. Architecture aliases normalize `AMD64` to `x86_64` and
 `aarch64` to `arm64`.
+`output_protocol` is `text` or `json-v1`. Legacy messages may omit it, defaulting
+to `text`; newly generated backend jobs retain their requested protocol.
 
 Contract checks require nonempty UTF-8 source, no NULs, the local size limit,
 exactly one normal `int main(void)` or `int main(int argc, char **argv)` definition,

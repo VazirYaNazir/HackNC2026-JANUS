@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
 import { PanelClient } from '@janus/client';
 import type { ServerMessage } from '@janus/schema';
+import { createWidget } from '@janus/widgets';
 import Studio from '../src/App';
 import PWA from '../../PWA/src/App';
 import ScanScreen from '../../PWA/src/screens/ScanScreen';
@@ -14,8 +16,8 @@ import './dom';
 
 vi.mock('html5-qrcode', () => ({ Html5Qrcode: class { start = vi.fn().mockRejectedValue(new Error('camera denied')); stop = vi.fn().mockResolvedValue(undefined); clear = vi.fn(); } }));
 
-function backend() {
-  let layout = laptopProject(), revision = 1, receive!: (message: ServerMessage) => void;
+function backend(project = laptopProject()) {
+  let layout = project, revision = 1, receive!: (message: ServerMessage) => void;
   vi.spyOn(PanelClient.prototype, 'request').mockImplementation(async path => {
     if (path === '/api/v1/studio/session') return { device_id: 'laptop', online: true };
     if (path === '/api/layout') return { layout, revision };
@@ -32,6 +34,34 @@ function backend() {
 }
 
 describe('both app roots and panel workflows', () => {
+  it('Studio consumes launcher bootstrap only once in StrictMode and keeps credentials out of URL and storage', async () => {
+    backend(); localStorage.clear();
+    window.history.replaceState(null, '', '/#janus-start=http%3A%2F%2F127.0.0.1%3A12345&nonce=fixture_nonce_1234567890');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ host: 'http://localhost:8000', token: 'startup-controller-secret' }) });
+    vi.stubGlobal('fetch', fetch);
+    render(<StrictMode><Studio /></StrictMode>);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Laptop online · connected/ })).toBeTruthy());
+    expect(fetch).toHaveBeenCalledTimes(1); expect(window.location.hash).toBe('');
+    expect(document.body.textContent).not.toContain('startup-controller-secret'); expect(localStorage.length).toBe(0);
+  });
+
+  it('Studio mirrors native permission errors and generated Agent replies just as the phone does', async () => {
+    const project = laptopProject();
+    project.widgets = [{ ...createWidget('agent', 'assistant', { x: 0, y: 0, w: 360, h: 170 }), action: 'assistant_action' } as typeof project.widgets[number], { ...project.widgets[7], y: 182 }];
+    const b = backend(project), view = render(<Studio />);
+    fireEvent.click(screen.getByRole('button', { name: 'Connect backend' }));
+    fireEvent.change(screen.getByLabelText('Laptop controller credential'), { target: { value: 'controller' } }); fireEvent.click(screen.getByRole('button', { name: 'Connect', exact: true }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Laptop online · connected/ })).toBeTruthy());
+    b.message({ type: 'data', source: 'native.screen.status', value: 'Screen Recording permission denied' });
+    expect(screen.getByText('Screen Recording permission denied')).toBeTruthy();
+    const job = { job_id: 'generated', device_id: 'laptop', widget_id: 'assistant', state: 'GENERATING', reason: null, result: null, elapsed_ms: 1, cancellation_confirmed: false };
+    b.message({ type: 'job_update', job }); expect(screen.getByText('Thinking…')).toBeTruthy();
+    b.message({ type: 'job_update', job: { ...job, state: 'COMPLETED', result: { stdout: 'Reply from laptop' }, elapsed_ms: 2 } });
+    expect(screen.getByText('Reply from laptop')).toBeTruthy();
+    b.message({ type: 'data', source: 'native.screen.status', value: 'Live' });
+    b.message({ type: 'data', source: 'screen.frame', value: 'data:image/jpeg;base64,frame' });
+    fireEvent.load(view.container.querySelector('.jw--stream img')!); expect(screen.getByText('LIVE')).toBeTruthy();
+  });
   it('Studio connects, publishes, previews live data, dispatches native controls and opens history', async () => {
     const b = backend(); render(<Studio />); fireEvent.click(screen.getByRole('button', { name: 'Connect backend' }));
     fireEvent.change(screen.getByLabelText('Laptop controller credential'), { target: { value: 'controller' } }); fireEvent.click(screen.getByRole('button', { name: 'Connect', exact: true }));

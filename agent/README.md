@@ -63,6 +63,11 @@ sample per stream when the network is slow. Command acknowledgements are
 prioritized. The startup `agent_hello` message lists enabled streams and commands.
 Use Ctrl+C to stop. Screen capture starts only with `--screen`, and cannot be
 enabled remotely through the command protocol.
+On macOS this local opt-in requests Screen Recording access once. Enable your
+terminal or JANUS in **System Settings → Privacy & Security → Screen Recording**
+and restart JANUS when macOS requires it. Windows capture requires the signed-in
+user's unlocked interactive desktop. JPEG frames are automatically reduced to
+fit the backend's live-frame limit; a capture failure appears as a stream error.
 
 ## Generated C validation and repair
 
@@ -86,6 +91,32 @@ The bridge also routes `validate_job`, `code_revision`, `execute_job`, and
 source contract, at most three compilations, sanitized backend repair requests,
 and a separate artifact/execution authorization gate. Runtime outputs stay local
 unless the local policy explicitly opts into sharing them.
+
+The full application launcher prepares `agent/.validation-policy.json` with a
+session scope covering every supported capability and the current OS libraries,
+then asks for local startup permission. This file describes scope and cannot
+activate session approval by itself. Approval lasts until the agent process stops;
+fresh request IDs receive individual local grants, and consumed IDs cannot be
+replayed after reconnecting. The launcher sends the approved agent one local
+stdin-pipe message so no second prompt is needed. Approval is never saved to disk.
+
+For a direct agent launch, copy [the complete policy example](validation-policy.example.json)
+to `.validation-policy.json`, set the registered laptop's `AGENT_TOKEN`, then use:
+
+```sh
+uv run --locked python -m agent.main connect \
+  --url ws://127.0.0.1:8000/ws/agents/laptop-1 --device-id laptop-1 \
+  --validation-policy .validation-policy.json --approve-session \
+  --native-tools --screen --workers 4
+```
+
+Review the disclosed scope and type `APPROVE` in your local terminal. A declined
+or noninteractive prompt stops startup. Remove capability/dependency names or
+replace the `operations: ["*"]` wildcard with specific operation names to narrow
+the scope. Existing explicit `jobs` grants take precedence over session defaults.
+The example includes both OS dependency sets; each generated job must still target
+the current OS and declare only its available libraries. Runtime budgets may be
+reduced in `session.limits`; startup approval cannot expand their supported maxima.
 
 Generated-code compilation and execution **are blocked by default**: a verified
 macOS/Windows isolation worker is not supplied. The five repository-owned tools

@@ -394,6 +394,7 @@
 .jw__frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
 .jw__frame--dim { opacity: 0.6; }
 .jw__nosignal { padding: 0 12px; font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); text-align: center; }
+.jw__data-status { max-width: 100%; color: var(--text-muted); font-size: var(--jw-font-min); text-align: center; overflow-wrap: anywhere; }
 .jw__live { flex: none; font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); }
 .jw__live--live { color: var(--coral); }
 .jw__live--live::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 8px var(--coral); }

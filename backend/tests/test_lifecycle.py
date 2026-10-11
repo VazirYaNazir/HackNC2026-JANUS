@@ -25,6 +25,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "fixture startup caller failure"):
                 async with lifespan(target):
                     self.assertIs(target.state.agent_runtime, runtime)
+                    await asyncio.sleep(0)
                     raise RuntimeError("fixture startup caller failure")
             database.assert_awaited_once()
             thread.return_value.start.assert_called_once()
@@ -32,6 +33,40 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             stop.assert_awaited_once()
             runtime.close.assert_awaited_once()
             self.assertTrue(server.should_exit)
+
+    async def test_cloudflare_does_not_block_backend_startup_and_pending_start_is_cancelled(self):
+        runtime = SimpleNamespace(close=AsyncMock())
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        async def blocked_tunnel(port):
+            self.assertEqual(port, 9100)
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+        target = SimpleNamespace(state=SimpleNamespace())
+        with patch.dict(os.environ, {"JANUS_TUNNEL_MODE": "auto", "JANUS_BACKEND_PORT": "9100"}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server"), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", side_effect=blocked_tunnel), patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", AsyncMock()):
+            async with asyncio.timeout(1):
+                async with lifespan(target):
+                    await started.wait()
+            self.assertTrue(cancelled.is_set())
+            runtime.close.assert_awaited_once()
+
+    async def test_managed_launcher_disables_backend_tunnel(self):
+        runtime = SimpleNamespace(close=AsyncMock())
+        target = SimpleNamespace(state=SimpleNamespace())
+        with patch.dict(os.environ, {"JANUS_TUNNEL_MODE": "off"}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server"), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", AsyncMock()):
+            async with lifespan(target):
+                await asyncio.sleep(0)
+            tunnel.assert_not_awaited()
+
+    async def test_invalid_tunnel_configuration_fails_before_opening_runtime(self):
+        for environment in ({"JANUS_TUNNEL_MODE": "invalid"}, {"JANUS_BACKEND_PORT": "70000"}):
+            with patch.dict(os.environ, environment), patch("app.main.AgentRuntime.persisted", AsyncMock()) as database:
+                with self.assertRaises(ValueError):
+                    async with lifespan(SimpleNamespace(state=SimpleNamespace())):
+                        pass
+                database.assert_not_awaited()
 
     async def test_runtime_missing_optional_provider_credentials_starts_and_closes(self):
         with patch.dict(os.environ, {}, clear=True):

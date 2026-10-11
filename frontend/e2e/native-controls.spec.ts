@@ -84,6 +84,10 @@ test('Studio starter, paired phone, native controls and all laptop streams work 
   await request.post('http://127.0.0.1:18980/test/native/screen', { data: { base64: jpeg } });
   await expect(phone.locator('.jw--stream img')).toBeVisible(); await expect(page.locator('.jw--stream img')).toBeVisible();
   await expect.poll(() => phone.locator('.jw--stream img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(80);
+  await expect(phone.locator('.jw--stream .jw__live')).toHaveText('LIVE');
+  await expect(page.locator('.jw--stream .jw__live')).toHaveText('LIVE');
+  await phone.reload(); await phone.getByText('Native laptop', { exact: true }).click();
+  await expect.poll(() => phone.locator('.jw--stream img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(80);
   const after = await (await request.get('http://127.0.0.1:18980/test/metrics')).json(); expect(after.generation_calls).toBe(before.generation_calls);
   expect(errors).toEqual([]);
 });

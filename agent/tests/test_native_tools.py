@@ -46,9 +46,27 @@ class NativeToolUnitTests(unittest.TestCase):
 }\n'''
             if tool == "screen":
                 extra += '''if (!strcmp(argv[1],"base64")) {
-    size_t n=(size_t)strtoul(argv[2],NULL,10);assert(n<=65539);
-    unsigned char bytes[65539];for(size_t i=0;i<n;i++) bytes[i]=(unsigned char)i;
-    base64(bytes,n);return 0;
+    size_t n=(size_t)strtoul(argv[2],NULL,10);assert(n<=MAX_JPEG_BYTES);
+    unsigned char *bytes=malloc(n?n:1);assert(bytes);for(size_t i=0;i<n;i++) bytes[i]=(unsigned char)i;
+    base64(bytes,n);free(bytes);return 0;
+}\n'''
+                extra += '''if (!strcmp(argv[1],"bounded_capture")) {
+    unsigned char *bytes=NULL;size_t n=0;unsigned w=0,h=0;
+    capture_mode=0;capture_calls=0;
+    assert(capture_bounded(960,&bytes,&n,&w,&h,fake_capture));
+    assert(capture_calls==2 && w==720 && h==360 && n==4);free(bytes);
+    capture_mode=1;capture_calls=0;
+    assert(!capture_bounded(1920,&bytes,&n,&w,&h,fake_capture));
+    assert(capture_calls==5 && bytes==NULL);
+    capture_mode=1;capture_calls=0;
+    assert(!capture_bounded(64,&bytes,&n,&w,&h,fake_capture));assert(capture_calls==1);
+    capture_mode=2;capture_calls=0;
+    assert(!capture_bounded(960,&bytes,&n,&w,&h,fake_capture));assert(capture_calls==1 && bytes==NULL);
+    capture_mode=3;capture_calls=0;
+    assert(capture_bounded(960,&bytes,&n,&w,&h,fake_capture));assert(n==MAX_JPEG_BYTES && capture_calls==1);free(bytes);
+    capture_mode=4;capture_calls=0;
+    assert(!capture_bounded(960,&bytes,&n,&w,&h,fake_capture));assert(bytes==NULL);
+    return 0;
 }\n'''
             if tool == "mouse":
                 extra += '''if (!strcmp(argv[1],"state")) {
@@ -105,7 +123,19 @@ class NativeToolUnitTests(unittest.TestCase):
     select_tree(0,999,1,100); /* Cycles must be bounded, not hang traversal. */
     free(list);return 0;
 }\n'''
-            code = f'#define main tool_main\n#include "{(ROOT / "native" / (tool + ".c")).as_posix()}"\n#undef main\n#include <assert.h>\n' + '''
+            helpers = ""
+            if tool == "screen":
+                helpers = '''
+static unsigned capture_calls,capture_mode;
+static int fake_capture(unsigned limit,unsigned char **out,size_t *n,unsigned *w,unsigned *h) {
+    capture_calls++;*w=limit;*h=limit/2;
+    if(capture_mode==2) {*out=malloc(1);return 0;}
+    *n=capture_mode==3?MAX_JPEG_BYTES:(capture_mode==1 || capture_calls==1?MAX_JPEG_BYTES+1:4);
+    if(capture_mode==4) {*n=0;*w=0;}
+    *out=malloc(*n?*n:1);assert(*out);return 1;
+}
+'''
+            code = f'#define main tool_main\n#include "{(ROOT / "native" / (tool + ".c")).as_posix()}"\n#undef main\n#include <assert.h>\n' + helpers + '''
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
@@ -257,7 +287,7 @@ int main(int argc,char **argv) {
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_screen_base64_padding_all_bytes_multiple_buffers_and_permission_failure(self):
-        for size in (0, 1, 2, 3, 4, 8191, 8192, 8193, 16385, 65539):
+        for size in (0, 1, 2, 3, 4, 8191, 8192, 8193, 16385, 65539, 600000):
             with self.subTest(size=size):
                 result = self.run_tool("screen", "base64", str(size))
                 self.assertEqual(result.stdout, base64.b64encode(bytes(index % 256 for index in range(size))).decode())
@@ -265,3 +295,11 @@ int main(int argc,char **argv) {
             result = self.run_tool("screen", "cli", "--once")
             self.assertEqual(result.returncode, 1)
             self.assertFalse(json.loads(result.stdout)["ok"])
+            requested = self.run_tool("screen", "cli", "--once", "--request-permission")
+            self.assertEqual(requested.returncode, 1)
+            self.assertIn("interactive desktop", json.loads(requested.stdout)["error"])
+
+    def test_screen_retries_oversized_frames_and_caps_base64_to_backend_limit(self):
+        result = self.run_tool("screen", "bounded_capture")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(base64.b64encode(bytes(600000))), 800000)

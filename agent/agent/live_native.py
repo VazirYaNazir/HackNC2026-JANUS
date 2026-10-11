@@ -17,7 +17,7 @@ class LiveNative:
         args = {"volume": [], "mouse": [],
                 "metrics": ["--temperature-file", self.options.temperature_file] if self.options.temperature_file else [],
                 "processes": ["--min-cpu", str(self.options.min_cpu), "--min-ram-mb", str(self.options.min_ram_mb)],
-                "screen": ["--interval", str(self.options.screen_interval), "--max-width", "960"]}
+                "screen": ["--interval", str(self.options.screen_interval), "--max-width", "960", "--request-permission"]}
 
         async def launch(name):
             process = await asyncio.create_subprocess_exec(str(self.binaries[name]), *args[name],

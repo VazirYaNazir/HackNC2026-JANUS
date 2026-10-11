@@ -20,7 +20,7 @@ export default defineConfig({
   plugins: [
     react(),
     // basicSsl serves the dev server over https; phones only allow the camera on secure origins.
-    basicSsl(),
+    ...(process.env.JANUS_PWA_HTTP === '1' ? [] : [basicSsl()]),
     surfaceColor(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -47,4 +47,13 @@ export default defineConfig({
   ],
   // @janus/design (lucide-react) lives outside this package; keep a single React instance.
   resolve: { dedupe: ['react', 'react-dom'] },
+  // The launcher binds this HTTP origin to loopback; Cloudflare supplies the public HTTPS origin.
+  server: {
+    host: '127.0.0.1', allowedHosts: ['.trycloudflare.com'],
+    fs: { deny: [
+      '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
+      '**/.janus/**', '**/.validation-policy*.json', '**/*.db', '**/*.sqlite', '**/*.sqlite3',
+      '**/*.{db,sqlite,sqlite3}-{wal,shm,journal}', '**/.venv/**',
+    ] },
+  },
 })

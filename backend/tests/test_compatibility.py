@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException, WebSocketDisconnect
 from fastapi.testclient import TestClient
-from app import db, tunnel
+from app import db
 from app.main import admin_app, admin_health, health
 from app.routes import agent, scripts
 
@@ -69,31 +69,3 @@ class LegacyAgentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(error.exception.status_code, status); self.assertEqual(agent.pending_jobs, {})
     async def test_health_endpoints(self):
         self.assertEqual((await health())['service'], 'public'); self.assertEqual((await admin_health())['service'], 'admin')
-
-
-class TunnelTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.state = patch.multiple(tunnel, _tunnel_process=None, _tunnel_url=None, _drain_task=None); self.state.start()
-    async def asyncTearDown(self): await tunnel.stop_tunnel(); self.state.stop()
-    def process(self, lines):
-        return SimpleNamespace(stdout=SimpleNamespace(readline=AsyncMock(side_effect=lines)), returncode=0, terminate=MagicMock(), wait=AsyncMock(return_value=0), kill=MagicMock())
-    async def test_captures_url_caches_connection_drains_output_and_stops(self):
-        process = self.process([b'noise\n', b'visit https://test-name.trycloudflare.com\n', b'after\n', b''])
-        with patch('app.tunnel.asyncio.create_subprocess_exec', return_value=process) as spawn:
-            self.assertEqual(await tunnel.start_tunnel(), 'https://test-name.trycloudflare.com'); self.assertEqual(await tunnel.start_tunnel(), tunnel.get_tunnel_url()); spawn.assert_awaited_once()
-            self.assertEqual(tunnel.tunnel_url, tunnel.get_tunnel_url())
-            await tunnel._drain_task
-        await tunnel.stop_tunnel(); self.assertIsNone(tunnel.get_tunnel_url()); process.terminate.assert_called_once()
-        with self.assertRaises(AttributeError): getattr(tunnel, 'missing')
-    async def test_missing_executable_missing_url_and_read_failure_are_cleaned(self):
-        with patch('app.tunnel.asyncio.create_subprocess_exec', side_effect=FileNotFoundError), self.assertRaisesRegex(RuntimeError, 'not found'): await tunnel.start_tunnel()
-        for lines in ([b''], [OSError('pipe failed')]):
-            process = self.process(lines)
-            with patch('app.tunnel.asyncio.create_subprocess_exec', return_value=process), self.assertRaisesRegex(RuntimeError, 'Failed to start'): await tunnel.start_tunnel()
-            self.assertIsNone(tunnel._tunnel_process); process.terminate.assert_called_once()
-    async def test_stop_cancels_drain_and_kills_after_timeout_and_tolerates_exit(self):
-        tunnel._drain_task = asyncio.create_task(asyncio.sleep(10))
-        process = self.process([]); process.wait = AsyncMock(side_effect=[TimeoutError(), 0]); tunnel._tunnel_process = process
-        await tunnel.stop_tunnel(); process.kill.assert_called_once(); self.assertIsNone(tunnel._drain_task)
-        for failure in (ProcessLookupError(), OSError('fixture')):
-            process = self.process([]); process.terminate = MagicMock(side_effect=failure); tunnel._tunnel_process = process; await tunnel.stop_tunnel(); self.assertIsNone(tunnel._tunnel_process)

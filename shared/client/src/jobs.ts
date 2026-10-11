@@ -1,5 +1,14 @@
 import type { JobView } from '@janus/schema';
-import { activeJob } from './api';
+import { activeJob, jobText } from './api';
+
+/** Latest request state per widget, shared by Studio preview and the phone panel. */
+export function widgetStates(jobs: JobView[]): Record<string, string> {
+  const states: Record<string, string> = {};
+  for (const job of jobs) {
+    if (job.widget_id && states[job.widget_id] === undefined) states[job.widget_id] = activeJob(job) ? 'running' : job.state === 'COMPLETED' ? jobText(job) : 'error';
+  }
+  return states;
+}
 
 // HTTP responses, history snapshots and socket updates can arrive out of order.
 export function newerJob(current: JobView | undefined, incoming: JobView): JobView {

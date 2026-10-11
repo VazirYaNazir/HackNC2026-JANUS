@@ -1,6 +1,8 @@
 """Authenticated panel configuration, phone pairing, and request reuse."""
 import os
 import re
+import json
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -69,12 +71,11 @@ async def configured_action(action_id: str, identity: CONTROLLER, service: SERVI
     return request.model_dump()
 
 
-def configured_origin(name: str) -> str | None:
+def public_origin(value: str, name: str) -> str:
     """Public pairing addresses are local configuration, never credential URLs."""
-    value = os.getenv(name, "").strip()
-    if not value:
-        return None
     try:
+        if not isinstance(value, str):
+            raise ValueError
         url = urlsplit(value)
         if (url.scheme != "https" or not url.hostname or url.username or url.password
                 or url.path not in ("", "/") or url.query or url.fragment
@@ -87,16 +88,49 @@ def configured_origin(name: str) -> str | None:
         raise HTTPException(503, f"INVALID_{name}") from None
 
 
+def configured_origin(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    return public_origin(value, name) if value else None
+
+
+def managed_origins() -> tuple[bool, dict[str, str | None]]:
+    """Read the launcher's atomic URL file on each request, including restarts."""
+    filename = os.getenv("JANUS_PUBLIC_URLS_FILE", "").strip()
+    if not filename:
+        return False, {}
+    try:
+        with Path(filename).open(encoding="utf-8") as stream:
+            raw = stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError
+        document = json.loads(raw)
+        if not isinstance(document, dict) or set(document) != {"backend", "pwa"}:
+            raise ValueError
+        return True, {key: public_origin(value, "JANUS_PUBLIC_URLS_FILE") if value is not None else None
+                      for key, value in document.items()}
+    except FileNotFoundError:
+        # The launcher clears unavailable origins instead of advertising stale links.
+        return True, {"backend": None, "pwa": None}
+    except (OSError, ValueError):
+        raise HTTPException(503, "INVALID_JANUS_PUBLIC_URLS_FILE") from None
+
+
 @router.post("/api/v1/studio/pairing")
 async def pairing(request: Request, identity: DESKTOP, service: SERVICE):
     public = configured_origin("PUBLIC_BACKEND_URL")
     pwa = configured_origin("PWA_PUBLIC_URL")
+    managed, origins = managed_origins() if not (public and pwa) else (False, {})
+    public = public or origins.get("backend")
+    pwa = pwa or origins.get("pwa")
+    if managed and not public:
+        raise HTTPException(503, "PUBLIC_BACKEND_UNAVAILABLE")
     # Keep a caller's existing HTTPS origin; a local Studio can use the backend's
     # automatic tunnel without knowing its generated hostname.
     host = public or (str(request.base_url).rstrip("/") if request.url.scheme == "https"
                       else get_tunnel_url() or str(request.base_url).rstrip("/"))
     return {"code": await service.store.pairing(identity), "expires_in_seconds": 60,
-            "host": host, "pwa_url": pwa}
+            "host": host, "pwa_url": pwa,
+            "status": "ready" if host.startswith("https://") else "local"}
 
 
 @router.post("/api/pair")

@@ -49,6 +49,13 @@ admin_server: uvicorn.Server | None = None
 async def lifespan(app: FastAPI):
     global admin_server
 
+    tunnel_mode = os.getenv("JANUS_TUNNEL_MODE", "auto").strip().lower()
+    if tunnel_mode not in ("auto", "off"):
+        raise ValueError("JANUS_TUNNEL_MODE must be auto or off")
+    backend_port = int(os.getenv("JANUS_BACKEND_PORT", "8000"))
+    if not 1 <= backend_port <= 65535:
+        raise ValueError("Invalid JANUS_BACKEND_PORT")
+
     # This service stays on the public server's loop; the admin server has its
     # own thread/loop and does not share asyncio connection or job objects.
     app.state.agent_runtime = await AgentRuntime.persisted()
@@ -67,11 +74,15 @@ async def lifespan(app: FastAPI):
     admin_thread = threading.Thread(target=admin_server.run, daemon=True)
     admin_thread.start()
 
-    # Launch Cloudflare Tunnel for public API (Port 8000)
-    try:
-        await start_tunnel(8000)
-    except Exception as exc:
-        logger.warning(f"Could not start Cloudflare tunnel: {exc}")
+    # Backend readiness must not depend on Cloudflare or prevent the target
+    # server from binding. The full launcher owns its two public tunnels.
+    async def optional_tunnel():
+        try:
+            await start_tunnel(backend_port)
+        except Exception as exc:
+            logger.warning("Could not start Cloudflare tunnel: %s", exc)
+
+    tunnel_task = asyncio.create_task(optional_tunnel()) if tunnel_mode == "auto" else None
 
     # Launch background system stats broadcaster loop
     stats_task = asyncio.create_task(broadcast_system_stats_loop())
@@ -79,6 +90,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if tunnel_task is not None:
+            tunnel_task.cancel()
+            await asyncio.gather(tunnel_task, return_exceptions=True)
         stats_task.cancel()
         try:
             await stats_task
@@ -115,4 +129,4 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=int(os.getenv("JANUS_BACKEND_PORT", "8000")), reload=True)

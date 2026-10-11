@@ -3,7 +3,7 @@ import asyncio
 
 from .executor import ExecutionResult, execute_artifact
 from .isolation import IsolationBoundary
-from .validation import ID, ValidationResult, validate_job
+from .validation import ID, Job, ValidationResult, validate_job
 
 JOB_MESSAGES = frozenset({"validate_job", "code_revision", "execute_job", "cancel_job"})
 
@@ -30,11 +30,16 @@ class WorkerPoolBoundary(IsolationBoundary):
 
 class ValidationService:
     """Local app configuration and replay ledger survive backend reconnects."""
-    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None, max_parallel=4):
+    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None, max_parallel=4, session_authorization=None):
         if type(max_parallel) is not int or not 1 <= max_parallel <= 4:
             raise ValueError("Parallel job workers must be between 1 and 4")
         self.compiler = compiler
         self.policies = dict(policies or {})
+        if session_authorization is not None:
+            from .authorization import ApprovedSession
+            if not isinstance(session_authorization, ApprovedSession):
+                raise ValueError("Session authorization requires explicit local approval")
+        self.session_authorization = session_authorization
         self.boundary = boundary or IsolationBoundary()
         self.revision_timeout = revision_timeout
         self.local_platform = local_platform
@@ -112,6 +117,16 @@ class ValidationSession:
             return
         # Never evict IDs and accidentally permit replay of an approved side effect.
         self.service.seen_jobs.add(job_id)
+        if job_id not in self.service.policies and self.service.session_authorization is not None:
+            try:
+                local_grant = self.service.session_authorization.grant(Job.parse(message))
+            except ValueError:
+                await self.reject(job_id, "SOURCE_INVALID")
+                return
+            if local_grant is None:
+                await self.reject(job_id, "CAPABILITY_DENIED")
+                return
+            self.service.policies[job_id] = local_grant
         self.tasks[job_id] = asyncio.create_task(self.validate(job_id, message))
 
     async def request_revision(self, job_id, attempt, diagnostics):

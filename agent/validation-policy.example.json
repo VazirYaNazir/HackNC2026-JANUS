@@ -1,0 +1,44 @@
+{
+  "jobs": [],
+  "session": {
+    "operations": ["*"],
+    "capabilities": [
+      "admin",
+      "audio.volume",
+      "desktop.mouse",
+      "desktop.screen",
+      "external.send",
+      "files.read",
+      "files.write",
+      "network",
+      "persistent.write",
+      "process.inspect",
+      "process.spawn"
+    ],
+    "dependencies": [
+      "coreaudio",
+      "applicationservices",
+      "iokit",
+      "imageio",
+      "mac-system",
+      "win32"
+    ],
+    "execute_authorized": true,
+    "share_outputs": true,
+    "side_effects": true,
+    "output_protocols": ["text", "json-v1"],
+    "max_attempts": 3,
+    "max_source_bytes": 131072,
+    "limits": {
+      "compile_seconds": 30,
+      "run_seconds": 3,
+      "diagnostics_bytes": 65536,
+      "stdout_bytes": 65536,
+      "stderr_bytes": 16384,
+      "memory_bytes": 536870912,
+      "disk_bytes": 67108864,
+      "processes": 16,
+      "cpu_seconds": 30
+    }
+  }
+}

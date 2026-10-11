@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GRID, Icon } from "@janus/design";
 import { isNativeAction, type SavedPanel, type Widget, type WidgetValue } from "@janus/schema";
 import { PanelGrid, isInputWidget } from "@janus/widgets";
-import { RequestDialog, activeJob, jobText, useNativeControls, usePanel } from "@janus/client";
+import { RequestDialog, activeJob, jobText, useNativeControls, usePanel, widgetStates } from "@janus/client";
 import "@janus/client/styles.css";
 import { createClient, demoValues, isDemoPanel } from "../lib/demo";
 import { loadCachedDocument, saveCachedDocument } from "../lib/layoutCache";
@@ -36,13 +36,11 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
     noticeTimer.current = window.setTimeout(() => setNotice(""), 2500);
   };
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
-  const states: Record<string, string> = {};
-  for (const job of live.jobs) {
-    if (job.widget_id && states[job.widget_id] === undefined) states[job.widget_id] = activeJob(job) ? "running" : job.state === "COMPLETED" ? jobText(job) : "error";
-  }
+  const states = widgetStates(live.jobs);
   const handleTrigger = (widget: Widget, value?: WidgetValue) => {
     if (!isInputWidget(widget)) return;
     if (!online) return showNotice(blockedMessage);
+    if (!demo && !widget.action) return showNotice('Configure this control in Studio, then Save & Push.');
     if (value !== undefined) setValues((current) => ({ ...current, [widget.id]: value }));
     if (!demo && isNativeAction(widget.action)) {
       if (!widget.confirm || window.confirm(`Run ${widget.label} on ${panel.pcName}?`)) controls.send(widget, value);

@@ -28,6 +28,9 @@ def parser() -> argparse.ArgumentParser:
     connection.add_argument("--url", default=os.getenv("AGENT_BACKEND_URL"))
     connection.add_argument("--device-id", default=os.getenv("AGENT_DEVICE_ID"))
     connection.add_argument("--validation-policy", help="Local JSON grants by job ID")
+    approval = connection.add_mutually_exclusive_group()
+    approval.add_argument("--approve-session", action="store_true", help="Ask this laptop's terminal to approve the local session policy for fresh jobs")
+    approval.add_argument("--session-approval-stdin", action="store_true", help="Read one local startup approval from the already-consented launcher's stdin pipe")
     connection.add_argument("--workers", type=int, default=4, help="Local concurrent worker limit, 1–4")
     connection.add_argument("--isolation-adapter", default=os.getenv("AGENT_ISOLATION_ADAPTER"), help="Audited local worker module:factory; never provided by the backend")
     connection.add_argument("--native-tools", action="store_true", help="Enable trusted built-in telemetry, volume and mouse control")
@@ -67,8 +70,12 @@ def main(argv=None) -> int:
             if not token:
                 cli.error("Set AGENT_TOKEN in your local environment")
             policies = load_policies(options.validation_policy)
+            session_authorization = None
+            if options.approve_session or options.session_approval_stdin:
+                from .authorization import approve_session, load_session_scope
+                session_authorization = approve_session(load_session_scope(options.validation_policy), launcher_pipe=options.session_approval_stdin)
             compiler = detect_compiler()
-            validation = ValidationService(compiler, policies, boundary=load_boundary(options.isolation_adapter), max_parallel=options.workers)
+            validation = ValidationService(compiler, policies, boundary=load_boundary(options.isolation_adapter), max_parallel=options.workers, session_authorization=session_authorization)
             if options.native_tools:
                 names = TOOLS if options.screen else tuple(name for name in TOOLS if name != "screen")
                 binaries = build_tools(names, compiler=compiler)

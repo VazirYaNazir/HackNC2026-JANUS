@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { gridSizeToLogical, type IconName, type Rect } from "@janus/design";
-import { isInput, type Widget, type WidgetType } from "@janus/schema";
+import { type Widget, type WidgetType } from "@janus/schema";
 import AgentPromptWidget from "./AgentPromptWidget";
 import BarWidget from "./BarWidget";
 import BigNumberWidget from "./BigNumberWidget";
@@ -21,6 +21,7 @@ import UnsupportedWidget from "./UnsupportedWidget";
 import ProcessTreeWidget from './ProcessTreeWidget';
 import type { WidgetProps } from "./types";
 import { getWidgetAccent } from './accent';
+import { defaultBinding } from './bindings';
 
 /** Size in grid cells (columns x rows). */
 export interface WidgetSize {
@@ -96,5 +97,5 @@ export function createWidget(type: WidgetType, id: string, rect: Rect): Widget {
   const definition = getWidgetDef(type);
   if (!definition) throw new Error(`Unsupported widget type: ${type}.`);
   const base = { id, type, label: definition.label, icon: definition.icon, color: getWidgetAccent({ type }), ...rect };
-  return isInput(type) ? { ...base, type, action: "" } : { ...base, type, source: "" };
+  return { ...base, ...defaultBinding(type) } as Widget;
 }
