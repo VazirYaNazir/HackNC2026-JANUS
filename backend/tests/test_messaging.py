@@ -482,7 +482,7 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(response.json(), {"reply": "CPU 23% · 61°C · RAM 48% (7.7 GB)", "duplicate": False})
 
     def test_disabled_without_a_strong_token(self):
-        for env in ({}, {"MESSAGING_SERVICE_TOKEN": "short"}):
+        for env in ({}, {"MESSAGING_SERVICE_TOKEN": "short"}, {"MESSAGING_SERVICE_TOKEN": " " * 40}):
             with patch.dict(os.environ, env, clear=True):
                 self.assertEqual(self.post(self.client(), token="short").status_code, 503)
 
@@ -543,9 +543,54 @@ class RouteTests(unittest.TestCase):
         with patch.dict(os.environ, {"MESSAGING_SERVICE_TOKEN": self.TOKEN}):
             client = self.client()
             client.app.dependency_overrides[desktop] = lambda: Identity("laptop", "owner")
-            self.assertEqual(client.get("/api/v1/studio/messaging").json(), {"enabled": True, "connected": False})
+            self.assertEqual(client.get("/api/v1/studio/messaging").json(),
+                             {"enabled": True, "connected": False, "reason": "SIDECAR_NOT_CONNECTED", "missing": []})
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(client.get("/api/v1/studio/messaging").json()["enabled"], False)
+
+    def test_status_names_missing_configuration_without_exposing_values(self):
+        from app.routes.studio import desktop
+        with patch.dict(os.environ, {"JANUS_IMESSAGE_MODE": "auto", "SPECTRUM_PROJECT_ID": "private-project-id"}, clear=True):
+            client = self.client()
+            client.app.state.messaging.allowed = frozenset()
+            client.app.dependency_overrides[desktop] = lambda: Identity("laptop", "owner")
+            response = client.get("/api/v1/studio/messaging")
+            self.assertEqual(response.json(), {"enabled": False, "connected": False,
+                "reason": "MESSAGING_NOT_CONFIGURED",
+                "missing": ["IMESSAGE_ALLOWED_SENDERS", "MESSAGING_SERVICE_TOKEN", "SPECTRUM_PROJECT_SECRET"]})
+            self.assertNotIn("private-project-id", response.text)
+
+    def test_status_distinguishes_explicit_disable_and_actual_connection(self):
+        from app.routes.studio import desktop
+        with patch.dict(os.environ, {"MESSAGING_SERVICE_TOKEN": self.TOKEN, "JANUS_IMESSAGE_MODE": "off"}, clear=True):
+            client = self.client()
+            client.app.dependency_overrides[desktop] = lambda: Identity("laptop", "owner")
+            self.assertEqual(client.get("/api/v1/studio/messaging").json()["reason"], "MESSAGING_DISABLED")
+            client.app.state.messaging.heartbeat()
+            self.assertEqual(client.get("/api/v1/studio/messaging").json(),
+                             {"enabled": True, "connected": True, "reason": None, "missing": []})
+            client.app.state.messaging.clock.now += 46
+            self.assertFalse(client.get("/api/v1/studio/messaging").json()["connected"])
+
+    def test_connected_requires_backend_authorization_even_with_a_heartbeat(self):
+        from app.routes.studio import desktop
+        with patch.dict(os.environ, {}, clear=True):
+            client = self.client()
+            client.app.dependency_overrides[desktop] = lambda: Identity("laptop", "owner")
+            client.app.state.messaging.heartbeat()
+            self.assertEqual(client.get("/api/v1/studio/messaging").json(), {"enabled": False, "connected": False,
+                "reason": "MESSAGING_NOT_CONFIGURED", "missing": ["MESSAGING_SERVICE_TOKEN"]})
+
+    def test_managed_startup_placeholder_credentials_are_reported_as_missing(self):
+        from app.routes.studio import desktop
+        for placeholder in ("...", "<project-id>", "YOUR_PROJECT_SECRET", "replace_project-id"):
+            with self.subTest(placeholder=placeholder), patch.dict(os.environ, {"JANUS_IMESSAGE_MODE": "auto",
+                "MESSAGING_SERVICE_TOKEN": self.TOKEN, "SPECTRUM_PROJECT_ID": "example-valid-project",
+                "SPECTRUM_PROJECT_SECRET": placeholder}, clear=True):
+                client = self.client()
+                client.app.dependency_overrides[desktop] = lambda: Identity("laptop", "owner")
+                self.assertEqual(client.get("/api/v1/studio/messaging").json(), {"enabled": True, "connected": False,
+                    "reason": "MESSAGING_NOT_CONFIGURED", "missing": ["SPECTRUM_PROJECT_SECRET"]})
 
 
 class NativeLockTests(unittest.IsolatedAsyncioTestCase):

@@ -155,6 +155,8 @@
 .assistant-prompt input { width: 100%; height: 38px; padding: 0 13px; border: 1px solid var(--studio-border); border-radius: 9px; color: var(--studio-muted); background: var(--studio-field); }
 .assistant-prompt input::placeholder { color: #666f7e; opacity: 1; }
 .assistant-prompt input:disabled { cursor: not-allowed; }
+.assistant-hint { display: block; margin-top: 4px; color: var(--studio-muted); font-size: 10px; }
+.assistant-settings { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 @media (max-width: 1050px) {
   .studio-body { grid-template-columns: 205px minmax(0, 1fr) 238px; }

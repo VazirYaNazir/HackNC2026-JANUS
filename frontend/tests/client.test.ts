@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, PanelClient, activeJob, backendHost, jobText, pairBackend } from '@janus/client'
-import { parseServerMessage, type JobView } from '@janus/schema'
+import { parseServerMessage, type GeneratedDraft, type GenerationRequest, type JobView } from '@janus/schema'
 import { mergeHistory, recordJob } from '../../shared/client/src/jobs'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -53,6 +53,22 @@ describe('shared frontend transport', () => {
     await expect(pairBackend('https://backend.example', 'wrong')).rejects.toThrow('invalid or expired')
     fetch.mockResolvedValue(new Response('{}'))
     await expect(pairBackend('https://backend.example', 'wrong')).rejects.toThrow('Invalid pairing response')
+  })
+
+  it('generates source with scoped authentication, a direct request body and caller cancellation without dispatching', async () => {
+    const request: GenerationRequest = { description: 'Compute', operation: 'compute', platform: 'Windows', architecture: 'x86_64', capabilities: [], dependencies: ['win32'], output_protocol: 'json-v1' }
+    const draft: GeneratedDraft = { program_id: 'draft', program: { ...request, language: 'c11', summary: 'Compute', source: 'int main(void) { return 0; }' } }
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(draft), { status: 201 }))
+    vi.stubGlobal('fetch', fetch)
+    const client = new PanelClient({ host: 'https://backend.example', token: 'controller-secret' }), abort = new AbortController()
+    expect(await client.generate(request, abort.signal)).toEqual(draft)
+    const [url, init] = fetch.mock.calls[0]
+    expect(String(url)).toBe('https://backend.example/api/v1/programs/generate')
+    expect(init.method).toBe('POST'); expect(JSON.parse(init.body)).toEqual(request)
+    expect(init.headers.get('Authorization')).toBe('Bearer controller-secret'); expect(init.signal.aborted).toBe(false)
+    abort.abort(); expect(init.signal.aborted).toBe(true); expect(fetch).toHaveBeenCalledTimes(1)
+    fetch.mockResolvedValue(new Response(JSON.stringify({ detail: 'PROVIDER_UNAVAILABLE' }), { status: 503 }))
+    await expect(client.generate(request)).rejects.toMatchObject({ status: 503, message: 'PROVIDER_UNAVAILABLE' })
   })
 
   it('distinguishes pairing network failures, rate limits, and server failures from bad codes', async () => {

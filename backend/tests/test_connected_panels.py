@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 from tests.support import RunningServer, TrustedFixtureBoundary, headers, program, registry, request
+from agent.compiler import CCompiler
 from agent.jobs import ValidationService
 from agent.transport import packet
 from agent.validation import ExecutionPolicy, Fixture
@@ -193,6 +194,32 @@ class ConnectedPanelsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.boundaries[0].directories), 2)
         duplicate = await self.backend.http.post("/api/v1/panel-actions/dispatch", headers=headers(), json=payload)
         self.assertEqual(duplicate.status_code, 409)
+
+    async def test_offline_source_draft_reuse_still_requires_local_grant_and_isolation(self):
+        await self.configured()
+        draft = await self.backend.http.post("/api/v1/programs/generate", headers=headers(), json=request().model_dump())
+        self.assertEqual(draft.status_code, 201, draft.text)
+        self.assertFalse(self.backend.runtime.hub.connections)
+        self.assertFalse(self.backend.runtime.jobs.records)
+        identifier = draft.json()["program_id"]
+        matches = (await self.backend.http.post("/api/v1/programs/similar", headers=headers(), json=request().model_dump())).json()["matches"]
+        self.assertEqual(matches[0]["id"], identifier)
+        service = ValidationService(CCompiler("clang", "/never-invoked", "Darwin"),
+                                    {"draft-blocked": ExecutionPolicy("draft-blocked", "compute", execute_authorized=True,
+                                                                     output_protocol="json-v1")},
+                                    local_platform=("Darwin", "x86_64"))
+        await self.backend.agent(service)
+        with patch.object(CCompiler, "compile_detailed", side_effect=AssertionError("No local boundary")) as compile_source, patch("agent.jobs.execute_artifact", AsyncMock(side_effect=AssertionError("Draft cannot execute"))) as execute:
+            for job_id, expected in (("draft-unapproved", ("REJECTED", "AUTHORIZATION_REQUIRED")),
+                                     ("draft-blocked", ("VALIDATION_BLOCKED", "BUILD_BOUNDARY_UNAVAILABLE"))):
+                submitted = await self.backend.http.post("/api/v1/panel-actions/dispatch", headers=headers(),
+                    json={"widget_id": "control", "job_id": job_id, "program_id": identifier})
+                self.assertEqual(submitted.status_code, 202, submitted.text)
+                result = await self.backend.result(job_id)
+                self.assertEqual((result["state"], result["reason"]), expected)
+            compile_source.assert_not_called()
+            execute.assert_not_awaited()
+        self.assertEqual(len(self.backend.sdk.calls), 1)
 
     async def test_persisted_jobs_and_devices_remain_queryable_after_backend_restart(self):
         await self.configured(); await self.laptop(["survives"])

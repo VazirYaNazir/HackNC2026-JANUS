@@ -57,6 +57,9 @@ installed isolation adapter are necessary for generated execution. No native
 macOS/Windows isolation adapter is included. Without one the agent returns
 `VALIDATION_BLOCKED / BUILD_BOUNDARY_UNAVAILABLE`; without a grant it returns
 `AUTHORIZATION_REQUIRED`. See [local authorization](backend-agent.md#local-agent-initialization).
+Source review can generate and save a C draft while the laptop is offline or
+has no isolation adapter. Draft generation sends no agent commands and does
+not authorize compilation or execution.
 
 ## Publish, pair, and run
 
@@ -127,8 +130,9 @@ files.
 Initialization adds tables without replacing existing `devices`, `scripts`, or
 `pairing_codes`. New tables persist hashed laptop credentials, phone bindings,
 published layouts/revisions, action templates, scoped job views and requests,
-and generated source only after the agent reports successful validation and
-preflight. Environment/file registrations are imported transactionally;
+and generated source. Source review saves drafts before local validation;
+execution jobs save their program after successful validation and preflight.
+Every approved reuse repeats local validation. Environment/file registrations are imported transactionally;
 existing database registrations also load without environment entries. An
 existing laptop cannot be reassigned to another owner through an import.
 Removing an environment entry alone does not remove its persisted registration;
@@ -183,6 +187,7 @@ exchange. Only controller credentials can use Studio mutation/pairing paths.
 | `POST /api/v1/studio/pairing` | `{code, expires_in_seconds, host, pwa_url}`; public backend address and optional deployed PWA origin. |
 | `POST /api/pair` | `{code, name?}` → `{deviceId, agentDeviceId, token, pcName}`. |
 | `GET /api/v1/agent-jobs` | Up to 50 recent scoped persisted job views. |
+| `POST /api/v1/programs/generate` | `GenerationRequest` → HTTP 201 `{program_id, program}` source draft, without a connected agent or execution. |
 | `POST /api/v1/programs/similar` | `GenerationRequest` → `{matches, checked}`. |
 | `POST /api/v1/panel-actions/prepare` | Dispatch payload → effective request, request SHA-256, suggestions. No job is admitted. |
 | `POST /api/v1/panel-actions/dispatch` | `{widget_id, job_id, value?, program_id?, request_sha256?}` → HTTP 202 job view. |

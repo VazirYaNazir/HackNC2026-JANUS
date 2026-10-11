@@ -67,6 +67,15 @@ class PrivateApprovalTests(unittest.TestCase):
         self.assertTrue(launcher.parse_args(["--studio=electron"]).electron)
         self.assertEqual(launcher.parse_args(["--electron"]).studio, "electron")
 
+    def test_messaging_defaults_to_auto_with_exclusive_explicit_modes(self):
+        self.assertIsNone(launcher.parse_args([]).imessage)
+        self.assertTrue(launcher.parse_args(["--imessage"]).imessage)
+        self.assertFalse(launcher.parse_args(["--no-imessage"]).imessage)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as rejected:
+                launcher.parse_args(["--imessage", "--no-imessage"])
+        self.assertEqual(rejected.exception.code, 2)
+
 
 class MessagingHelperTests(unittest.TestCase):
     def setUp(self):
@@ -74,6 +83,7 @@ class MessagingHelperTests(unittest.TestCase):
             "SPECTRUM_PROJECT_ID": "private-project-id",
             "SPECTRUM_PROJECT_SECRET": "private-project-secret",
             "MESSAGING_SERVICE_TOKEN": "private-messaging-token-" + "x" * 32,
+            "IMESSAGE_ALLOWED_SENDERS": "+15551234567",
         }
         self.host = "http://127.0.0.1:18000"
 
@@ -112,6 +122,26 @@ class MessagingHelperTests(unittest.TestCase):
         accepted = {**self.environment, "MESSAGING_SERVICE_TOKEN": "s" * 32}
         self.assertEqual(launcher.imessage_environment(accepted, self.host)["NODE_OPTIONS"],
                          "--dns-result-order=ipv4first")
+
+    def test_example_credentials_and_invalid_sender_allowlists_do_not_enable_messaging(self):
+        invalid = (("SPECTRUM_PROJECT_ID", "..."), ("SPECTRUM_PROJECT_SECRET", "YOUR_PROJECT_SECRET"),
+                   ("SPECTRUM_PROJECT_ID", "<project-id>"), ("IMESSAGE_ALLOWED_SENDERS", "15551234567"),
+                   ("IMESSAGE_ALLOWED_SENDERS", "+1XXXXXXXXXX,invalid@example.com"),
+                   ("IMESSAGE_ALLOWED_SENDERS", "+0123456789"))
+        for name, value in invalid:
+            with self.subTest(name=name, value=value), contextlib.redirect_stderr(io.StringIO()) as output:
+                self.assertIsNone(launcher.imessage_environment({**self.environment, name: value}, self.host))
+            self.assertIn(name, output.getvalue())
+            self.assertIn("iMessage: not configured", output.getvalue())
+            self.assertNotIn(value, output.getvalue())
+
+    def test_valid_formatted_sender_among_invalid_entries_matches_backend_allowlist_rules(self):
+        environment = {**self.environment, "IMESSAGE_ALLOWED_SENDERS": "invalid@example.com, +1 (555) 123-4567"}
+        original = dict(environment)
+        with contextlib.redirect_stderr(io.StringIO()) as output:
+            self.assertIsNotNone(launcher.imessage_environment(environment, self.host))
+        self.assertEqual(environment, original)
+        self.assertEqual(output.getvalue(), "")
 
     def test_sidecar_down_posts_authenticated_private_body_with_a_short_timeout(self):
         response = Mock()
@@ -243,7 +273,8 @@ class LauncherModeTests(unittest.TestCase):
 
     def enable_messaging(self):
         self.environment.update(SPECTRUM_PROJECT_ID="private-project", SPECTRUM_PROJECT_SECRET="private-secret",
-                                MESSAGING_SERVICE_TOKEN="m" * 40, NODE_OPTIONS="--trace-warnings")
+                                MESSAGING_SERVICE_TOKEN="m" * 40, IMESSAGE_ALLOWED_SENDERS="+15551234567",
+                                NODE_OPTIONS="--trace-warnings")
 
     def run_launcher(self, arguments, *, approved=True, piped_approval=True, ready=True,
                      build_error=None, service_error=None, runtime_exit=None):
@@ -438,26 +469,80 @@ class LauncherModeTests(unittest.TestCase):
         self.assertTrue(all(service.environment["JANUS_PUBLIC_URLS_FILE"] == str(state / "public-urls.json")
                             for service in self.services))
 
-    def test_configured_imessage_builds_and_receives_ipv4_options_and_redacted_secrets(self):
+    def test_configured_imessage_starts_automatically_with_selected_target_and_redacted_secrets(self):
         self.enable_messaging()
-        self.assertEqual(self.run_launcher(["--imessage", "--no-agent", "--local-only", "--no-install", "--no-browser"]), 0)
+        self.assertEqual(self.run_launcher(["--no-agent", "--local-only", "--no-install", "--no-browser",
+                                           "--backend-port=18000"]), 0)
         sidecar = next(service for service in self.services if service.name == "imessage")
         self.assertEqual(sidecar.command, ["node", "dist/index.js"])
         self.assertEqual(sidecar.cwd, self.root / "imessage")
-        self.assertEqual(sidecar.environment["JANUS_BACKEND_URL"], "http://127.0.0.1:8000")
+        self.assertEqual(sidecar.environment["JANUS_BACKEND_URL"], "http://127.0.0.1:18000")
+        self.assertEqual(sidecar.environment["IMESSAGE_DEVICE_ID"], self.registration.device_id)
+        self.assertEqual(self.services[0].environment["IMESSAGE_DEVICE_ID"], self.registration.device_id)
+        self.assertEqual(self.services[0].environment["JANUS_IMESSAGE_MODE"], "auto")
         self.assertEqual(sidecar.environment["NODE_OPTIONS"], "--trace-warnings --dns-result-order=ipv4first")
         self.assertIn("@janus/imessage", self.build.call_args.args[0])
         for name in ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET", "MESSAGING_SERVICE_TOKEN"):
             self.assertIn(self.environment[name], sidecar.options["redactions"])
             self.assertNotIn(self.environment[name], self.output.getvalue())
-        self.down.assert_called_once_with("http://127.0.0.1:8000", self.environment["MESSAGING_SERVICE_TOKEN"])
+        self.down.assert_called_once_with("http://127.0.0.1:18000", self.environment["MESSAGING_SERVICE_TOKEN"])
+        self.assertIn("waiting for a Photon connection and backend heartbeat", self.output.getvalue())
+        self.assertNotIn("iMessage: connected", self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_explicitly_configured_messaging_target_is_preserved_for_backend_and_sidecar(self):
+        self.enable_messaging()
+        self.environment["IMESSAGE_DEVICE_ID"] = "another-registered-laptop"
+        self.assertEqual(self.run_launcher(["--imessage", "--no-agent", "--local-only", "--no-install", "--no-browser"]), 0)
+        sidecar = next(service for service in self.services if service.name == "imessage")
+        self.assertEqual(sidecar.environment["IMESSAGE_DEVICE_ID"], "another-registered-laptop")
+        self.assertEqual(self.services[0].environment["IMESSAGE_DEVICE_ID"], "another-registered-laptop")
+        self.assertEqual(self.services[0].environment["JANUS_IMESSAGE_MODE"], "on")
+
+    def test_explicit_opt_out_does_not_build_start_or_disconnect_the_configured_sidecar(self):
+        self.enable_messaging()
+        self.assertEqual(self.run_launcher(["--no-imessage", "--no-agent", "--local-only", "--no-install", "--no-browser"]), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
+        self.assertEqual(self.services[0].environment["JANUS_IMESSAGE_MODE"], "off")
+        self.build.assert_not_called()
+        self.down.assert_not_called()
+        self.assertIn("iMessage: disabled (--no-imessage)", self.output.getvalue())
+        for name in ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET", "MESSAGING_SERVICE_TOKEN"):
+            self.assertNotIn(self.environment[name], self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_unconfigured_automatic_messaging_reports_variable_names_without_stopping_services(self):
+        self.assertEqual(self.run_launcher(["--no-agent", "--local-only", "--no-install", "--no-browser"]), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
+        self.assertIn("iMessage: not configured", self.output.getvalue())
+        for name in ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET", "MESSAGING_SERVICE_TOKEN", "IMESSAGE_ALLOWED_SENDERS"):
+            self.assertIn(name, self.output.getvalue())
+        self.build.assert_not_called()
+        self.down.assert_not_called()
+
+    def test_denied_native_approval_keeps_configured_messaging_without_starting_an_agent(self):
+        self.enable_messaging()
+        self.assertEqual(self.run_launcher(["--local-only", "--no-install", "--no-browser"], approved=False), 0)
+        self.approval.assert_called_once()
+        self.policy.assert_not_called()
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa", "imessage"])
+        self.assertNotIn("iMessage: connected", self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_standalone_agent_never_starts_or_disconnects_configured_messaging(self):
+        self.enable_messaging()
+        self.assertEqual(self.run_launcher(["--only=agent", "--no-install"]), 0)
+        self.assertEqual([service.name for service in self.services], ["agent"])
+        self.assertNotIn("JANUS_IMESSAGE_MODE", self.services[0].environment)
+        self.build.assert_not_called()
+        self.down.assert_not_called()
         self.assert_local_services_cleaned_up()
 
     def test_missing_imessage_settings_skip_sidecar_without_stopping_local_services(self):
         self.assertEqual(self.run_launcher(["--imessage", "--no-agent", "--local-only", "--no-install", "--no-browser"]), 0)
         self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
         self.build.assert_not_called()
-        self.assertIn("iMessage sidecar not started", self.output.getvalue())
+        self.assertIn("iMessage: not configured", self.output.getvalue())
         self.assert_local_services_cleaned_up()
 
     def test_imessage_build_failure_keeps_local_services_and_reports_sidecar_down(self):

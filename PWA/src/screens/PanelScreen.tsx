@@ -72,6 +72,6 @@ export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedP
       {activeJob(job) && <button type="button" className="btn" onClick={() => void client.cancel(job.job_id).then(live.recordJob).catch((reason) => setError(String(reason.message)))}>Cancel request</button>}
     </article>)}</section>}
     {notice && <p className="toast" role="status">{notice}</p>}
-    {pending && <RequestDialog client={client} {...pending} onClose={() => setPending(null)} onSubmitted={live.recordJob} />}
+    {pending && <RequestDialog client={client} session={live.session} {...pending} onClose={() => setPending(null)} onSubmitted={live.recordJob} />}
   </main>;
 }

@@ -12,25 +12,31 @@ export interface GenerationStatus {
 
 /** What the user can expect from the assistant, so they find out before generating rather than after. */
 export function generationStatus(session: Session | null): GenerationStatus {
-  if (!session) return { tone: 'idle', text: 'Connect your backend to see whether the assistant can generate controls.', links: [] }
-  if (!session.online || !session.target) return { tone: 'warning', text: 'Your laptop agent is offline, so generated controls cannot be built or run.', links: [] }
+  if (!session) return { tone: 'idle', text: 'Connect your backend to generate C source.', links: [] }
   const noKey = session.generation_available === false
-  const noIsolation = !session.target.build_boundary_available || !session.target.execution_boundary_available
+  const noIsolation = session.target != null && (!session.target.build_boundary_available || !session.target.execution_boundary_available)
   if (noKey && noIsolation) {
     return { tone: 'warning', text: 'Generation unavailable (no Gemini key), and this laptop can’t run generated programs yet (no isolation adapter). Built-in controls still work.', links: [GEMINI, ISOLATION] }
   }
   if (noKey) return { tone: 'warning', text: 'Generation unavailable: the backend has no Gemini key. Built-in controls still work.', links: [GEMINI] }
-  if (noIsolation) return { tone: 'warning', text: 'Generation available; this laptop can’t run generated programs yet (no isolation adapter). Built-in controls still work.', links: [ISOLATION] }
-  return { tone: 'ready', text: 'Generation ready.', links: [] }
+  if (!session.online || !session.target) return { tone: 'warning', text: 'C source generation is available while your laptop agent is offline. Review and download source; connect the agent to request execution.', links: [] }
+  if (noIsolation) return { tone: 'warning', text: 'C source generation is available. Review and download source; running generated programs requires an isolation adapter. Built-in controls still work.', links: [ISOLATION] }
+  return { tone: 'ready', text: 'C source generation is ready. Select a control to configure an execution request.', links: [] }
 }
 
 export interface MessagingStatus {
   enabled: boolean
   connected: boolean
+  reason?: string | null
+  missing?: string[]
 }
 
 /** Small "iMessage: connected / off" label; null while unknown (no backend, or an older backend without the endpoint). */
 export function messagingLabel(status: MessagingStatus | null): string | null {
   if (!status) return null
-  return status.enabled && status.connected ? 'iMessage: connected' : 'iMessage: off'
+  if (status.enabled && status.connected) return 'iMessage: connected'
+  if (status.reason === 'MESSAGING_DISABLED') return 'iMessage: disabled'
+  if (status.reason === 'MESSAGING_NOT_CONFIGURED') return 'iMessage: setup required'
+  if (status.reason === 'SIDECAR_NOT_CONNECTED') return 'iMessage: waiting for connection'
+  return 'iMessage: off'
 }

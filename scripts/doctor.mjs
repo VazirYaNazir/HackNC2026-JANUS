@@ -45,19 +45,21 @@ async function portCheck(port, label) {
   return { level: 'error', name: `port ${port}`, message: `${label} port ${port} is already in use by ${who}.`, fix: 'Close that program, or stop it yourself if you recognise it. JANUS never kills processes it did not start.' };
 }
 
-/**
- * AI widgets need a Gemini key (backend) and a local isolation adapter (agent). Neither is required for the
- * built-in native controls, so both are warnings, never blockers.
- */
-export function aiChecks() {
-  const env = readEnvFile();
-  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || env?.get('GEMINI_API_KEY') || env?.get('GOOGLE_API_KEY');
+// Match startup's merged environment: an explicitly empty process value also
+// overrides backend/.env, rather than silently enabling a configured feature.
+function configuredValue(name, env) {
+  return (process.env[name] ?? env?.get(name) ?? '').trim();
+}
+
+/** Gemini generates source drafts; running them separately requires local isolation and authorization. */
+export function aiChecks(env = readEnvFile()) {
+  const key = configuredValue('GEMINI_API_KEY', env) || configuredValue('GOOGLE_API_KEY', env);
   const results = [];
   if (!key) {
-    results.push({ level: 'warn', name: 'AI widgets · Gemini key', message: 'No Gemini key found, so AI-generated widgets are off. Built-in controls (volume, mouse, metrics, processes, screen) work without it.', fix: 'Run `npm run setup` to enter one, or set GEMINI_API_KEY in backend/.env.' });
+    results.push({ level: 'warn', name: 'AI widgets · Gemini key', message: 'No Gemini key found, so AI source generation is unavailable. Built-in controls (volume, mouse, metrics, processes, screen) work without it.', fix: 'Run `npm run setup` to enter one, or set GEMINI_API_KEY in backend/.env.' });
   }
-  if (!process.env.AGENT_ISOLATION_ADAPTER) {
-    results.push({ level: 'warn', name: 'AI widgets · isolation adapter', message: 'No isolation adapter is configured (AGENT_ISOLATION_ADAPTER), so this laptop cannot run AI-generated programs. JANUS does not ship one yet. Built-in controls are unaffected.', fix: 'See README → AI widgets → Isolation adapter.' });
+  if (!configuredValue('AGENT_ISOLATION_ADAPTER', env)) {
+    results.push({ level: 'warn', name: 'AI widgets · isolation adapter', message: 'No isolation adapter is configured (AGENT_ISOLATION_ADAPTER), so this laptop cannot run generated programs. With a Gemini key you can generate and review C source without an online agent. JANUS does not ship an isolation adapter yet.', fix: 'Set AGENT_ISOLATION_ADAPTER in backend/.env or the process environment to an installed local worker; see README → AI widgets → Isolation adapter.' });
   }
   return results;
 }
@@ -91,17 +93,23 @@ export function tigerChecks(env = readEnvFile()) {
 
 const E164 = /^\+[1-9]\d{6,14}$/;
 
-/** Warnings for `npm start -- --imessage`: the channel does nothing without credentials and an allowlist. */
-export function imessageChecks(env = readEnvFile()) {
+/** Configured iMessage starts automatically; explicit requests also explain missing configuration. */
+export function imessageChecks(env = readEnvFile(), requested = true) {
+  const settings = ['SPECTRUM_PROJECT_ID', 'SPECTRUM_PROJECT_SECRET', 'IMESSAGE_ALLOWED_SENDERS', 'MESSAGING_SERVICE_TOKEN'];
+  if (!requested && !settings.some((name) => configuredValue(name, env))) return [];
   // Example/placeholder values ("...", "+1XXXXXXXXXX") count as not configured.
-  const value = (key) => { const raw = (process.env[key] || env?.get(key) || '').trim(); return /^\.+$|^\+?1?X+$/i.test(raw) ? '' : raw; };
+  const value = (key) => { const raw = configuredValue(key, env); return /^\.+$|^\+?1?X+$|^<[^>]+>$|^(?:your|replace|example)[_-](?:project[_-]id|project[_-]secret|token|secret)$/i.test(raw) ? '' : raw; };
   const results = [];
   if (!value('SPECTRUM_PROJECT_ID') || !value('SPECTRUM_PROJECT_SECRET')) {
     results.push({ level: 'warn', name: 'iMessage · Spectrum credentials', message: 'SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET are not set in backend/.env, so the iMessage sidecar will not start.', fix: 'Create a Photon Spectrum project and add both values to backend/.env.' });
   }
-  const senders = value('IMESSAGE_ALLOWED_SENDERS').split(',').map((entry) => entry.replace(/[\s().-]/g, '')).filter((entry) => E164.test(entry));
+  const entries = value('IMESSAGE_ALLOWED_SENDERS').split(',').map((entry) => entry.replace(/[\s().-]/g, '')).filter(Boolean);
+  const senders = entries.filter((entry) => E164.test(entry));
   if (!senders.length) {
     results.push({ level: 'warn', name: 'iMessage · allowlist', message: 'IMESSAGE_ALLOWED_SENDERS has no valid E.164 number (e.g. +15551234567), so every text will be ignored.', fix: 'Add your number to IMESSAGE_ALLOWED_SENDERS in backend/.env.' });
+  }
+  else if (senders.length !== entries.length) {
+    results.push({ level: 'warn', name: 'iMessage · allowlist', message: 'Some IMESSAGE_ALLOWED_SENDERS entries are not valid E.164 numbers and will be ignored. Valid entries remain allowed.', fix: 'Use comma-separated numbers such as +15551234567; remove malformed entries.' });
   }
   if (value('MESSAGING_SERVICE_TOKEN').length < 32) {
     results.push({ level: 'warn', name: 'iMessage · service token', message: 'MESSAGING_SERVICE_TOKEN is missing or too short, so the backend will refuse the sidecar.', fix: 'Run `npm run setup` to generate one.' });
@@ -121,7 +129,7 @@ export async function doctor(needs = {}) {
     if (needs.pwa) results.push(await portCheck(5174, 'PWA dev'));
   }
   if (needs.ai) results.push(...aiChecks());
-  if (needs.imessage) results.push(...imessageChecks());
+  if (needs.imessage !== false) results.push(...imessageChecks(readEnvFile(), needs.imessage === true));
   if (needs.tiger) results.push(...tigerChecks());
   return results.filter(Boolean);
 }
@@ -136,7 +144,8 @@ export function report(results) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const flags = makeFlags();
-  const results = await doctor({ tunnel: flags.has('tunnel'), pwa: flags.has('pwa'), ports: true, ai: true, tiger: true, imessage: flags.has('imessage') });
+  const imessage = flags.has('no-imessage') ? false : flags.has('imessage') ? true : undefined;
+  const results = await doctor({ tunnel: flags.has('tunnel'), pwa: flags.has('pwa'), ports: true, ai: true, tiger: true, imessage });
   const ok = report(results);
   if (ok && results.length === 0) console.log('All checks passed.');
   process.exit(ok ? 0 : 1);

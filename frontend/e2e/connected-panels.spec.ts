@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('desktop creates and runs a panel; a paired PWA approves source reuse and receives live results', async ({ page, context, request }) => {
   const errors: string[] = []
+  const generationBefore = (await (await request.get('http://127.0.0.1:18980/test/metrics')).json()).generation_calls
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('http://127.0.0.1:18981')
   await page.getByRole('button', { name: 'Connect backend' }).click()
@@ -48,7 +49,7 @@ test('desktop creates and runs a panel; a paired PWA approves source reuse and r
   await expect(phone.getByText('COMPLETED', { exact: true })).toHaveCount(2)
   await page.getByRole('button', { name: 'Requests', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Recent requests' }).getByText('COMPLETED', { exact: true })).toHaveCount(2)
-  expect((await (await request.get('http://127.0.0.1:18980/test/metrics')).json()).generation_calls).toBe(1)
+  expect((await (await request.get('http://127.0.0.1:18980/test/metrics')).json()).generation_calls - generationBefore).toBe(1)
   await phone.reload()
   await phone.getByText('Live desk', { exact: true }).click()
   await expect(phone.getByText('COMPLETED', { exact: true })).toHaveCount(2)

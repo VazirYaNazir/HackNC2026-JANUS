@@ -11,11 +11,18 @@ const session = (overrides: Partial<Session> = {}, target: Partial<NonNullable<S
 
 describe('generationStatus', () => {
   it('asks to connect first', () => expect(generationStatus(null).tone).toBe('idle'))
-  it('reports an offline laptop', () => expect(generationStatus(session({ online: false, target: null })).text).toContain('offline'))
+  it('keeps source generation available with an offline laptop', () => {
+    const status = generationStatus(session({ online: false, target: null }))
+    expect(status.text).toContain('generation is available while your laptop agent is offline')
+    expect(status.text).toContain('Review and download source')
+  })
+  it('reports a missing Gemini key even when the laptop is offline', () => {
+    expect(generationStatus(session({ online: false, target: null, generation_available: false })).text).toContain('no Gemini key')
+  })
   it('is ready when a key and an isolation adapter are both present', () => expect(generationStatus(session())).toMatchObject({ tone: 'ready', links: [] }))
   it('says generation works but programs cannot run without an isolation adapter, with a fix link', () => {
     const status = generationStatus(session({}, { execution_boundary_available: false }))
-    expect(status.text).toBe('Generation available; this laptop can’t run generated programs yet (no isolation adapter). Built-in controls still work.')
+    expect(status.text).toBe('C source generation is available. Review and download source; running generated programs requires an isolation adapter. Built-in controls still work.')
     expect(status.links.map((link) => link.href)).toEqual([expect.stringContaining('#isolation-adapter')])
   })
   it('treats a missing build boundary the same way', () => expect(generationStatus(session({}, { build_boundary_available: false })).tone).toBe('warning'))
@@ -35,6 +42,12 @@ describe('messagingLabel', () => {
     expect(messagingLabel({ enabled: true, connected: false })).toBe('iMessage: off')
     expect(messagingLabel({ enabled: false, connected: false })).toBe('iMessage: off')
     expect(messagingLabel({ enabled: false, connected: true })).toBe('iMessage: off')
+  })
+  it('distinguishes setup, an explicit disable, and a missing sidecar heartbeat', () => {
+    expect(messagingLabel({ enabled: false, connected: false, reason: 'MESSAGING_NOT_CONFIGURED', missing: ['SPECTRUM_PROJECT_ID'] })).toBe('iMessage: setup required')
+    expect(messagingLabel({ enabled: true, connected: false, reason: 'MESSAGING_DISABLED' })).toBe('iMessage: disabled')
+    expect(messagingLabel({ enabled: true, connected: false, reason: 'SIDECAR_NOT_CONNECTED' })).toBe('iMessage: waiting for connection')
+    expect(messagingLabel({ enabled: true, connected: true, reason: null })).toBe('iMessage: connected')
   })
 })
 

@@ -82,7 +82,7 @@ on the public backend's event loop, not the existing admin server's separate
 thread. Run one Uvicorn process: active connection routing is in memory. Running
 multiple worker processes without shared routing state is not supported.
 SQLite preserves scoped job views, replay IDs, layouts, action templates,
-paired phones, and validated programs. Restart marks unfinished jobs
+paired phones, source drafts, and validated programs. Restart marks unfinished jobs
 `INTERRUPTED / BACKEND_RESTART`; neither reconnect nor restart replays a job.
 
 Deployment uses WSS and preserves certificate verification. Configure the
@@ -142,6 +142,7 @@ described in [connected panels](connected-panels.md).
 | Method / path | Behavior |
 | --- | --- |
 | `WS /ws/agents/{device_id}` | Outbound laptop connection, authenticated with that device's agent token. |
+| `POST /api/v1/programs/generate` | Generate and save a source draft for review; HTTP 201 `{program_id, program}`. No connected agent or isolation adapter is needed, and no laptop command is sent. |
 | `POST /api/v1/agent-jobs/generate` | Structured request -> Gemini -> local validation/repair -> execution request. |
 | `POST /api/v1/agent-jobs/source` | Already generated source through the same local pipeline; no initial provider call. Compile repair can still invoke Gemini. |
 | `GET /api/v1/agent-jobs` | Recent persisted history scoped to the authenticated laptop and owner. |
@@ -149,7 +150,7 @@ described in [connected panels](connected-panels.md).
 | `GET /api/v1/agent-jobs/{job_id}/wait?timeout=30` | Async event-driven wait, 0 < timeout <= 180 seconds. Wait timeout is HTTP 504 and leaves the job running. |
 | `POST /api/v1/agent-jobs/{job_id}/cancel` | Cancel generation/repair and request local cleanup. `cancellation_confirmed` becomes true only after the agent reports completed cleanup. |
 
-Generation body:
+Execution generation body:
 
 ```json
 {
@@ -167,8 +168,20 @@ Generation body:
 }
 ```
 
+For source review, send the inner `request` object directly to
+`POST /api/v1/programs/generate`. The response contains the complete C source,
+summary, and unchanged operation/target/capabilities/dependencies/output
+protocol in `program`, plus its owner- and laptop-scoped `program_id`. It uses
+the shared Gemini concurrency, retry, and deadline limits; missing credentials
+return `503 PROVIDER_NOT_CONFIGURED`, provider timeout returns
+`504 PROVIDER_TIMEOUT`, and invalid provider output returns
+`502 MALFORMED_RESPONSE`. Storage must be available before generation begins.
+A saved draft is not a validated executable. Explicitly approved reuse still
+requires a fresh job ID, matching scope, local authorization, compilation,
+preflight, and the installed isolation adapter before execution.
+
 Targets are `Darwin` or `Windows`; architectures are `arm64`, `x86_64`, or `x86`.
-The connected laptop's advertised target must match. Capabilities/dependencies
+For execution, the connected laptop's advertised target must match. Capabilities/dependencies
 use the existing agent vocabulary and declared dependencies must support the
 target. Gemini returns strictly validated `language: c11`, source (at most
 128 KiB UTF-8), identical operation/target/declarations/output protocol, and a
@@ -186,8 +199,9 @@ explicitly enables `share_outputs`; absent output is preserved as absent.
 
 Errors: 401 invalid credentials, 403 wrong device scope, 404 inaccessible/missing
 job, 409 duplicate ID, 422 malformed request/target, 429 active job capacity,
-503 offline device/service capacity, and 504 wait timeout. Submission to an
-offline device makes no provider call. Duplicate IDs never regenerate source.
+503 offline device/service capacity, and 504 wait timeout. Execution submission
+to an offline device makes no provider call. Source review can generate drafts
+while that laptop is offline. Duplicate job IDs never regenerate source.
 At most 256 active/recent views remain in memory, evicting oldest records whose
 cleanup has finished. Production's SQLite admission ledger rejects duplicate
 IDs across restarts; the memory ownership cache stays bounded to 4096 IDs and

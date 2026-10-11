@@ -3,6 +3,7 @@ app.messaging.service. Authenticated with a service token and reachable from loo
 import hmac
 import logging
 import os
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -48,7 +49,7 @@ def service_caller(request: Request) -> None:
     if client not in LOOPBACK or any(name in request.headers for name in PROXY_HEADERS):
         raise HTTPException(403, "LOOPBACK_ONLY")
     expected = os.getenv("MESSAGING_SERVICE_TOKEN", "")
-    if len(expected) < MIN_TOKEN:
+    if len(expected.strip()) < MIN_TOKEN:
         raise HTTPException(503, "MESSAGING_DISABLED")
     header = request.headers.get("authorization", "")
     supplied = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
@@ -73,5 +74,22 @@ async def heartbeat(payload: Heartbeat, service: MESSAGING):
 
 @router.get("/api/v1/studio/messaging")
 async def status(identity: DESKTOP, service: MESSAGING):
-    return {"enabled": service.enabled and len(os.getenv("MESSAGING_SERVICE_TOKEN", "")) >= MIN_TOKEN,
-            "connected": service.connected()}
+    missing = []
+    if not service.enabled:
+        missing.append("IMESSAGE_ALLOWED_SENDERS")
+    if len(os.getenv("MESSAGING_SERVICE_TOKEN", "").strip()) < MIN_TOKEN:
+        missing.append("MESSAGING_SERVICE_TOKEN")
+    enabled = not missing
+    connected = enabled and service.connected()
+    mode = os.getenv("JANUS_IMESSAGE_MODE", "")
+    # A standalone sidecar can keep Spectrum credentials outside the backend.
+    # Managed startup shares them, so it can name missing settings precisely.
+    if not connected and mode in ("auto", "on"):
+        for name in ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET"):
+            value = os.getenv(name, "").strip()
+            placeholder = re.fullmatch(r"\.+|<[^>]+>|(?:your|replace|example)[_-](?:project[_-]id|project[_-]secret|token|secret)", value, re.I)
+            if not value or placeholder:
+                missing.append(name)
+    reason = (None if connected else "MESSAGING_DISABLED" if mode == "off" else
+              "MESSAGING_NOT_CONFIGURED" if missing else "SIDECAR_NOT_CONNECTED")
+    return {"enabled": enabled, "connected": connected, "reason": reason, "missing": missing}
