@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Icon } from "@janus/design";
-import type { PairQR } from "@janus/schema";
-import { pair, type PairResult } from "../lib/connection";
+import { pair, parsePairingLink, type PairResult } from "../lib/connection";
 import { addPanel } from "../lib/panels";
 import "./ScanScreen.css";
 
@@ -15,38 +14,22 @@ type Phase = "scan" | "manual" | "pairing" | "name";
 
 const REGION_ID = "scan-region";
 
-/** The QR encodes { host, code } as JSON. Returns null for anything else. */
-function parseQr(text: string): PairQR | null {
-  try {
-    const data: unknown = JSON.parse(text);
-    if (typeof data !== "object" || data === null) return null;
-    const { host, code } = data as Record<string, unknown>;
-    if (typeof host !== "string" || typeof code !== "string" || !code) return null;
-    const url = new URL(host);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return { host: url.origin, code };
-  } catch {
-    return null;
-  }
-}
-
 export default function ScanScreen({ onDone }: ScanScreenProps) {
   const [phase, setPhase] = useState<Phase>("scan");
   const [error, setError] = useState("");
-  const [host, setHost] = useState("");
-  const [code, setCode] = useState("");
+  const [link, setLink] = useState("");
   const [name, setName] = useState("");
-  const [paired, setPaired] = useState<(PairResult & { host: string }) | null>(null);
+  const [paired, setPaired] = useState<PairResult | null>(null);
   const busy = useRef(false); // a QR can decode many times a second; pair only once
 
-  const startPairing = async (target: PairQR) => {
+  const startPairing = async (target: { code: string; host?: string }) => {
     if (busy.current) return;
     busy.current = true;
     setError("");
     setPhase("pairing");
     try {
-      const result = await pair(target.host, target.code);
-      setPaired({ ...result, host: target.host });
+      const result = await pair(target.code, target.host);
+      setPaired(result);
       setName(result.pcName);
       setPhase("name");
     } catch {
@@ -77,14 +60,14 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
             },
           },
           (text) => {
-            const parsed = parseQr(text);
+            const parsed = parsePairingLink(text);
             if (parsed) void startPairing(parsed);
             else setError("That isn't a Janus QR code.");
           },
           undefined,
         )
         .catch(() => {
-          if (!cancelled) setError("Camera unavailable. Allow camera access, or enter the code instead.");
+          if (!cancelled) setError("Camera unavailable. Allow camera access, or enter the link instead.");
         });
     }, 0);
     return () => {
@@ -100,9 +83,9 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
 
   const submitManual = (e: FormEvent) => {
     e.preventDefault();
-    const target = parseQr(JSON.stringify({ host: host.trim(), code: code.trim() }));
+    const target = parsePairingLink(link);
     if (target) void startPairing(target);
-    else setError("Enter the address shown on your PC, starting with https://");
+    else setError("That isn't a valid pairing link. Paste the whole link shown on your PC.");
   };
 
   const save = (e: FormEvent) => {
@@ -136,7 +119,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
                 setPhase("manual");
               }}
             >
-              Enter code instead
+              Enter link instead
             </button>
           </div>
         </>
@@ -144,25 +127,23 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
 
       {phase === "manual" && (
         <form className="scan__panel" onSubmit={submitManual}>
-          <h1>Enter code</h1>
+          <h1>Enter link</h1>
           <label className="field">
-            <span>PC address</span>
+            <span>Pairing link</span>
             <input
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              placeholder="https://abc.trycloudflare.com"
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://abc.trycloudflare.com?pairing_code=A1B2C3"
               inputMode="url"
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect="off"
+              spellCheck={false}
               autoFocus
             />
           </label>
-          <label className="field">
-            <span>Pairing code</span>
-            <input value={code} onChange={(e) => setCode(e.target.value)} autoCapitalize="none" autoCorrect="off" />
-          </label>
           {error && <p className="error" role="alert">{error}</p>}
-          <button type="submit" className="btn btn--amber" disabled={!host.trim() || !code.trim()}>
+          <button type="submit" className="btn btn--amber" disabled={!link.trim()}>
             Pair
           </button>
           <button

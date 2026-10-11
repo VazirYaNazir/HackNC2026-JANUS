@@ -1,4 +1,4 @@
-import type { SavedConnection } from "@janus/schema";
+import type { PairQR, SavedConnection } from "@janus/schema";
 
 const KEY = "janus.connection";
 
@@ -40,17 +40,39 @@ export async function apiFetch<T>(conn: SavedConnection, path: string, init: Req
 export interface PairResult {
   token: string;
   pcName: string;
+  /** The PC's address: echoes the QR's host, or is resolved from a typed code. */
+  host: string;
 }
 
 /**
- * Pairs with a PC using the code from its QR. Mock for now: resolves after 500ms with a fake token.
- * The real POST /api/pair replaces the body of this one function.
+ * Reads a pairing link, `<host>?pairing_code=<6 hex characters>`: the text the PC's QR code encodes, and what
+ * you can paste instead. The scheme is optional (https is assumed). Returns null if it isn't one.
  */
-export async function pair(host: string, code: string): Promise<PairResult> {
-  void host;
+export function parsePairingLink(text: string): PairQR | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    const code = (url.searchParams.get("pairing_code") ?? "").toUpperCase();
+    if (!/^[0-9A-F]{6}$/.test(code)) return null;
+    return { host: url.origin, code };
+  } catch {
+    return null;
+  }
+}
+
+export const MOCK_HOST = "https://mock.janus.local";
+
+/**
+ * Pairs with a PC using its pairing code. `host` comes from a scanned QR; a typed 6-character code has no
+ * host, so the real version must find the PC from the code alone. Mock for now: resolves after 500ms with a
+ * fake token. The real POST /api/pair replaces the body of this one function.
+ */
+export async function pair(code: string, host?: string): Promise<PairResult> {
   void code;
   await new Promise((resolve) => setTimeout(resolve, 500));
-  return { token: `mock-${crypto.randomUUID()}`, pcName: "my-pc" };
+  return { token: `mock-${crypto.randomUUID()}`, pcName: "my-pc", host: host ?? MOCK_HOST };
 }
 
 /** True if the host answers at all within `timeoutMs` (opaque response is enough; no CORS needed). */

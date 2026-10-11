@@ -58,7 +58,7 @@ export interface Layout {
 export interface PairRequest { code: string; name: string; }      // name: "Ana's iPhone"
 export interface PairResponse { token: string; deviceId: string; }
 
-/** What the QR code encodes. */
+/** A pairing link, parsed. The PC's QR code encodes `<host>?pairing_code=<6 hex characters>`. */
 export interface PairQR { host: string; code: string; }          // host: "https://abc.trycloudflare.com"
 
 /* ---------- WebSocket (/ws) ---------- */
