@@ -7,7 +7,7 @@ import "@janus/client/styles.css";
 import { createClient, demoValues, isDemoPanel } from "../lib/demo";
 import "./PanelScreen.css";
 
-export default function PanelScreen({ panel, onBack }: { panel: SavedPanel; onBack: () => void }) {
+export default function PanelScreen({ panel, onBack, onRepair }: { panel: SavedPanel; onBack: () => void; onRepair: () => void }) {
   const client = useMemo(() => createClient(panel), [panel]);
   const demo = isDemoPanel(panel);
   const live = usePanel(client);
@@ -40,9 +40,14 @@ export default function PanelScreen({ panel, onBack }: { panel: SavedPanel; onBa
       <h1 className="panel__title">{panel.name}</h1>
     </header>
     {demo && <p className="panel__demo">Demo panel · Actions are simulated</p>}
-    <p role="status">{live.status === "unauthorized" ? "Pair again: this connection is no longer authorized." : live.session?.online ? `Laptop online · ${live.status}` : `Laptop offline · ${live.status}`}</p>
+    {live.status === "unauthorized"
+      ? <section className="panel__auth" role="alert">
+          <p>This phone is no longer paired with your PC.</p>
+          <button type="button" className="btn btn--amber" onClick={onRepair}>Pair again</button>
+        </section>
+      : <p role="status">{live.session?.online ? `Laptop online · ${live.status}` : `Laptop offline · ${live.status}`}</p>}
     {(live.error || error) && <p className="error" role="alert">{error || live.error}</p>}
-    {live.document ? <PanelGrid layout={live.document.layout} values={values} data={data} states={states} onTrigger={handleTrigger} /> : live.error ? <p>This panel can't be shown right now.</p> : <p>Loading your saved panel…</p>}
+    {live.document ? <PanelGrid layout={live.document.layout} values={values} data={data} states={states} onTrigger={handleTrigger} /> : live.status === "unauthorized" ? null : live.error ? <p>This panel can't be shown right now.</p> : <p>Loading your saved panel…</p>}
     {live.document?.layout.widgets.length === 0 && <p>Add controls in the desktop Studio, then choose Save &amp; Push.</p>}
     {live.jobs.length > 0 && <section className="panel__jobs" aria-label="Recent requests"><h2>Recent requests</h2>{live.jobs.slice(0, 10).map((job) => <article key={job.job_id}>
       <strong>{job.state}</strong><small>{job.job_id}</small><p>{jobText(job)}</p>

@@ -7,6 +7,16 @@ export interface Session { device_id: string; online: boolean; target: { platfor
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
 
+/** An HTTP error from the backend. `status` lets callers tell "not authorized" (401) from other failures. */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export function backendHost(value: string): string {
   const url = new URL(value);
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Enter the backend address without paths or credentials.');
@@ -33,7 +43,7 @@ export class PanelClient {
     if (!response.ok) {
       let detail = `Request failed (${response.status})`;
       try { const body = await response.json(); if (typeof body.detail === 'string') detail = body.detail; } catch { /* no JSON response */ }
-      throw new Error(detail);
+      throw new ApiError(detail, response.status);
     }
     return response.json() as Promise<T>;
   }

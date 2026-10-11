@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { latestDocument, type JobView } from '@janus/schema';
-import { PanelClient, type PanelDocument, type Session } from './api';
+import { ApiError, PanelClient, type PanelDocument, type Session } from './api';
 import { mergeHistory, recordJob as addJob } from './jobs';
 
 interface PanelState {
@@ -43,7 +43,11 @@ export function usePanel(client: PanelClient | null) {
     const update = (change: (state: PanelState) => PanelState) => {
       if (current) setSnapshot((state) => change(state.client === client ? state : empty(client)));
     };
-    const messageOf = (reason: unknown) => (reason instanceof Error ? reason.message : 'Could not load the panel.');
+    const messageOf = (reason: unknown) => {
+      // A 401 means the PC no longer accepts this phone's token (revoked or reset): the panel must be paired again.
+      if (reason instanceof ApiError && reason.status === 401 && current) setStatus('unauthorized');
+      return reason instanceof Error ? reason.message : 'Could not load the panel.';
+    };
     const refreshLayout = () => client.layout(abort.signal)
       .then((document) => update((state) => ({ ...state, document: latestDocument(state.document, document), layoutError: '' })))
       .catch((reason) => update((state) => ({ ...state, layoutError: messageOf(reason) })));

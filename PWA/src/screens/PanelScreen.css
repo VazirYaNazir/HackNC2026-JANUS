@@ -6,6 +6,8 @@
 }
 .panel__header { display: flex; align-items: center; gap: 6px; margin: 0 0 12px -10px; }
 .panel__title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 600; color: var(--text); }
+.panel__auth { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin: 0 0 12px; padding: 14px 16px; border-radius: var(--radius-widget); box-shadow: var(--neu-inset-sm); }
+.panel__auth p { margin: 0; color: var(--coral); }
 .panel__demo { margin: 0 0 8px; font-size: 13px; color: var(--cyan); }
 .panel__back {
   flex: none;

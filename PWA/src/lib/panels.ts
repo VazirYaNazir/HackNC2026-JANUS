@@ -33,6 +33,10 @@ export function addPanel(input: Pick<SavedPanel, "name" | "pcName" | "host" | "t
 export const renamePanel = (id: string, name: string): SavedPanel[] =>
   write(listPanels().map((p) => (p.id === id ? { ...p, name } : p)));
 
+/** Replaces the connection of a saved panel after pairing again. Its id, name and history stay. */
+export const repairPanel = (id: string, connection: Pick<SavedPanel, "host" | "token" | "pcName" | "agentDeviceId">): SavedPanel[] =>
+  write(listPanels().map((p) => (p.id === id ? { ...p, ...connection } : p)));
+
 export const removePanel = (id: string): SavedPanel[] => write(listPanels().filter((p) => p.id !== id));
 
 export const touchPanel = (id: string): SavedPanel[] =>

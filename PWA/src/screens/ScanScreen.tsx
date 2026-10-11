@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Icon } from "@janus/design";
-import type { PairQR } from "@janus/schema";
+import type { PairQR, SavedPanel } from "@janus/schema";
 import { pair, parsePairingLink, type PairResult } from "../lib/connection";
-import { addPanel } from "../lib/panels";
+import { addPanel, repairPanel } from "../lib/panels";
 import "./ScanScreen.css";
 
 interface ScanScreenProps {
-  /** Back to Home, with or without a new panel. */
-  onDone: () => void;
+  /** Leave the scanner. `panel` is the re-paired panel; it is missing if the user closed the screen. */
+  onDone: (panel?: SavedPanel) => void;
+  /** Set when re-pairing a saved panel: it keeps its name and id, and only its connection is replaced. */
+  repairing?: SavedPanel;
 }
 
 type Phase = "scan" | "manual" | "pairing" | "name";
 
 const REGION_ID = "scan-region";
 
-export default function ScanScreen({ onDone }: ScanScreenProps) {
+export default function ScanScreen({ onDone, repairing }: ScanScreenProps) {
   const [phase, setPhase] = useState<Phase>("scan");
   const [error, setError] = useState("");
   const [link, setLink] = useState("");
@@ -30,6 +32,17 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
     setPhase("pairing");
     try {
       const result = await pair(target.host, target.code);
+      if (repairing) {
+        // A panel's layout and history belong to one PC. Never repoint it at a different one.
+        if (repairing.agentDeviceId && result.agentDeviceId !== repairing.agentDeviceId) {
+          setError(`That code is for a different PC (${result.pcName}). Scan the code from the PC this panel belongs to, or add that PC as a new panel from the home screen.`);
+          setPhase("scan");
+          return;
+        }
+        const updated = repairPanel(repairing.id, { host: target.host, token: result.token, pcName: result.pcName, agentDeviceId: result.agentDeviceId });
+        onDone(updated.find((p) => p.id === repairing.id));
+        return;
+      }
       setPaired({ ...result, host: target.host });
       setName(result.pcName);
       setPhase("name");
@@ -40,6 +53,12 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
       busy.current = false;
     }
   };
+
+  // The camera callback outlives renders; it calls the latest startPairing through this ref.
+  const startPairingRef = useRef(startPairing);
+  useEffect(() => {
+    startPairingRef.current = startPairing;
+  });
 
   // Camera: runs only while the scan phase is showing.
   useEffect(() => {
@@ -62,7 +81,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
           },
           (text) => {
             const parsed = parsePairingLink(text);
-            if (parsed) void startPairing(parsed);
+            if (parsed) void startPairingRef.current(parsed);
             else setError("That isn't a Janus QR code.");
           },
           undefined,
@@ -98,7 +117,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
 
   return (
     <main className="scan">
-      <button type="button" className="btn btn--icon scan__close" aria-label="Close" onClick={onDone}>
+      <button type="button" className="btn btn--icon scan__close" aria-label="Close" onClick={() => onDone()}>
         <Icon name="close" size={22} />
       </button>
 
@@ -110,7 +129,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
           <div className="scan__frame" aria-hidden="true" />
           <div className="scan__bottom">
             <p className={error ? "error" : "scan__hint"} role={error ? "alert" : undefined}>
-              {error || "Point your camera at the QR code on your PC."}
+              {error || (repairing ? `Scan the QR code on your PC to reconnect “${repairing.name}”.` : "Point your camera at the QR code on your PC.")}
             </p>
             <button
               type="button"

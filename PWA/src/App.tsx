@@ -15,7 +15,7 @@ const isGallery = () =>
 // Loaded on demand: the QR scanner is the heaviest dependency.
 const ScanScreen = lazy(() => import("./screens/ScanScreen"));
 
-type Screen = { name: "home" } | { name: "scan" } | { name: "panel"; panel: SavedPanel };
+type Screen = { name: "home" } | { name: "scan"; repair?: SavedPanel } | { name: "panel"; panel: SavedPanel };
 
 export default function App() {
   const gallery = isGallery();
@@ -33,9 +33,21 @@ export default function App() {
       {gallery && Gallery ? (
         <Gallery />
       ) : screen.name === "scan" ? (
-        <ScanScreen onDone={home} />
+        <ScanScreen
+          repairing={screen.repair}
+          onDone={(panel) => {
+            const back = panel ?? screen.repair;
+            if (back) setScreen({ name: "panel", panel: back });
+            else home();
+          }}
+        />
       ) : screen.name === "panel" ? (
-        <PanelScreen key={screen.panel.id} panel={screen.panel} onBack={home} />
+        <PanelScreen
+          key={screen.panel.id}
+          panel={screen.panel}
+          onBack={home}
+          onRepair={() => setScreen({ name: "scan", repair: screen.panel })}
+        />
       ) : (
         <HomeScreen onOpen={open} onScan={() => setScreen({ name: "scan" })} />
       )}
