@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent, type PointerEvent } from 'react'
-import { gridSizeToLogical, logicalRectStyle, snapPositionToGrid, validatePlacement, type Rect } from '@janus/design'
+import { GRID, gridSizeToLogical, paddedCanvas, paddedRectStyle, screenFractionToCanvas, snapPositionToGrid, validatePlacement, type Rect } from '@janus/design'
 import type { LogicalCanvasLayout, Widget, WidgetType } from '@janus/schema'
 import { getWidgetDef, isInputWidget, WidgetView, type WidgetValue } from '@janus/widgets'
 import { moveRect, resizeRect, viewportDeltaToLogical } from '../editor/geometry'
@@ -36,12 +36,10 @@ interface Gesture {
 const rectOf = ({ x, y, w, h }: Widget): Rect => ({ x, y, w, h })
 const sameRect = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h
 
+/** Pointer position in canvas coordinates. The screen includes the padding, so a point in the gap is outside 0..canvas. */
 function clientPoint(event: { clientX: number; clientY: number }, element: HTMLElement, layout: LogicalCanvasLayout) {
   const bounds = element.getBoundingClientRect()
-  return {
-    x: ((event.clientX - bounds.left) / bounds.width) * layout.canvas.width,
-    y: ((event.clientY - bounds.top) / bounds.height) * layout.canvas.height,
-  }
+  return screenFractionToCanvas({ x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height }, layout.canvas, GRID.padding)
 }
 
 function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, history, onSelect, onGeometryChange, onTrigger }: {
@@ -91,7 +89,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, histo
     const delta = viewportDeltaToLogical(
       { x: event.clientX - current.clientX, y: event.clientY - current.clientY },
       { width: bounds.width, height: bounds.height },
-      layout.canvas,
+      paddedCanvas(layout.canvas, GRID.padding),
     )
     const rect = current.kind === 'move'
       ? moveRect(current.origin, delta, snapToGrid)
@@ -118,7 +116,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, histo
 
   return <div
     className={`editor-widget ${selected && mode === 'edit' ? 'is-selected' : ''} ${draft && !draft.valid ? 'is-invalid' : ''}`}
-    style={logicalRectStyle(displayRect, layout.canvas)}
+    style={paddedRectStyle(displayRect, layout.canvas, GRID.padding)}
     onPointerDown={(event) => startGesture(event, 'move')}
     {...interactionHandlers}
   >
@@ -172,12 +170,13 @@ export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mod
 
   return <div className="phone-frame" aria-label="Phone preview">
     <div
-      className={`phone-screen phone-canvas ${mode === 'preview' ? 'is-preview' : 'is-editing'} ${snapToGrid ? 'is-snapping' : ''}`}
+      className={`phone-screen phone-canvas ${mode === 'preview' ? 'is-preview' : 'is-editing'}`}
       onClick={(event) => { if (mode === 'edit' && event.target === event.currentTarget) onSelect(null) }}
       onDragOver={dragOver}
       onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPlacement(null) }}
       onDrop={drop}
     >
+      {snapToGrid && mode === 'edit' && <div className="snap-grid" aria-hidden="true" style={paddedRectStyle({ x: 0, y: 0, w: layout.canvas.width, h: layout.canvas.height }, layout.canvas, GRID.padding)} />}
       {layout.widgets.map((widget) => <EditorWidget
         key={widget.id}
         widget={widget}
@@ -191,7 +190,7 @@ export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mod
         onGeometryChange={onGeometryChange}
         onTrigger={onTrigger}
       />)}
-      {placement && pendingType && mode === 'edit' && <div className={`placement-preview ${placement.valid ? 'is-valid' : 'is-invalid'}`} style={logicalRectStyle(placement.rect, layout.canvas)} />}
+      {placement && pendingType && mode === 'edit' && <div className={`placement-preview ${placement.valid ? 'is-valid' : 'is-invalid'}`} style={paddedRectStyle(placement.rect, layout.canvas, GRID.padding)} />}
     </div>
   </div>
 }

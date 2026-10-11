@@ -1,5 +1,10 @@
 import type { Layout, LegacyGridLayout, LogicalCanvasLayout, Widget } from "@janus/schema";
 
+/**
+ * `padding` is the gap between the screen edge and the panel, in CSS px on the phone (the PWA wraps the grid in it).
+ * The builder draws the same gap around its phone preview using this same value (see paddedRectStyle), so the two
+ * cannot drift apart. It is purely presentational: saved layouts and widget x/y never include it.
+ */
 export const GRID = { columns: 4, rowHeight: 62, gap: 12, padding: 18 } as const;
 export const LOGICAL_CANVAS = { width: 360, height: 780 } as const;
 
@@ -187,6 +192,45 @@ export function normalizeLayout(layout: Layout): LogicalCanvasLayout {
 /** The lowest edge of any rect (y + h), in logical units. 0 when there are none. */
 export function contentBottom(rects: readonly Rect[]): number {
   return rects.reduce((bottom, rect) => Math.max(bottom, rect.y + rect.h), 0);
+}
+
+/** The phone screen the panel is drawn on: the canvas plus `padding` on every side (396 x 816 for the default canvas). */
+export function paddedCanvas(
+  canvas: { width: number; height: number } = LOGICAL_CANVAS,
+  padding: number = GRID.padding,
+): { width: number; height: number } {
+  return { width: canvas.width + 2 * padding, height: canvas.height + 2 * padding };
+}
+
+/**
+ * Like logicalRectStyle, but positioned on the padded screen: a widget at x=0 / y=0 sits `padding` in from the edge, the
+ * way it does on the phone. The rect itself stays in canvas coordinates.
+ */
+export function paddedRectStyle(
+  rect: Rect,
+  canvas: { width: number; height: number } = LOGICAL_CANVAS,
+  padding: number = GRID.padding,
+): Record<"left" | "top" | "width" | "height", string> {
+  const screen = paddedCanvas(canvas, padding);
+  return {
+    left: `${((rect.x + padding) / screen.width) * 100}%`,
+    top: `${((rect.y + padding) / screen.height) * 100}%`,
+    width: `${(rect.w / screen.width) * 100}%`,
+    height: `${(rect.h / screen.height) * 100}%`,
+  };
+}
+
+/**
+ * Where a point on the padded screen (as fractions 0..1 of its width and height) lands in canvas coordinates. A point in
+ * the padding comes out negative or past the canvas, which validatePlacement rejects: nothing can be dropped in the gap.
+ */
+export function screenFractionToCanvas(
+  fraction: { x: number; y: number },
+  canvas: { width: number; height: number } = LOGICAL_CANVAS,
+  padding: number = GRID.padding,
+): { x: number; y: number } {
+  const screen = paddedCanvas(canvas, padding);
+  return { x: fraction.x * screen.width - padding, y: fraction.y * screen.height - padding };
 }
 
 export function logicalRectStyle(
