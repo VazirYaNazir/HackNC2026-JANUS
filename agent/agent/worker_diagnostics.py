@@ -2,6 +2,7 @@
 
 The host runs this source in a fresh container with the worker's unchanged
 restrictions. Only fixed check names and booleans leave that container.
+Optional interface observations contain bounded names and public flags only.
 """
 
 DIAGNOSTIC_CHECKS = frozenset({
@@ -31,6 +32,7 @@ names = ("runtime", "seccomp", "compiler", "architecture", "memory", "swap",
          "network_kernel_query", "network_proc_readable", "network_proc_loopback", "environment")
 checks = {name: False for name in names}
 code = "WORKER_DIAGNOSTIC_UNAVAILABLE"
+network_interfaces = []
 
 def check(name, operation):
     try:
@@ -71,9 +73,9 @@ try:
         return kind == "tmpfs" and "noexec" not in options and size <= limits["disk_bytes"] and os.access("/work", os.W_OK)
     check("scratch", scratch)
     try:
-        interfaces = worker["_network_interfaces"]()
+        network_interfaces = worker["_network_interface_states"]()
         checks["network_kernel_query"] = True
-        checks["network"] = interfaces == {"lo"}
+        checks["network"] = worker["_network_isolated"](network_interfaces)
     except Exception:
         pass
     # /proc is supplemental evidence only. Docker Desktop can expose a view
@@ -108,5 +110,8 @@ try:
     ) if not checks[name]), None)
 except Exception:
     pass
-print(json.dumps({"checks": checks, "code": code, "ready": code is None}, separators=(",", ":")), flush=True)
+report = {"checks": checks, "code": code, "ready": code is None}
+if network_interfaces:
+    report["network_interfaces"] = network_interfaces
+print(json.dumps(report, separators=(",", ":")), flush=True)
 '''

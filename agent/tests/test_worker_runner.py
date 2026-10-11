@@ -15,7 +15,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 
 from dataclasses import asdict
 from agent.isolation import ResourceLimits
@@ -279,7 +279,7 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.mounts = self.stack.enter_context(patch.object(self.runner, "_mounts", return_value={"/": ({"ro"}, "overlay"), "/work": ({"rw"}, "tmpfs")}))
         self.storage = self.stack.enter_context(patch.object(self.runner.os, "statvfs", return_value=SimpleNamespace(f_blocks=LIMITS["disk_bytes"] // 4096, f_frsize=4096)))
         self.access = self.stack.enter_context(patch.object(self.runner.os, "access", side_effect=lambda path, mode: str(path) != "/dev/shm"))
-        self.interfaces = self.stack.enter_context(patch.object(self.runner, "_network_interfaces", return_value={"lo"}))
+        self.interfaces = self.stack.enter_context(patch.object(self.runner, "_network_interface_states", return_value=[{"name": "lo", "loopback": True, "up": True}]))
         self.cgroups = self.stack.enter_context(patch.object(self.runner, "assert_cgroup_limits", return_value=Mock()))
         self.stack.enter_context(patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": "/work"}, clear=True))
 
@@ -338,10 +338,26 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.interfaces.side_effect = ValueError("Invalid kernel network evidence")
         self.assert_rejected()
 
+    def test_dormant_linuxkit_tunnels_do_not_enable_worker_networking(self):
+        for name in ("ip6tnl0", "tunl0", "sit0"):
+            self.interfaces.return_value = [{"name": "lo", "loopback": True, "up": True},
+                                           {"name": name, "loopback": False, "up": False}]
+            with self.subTest(interface=name):
+                self.assertIs(self.runner.assert_runtime(dict(LIMITS)), self.cgroups.return_value)
+
+    def test_active_tunnels_or_missing_genuine_loopback_fail_closed(self):
+        cases = ([{"name": "lo", "loopback": True, "up": True}, {"name": "ip6tnl0", "loopback": False, "up": True}],
+                 [{"name": "eth0", "loopback": False, "up": False}],
+                 [{"name": "lo", "loopback": False, "up": True}])
+        for interfaces in cases:
+            self.interfaces.return_value = interfaces
+            with self.subTest(interfaces=interfaces):
+                self.assert_rejected()
+
     def test_extra_network_interfaces_and_host_environment_are_rejected(self):
-        self.interfaces.return_value = {"lo", "eth0"}
+        self.interfaces.return_value = [{"name": "lo", "loopback": True, "up": True}, {"name": "eth0", "loopback": False, "up": True}]
         self.assert_rejected()
-        self.interfaces.return_value = {"lo"}
+        self.interfaces.return_value = [{"name": "lo", "loopback": True, "up": True}]
         with patch.dict(os.environ, {"GEMINI_API_KEY": "private-key"}):
             self.assert_rejected()
 
@@ -380,6 +396,78 @@ class KernelNetworkNamespaceTests(unittest.TestCase):
     def test_kernel_query_failure_cannot_claim_disabled_networking(self):
         with patch.object(self.runner.socket, "if_nameindex", side_effect=OSError("Kernel query unavailable")), self.assertRaises((OSError, ValueError)):
             self.runner._network_interfaces()
+
+
+@unittest.skipUnless(LINUX, "Linux kernel interface flags inspection")
+class NetworkInterfaceStateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.runner = load_runner()
+
+    def socket_fixture(self):
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.fileno.return_value = 11
+        return client
+
+    def test_trusted_kernel_flag_query_closes_the_socket_and_exposes_only_bool_state(self):
+        client = self.socket_fixture()
+        flags = {"lo": 0x1 | 0x8, "ip6tnl0": 0x80, "tunl0": 0x80}
+        def ioctl(fd, request, buffer, *args):
+            self.assertEqual(fd, 11)
+            self.assertEqual(request, 0x8913)
+            name = buffer[:16].split(b"\0", 1)[0]
+            return struct.pack("16sH", name, flags[name.decode("ascii")]) + bytes(238)
+        with patch.object(self.runner, "_network_interfaces", return_value=set(flags)), \
+                patch.object(self.runner.socket, "socket", return_value=client) as opening, \
+                patch.object(self.runner.fcntl, "ioctl", side_effect=ioctl) as query:
+            states = self.runner._network_interface_states()
+        opening.assert_called_once_with(self.runner.socket.AF_INET, self.runner.socket.SOCK_DGRAM)
+        self.assertEqual(query.call_count, 3)
+        self.assertGreaterEqual(client.__exit__.call_count + client.close.call_count, 1)
+        self.assertCountEqual(states, [
+            {"name": "lo", "loopback": True, "up": True},
+            {"name": "ip6tnl0", "loopback": False, "up": False},
+            {"name": "tunl0", "loopback": False, "up": False},
+        ])
+        self.assertTrue(all(type(state["up"]) is bool and type(state["loopback"]) is bool for state in states))
+
+    def test_invalid_or_excessive_names_fail_before_opening_the_inspection_socket(self):
+        cases = ({"x" * 16}, {"é"}, {"lo\0"}, {"lo space"},
+                 {"v" + str(index) for index in range(33)})
+        for names in cases:
+            with self.subTest(names=names), patch.object(self.runner, "_network_interfaces", return_value=names), \
+                    patch.object(self.runner.socket, "socket") as opening, self.assertRaises(ValueError):
+                self.runner._network_interface_states()
+            opening.assert_not_called()
+
+    def test_failed_flag_query_fails_closed_and_closes_the_socket(self):
+        client = self.socket_fixture()
+        with patch.object(self.runner, "_network_interfaces", return_value={"lo"}), \
+                patch.object(self.runner.socket, "socket", return_value=client), \
+                patch.object(self.runner.fcntl, "ioctl", side_effect=OSError("Kernel flags unavailable")), \
+                self.assertRaises((OSError, ValueError)):
+            self.runner._network_interface_states()
+        self.assertGreaterEqual(client.__exit__.call_count + client.close.call_count, 1)
+
+    def test_unreadable_flag_response_cannot_claim_network_isolation(self):
+        client = self.socket_fixture()
+        with patch.object(self.runner, "_network_interfaces", return_value={"lo"}), \
+                patch.object(self.runner.socket, "socket", return_value=client), \
+                patch.object(self.runner.fcntl, "ioctl", return_value=b""), \
+                self.assertRaises((OSError, ValueError, struct.error)):
+            self.runner._network_interface_states()
+        self.assertGreaterEqual(client.__exit__.call_count + client.close.call_count, 1)
+
+    def test_isolation_allows_only_genuine_loopback_and_administratively_down_other_interfaces(self):
+        loopback = {"name": "lo", "loopback": True, "up": True}
+        for name in ("ip6tnl0", "tunl0", "sit0", "eth0"):
+            with self.subTest(interface=name):
+                self.assertTrue(self.runner._network_isolated([loopback, {"name": name, "loopback": False, "up": False}]))
+                self.assertFalse(self.runner._network_isolated([loopback, {"name": name, "loopback": False, "up": True}]))
+        self.assertFalse(self.runner._network_isolated([{"name": "lo", "loopback": False, "up": True}]))
+        self.assertFalse(self.runner._network_isolated([{"name": "eth0", "loopback": False, "up": False}]))
+        self.assertFalse(self.runner._network_isolated([]))
 
 
 @unittest.skipUnless(LINUX, "Linux process network namespace inspection")

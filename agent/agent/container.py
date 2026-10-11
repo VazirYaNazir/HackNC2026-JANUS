@@ -168,7 +168,7 @@ class ContainerBoundary(IsolationBoundary):
 
     def diagnose(self):
         """Local checks only: never report client output, paths, or credentials."""
-        report = {**self.describe(), "probe_version": 3, "diagnostics": list(self.diagnostics)}
+        report = {**self.describe(), "probe_version": 4, "diagnostics": list(self.diagnostics)}
         if (not self.available and self.image and self.endpoint
                 and any(item["stage"] == "worker_probe" and item["outcome"] == "failed" for item in self.diagnostics)
                 and any(item["stage"] == "worker_cleanup" and item["outcome"] == "passed" for item in self.diagnostics)):
@@ -197,6 +197,18 @@ class ContainerBoundary(IsolationBoundary):
                         and set(candidate["checks"]) == DIAGNOSTIC_CHECKS
                         and all(type(value) is bool for value in candidate["checks"].values())):
                     report = {key: candidate[key] for key in ("ready", "code", "checks")}
+                    # Keep optional facts bounded and public; never forward raw
+                    # guest metadata or use diagnostic observations to grant access.
+                    interfaces = candidate.get("network_interfaces")
+                    if (isinstance(interfaces, list) and 0 < len(interfaces) <= 32
+                            and all(isinstance(item, dict) and set(item) == {"name", "loopback", "up"}
+                                    and isinstance(item["name"], str) and item["name"].isascii()
+                                    and 1 <= len(item["name"]) <= 15
+                                    and all(character in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-" for character in item["name"])
+                                    and type(item["loopback"]) is bool and type(item["up"]) is bool
+                                    for item in interfaces)
+                            and len({item["name"] for item in interfaces}) == len(interfaces)):
+                        report["network_interfaces"] = interfaces
         except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
             pass
         finally:
