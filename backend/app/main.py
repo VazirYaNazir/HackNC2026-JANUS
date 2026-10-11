@@ -11,6 +11,7 @@ from app.routes.agent import router as agent_router
 from app.agent_runtime.runtime import AgentRuntime
 from app.routes.agent_jobs import router as agent_jobs_router
 from app.routes.studio import router as studio_router
+from app.routes.messaging import router as messaging_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
 from app.routes.ws import broadcast_system_stats_loop, ws_router
@@ -108,6 +109,7 @@ app.include_router(panels_router)
 app.include_router(agent_router)
 app.include_router(agent_jobs_router)
 app.include_router(studio_router)
+app.include_router(messaging_router)
 app.include_router(ws_router)
 
 
