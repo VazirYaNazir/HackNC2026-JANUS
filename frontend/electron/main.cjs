@@ -1,5 +1,5 @@
 
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
@@ -7,24 +7,67 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const DEV_ORIGIN = 'http://127.0.0.1:5173';
 // Studio links to setup docs; only those open (in the system browser). Everything else is denied.
 const DOCS_PREFIX = 'https://github.com/VazirYaNazir/HackNC2026-Janus/';
 const BACKEND_ORIGIN = 'http://127.0.0.1:8000';
 let agentProcess = null;
+let startingAgent = null;
+let studioWindow = null;
+let studioOrigin = null;
+
+function localUrl(configured, allowFragment = false) {
+  if (typeof configured !== 'string' || /\s|\\/.test(configured)) throw new Error('Invalid local URL.');
+  const url = new URL(configured);
+  if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)
+      || url.username || url.password || url.pathname !== '/' || url.search || (!allowFragment && url.hash)) {
+    throw new Error('JANUS must address a local HTTP server without credentials or a path.');
+  }
+  return url;
+}
 
 // Only Studio's own window may use the desktop bridge, and only from the dev server's origin.
 // The local credential never leaves the main process except over this IPC channel.
 function trusted(event) {
-  try { return !app.isPackaged && new URL(event.senderFrame.url).origin === DEV_ORIGIN; } catch { return false; }
+  try {
+    return !app.isPackaged && studioWindow && !studioWindow.isDestroyed()
+      && event.sender === studioWindow.webContents && event.senderFrame === studioWindow.webContents.mainFrame
+      && new URL(event.senderFrame.url).origin === studioOrigin;
+  } catch { return false; }
+}
+
+function validConnection(value) {
+  if (!value || typeof value.token !== 'string' || value.token.length < 32 || value.token.length > 256
+      || typeof value.deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value.deviceId)) {
+    throw new Error('The local laptop registration is invalid.');
+  }
+  return { host: localUrl(value.host).origin, deviceId: value.deviceId, token: value.token };
 }
 
 function localConnection() {
-  const text = fs.readFileSync(path.join(REPO_ROOT, 'backend', '.env'), 'utf8');
+  const selected = path.join(process.env.JANUS_STATE_DIR || path.join(REPO_ROOT, '.janus'), 'controller.json');
+  try {
+    const value = JSON.parse(fs.readFileSync(selected, 'utf8'));
+    if (process.env.AGENT_DEVICE_ID && value.device_id !== process.env.AGENT_DEVICE_ID) {
+      throw new Error('The selected laptop registration does not match this session.');
+    }
+    return validConnection({ host: value.host, deviceId: value.device_id, token: value.token });
+  } catch (error) {
+    // An invalid selected registration must never silently fall back to another laptop.
+    if (error.code !== 'ENOENT') throw error;
+  }
+  let text = '';
+  try { text = fs.readFileSync(path.join(REPO_ROOT, 'backend', '.env'), 'utf8'); } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
   const line = text.split(/\r?\n/).find((entry) => entry.startsWith('AGENT_DEVICES_JSON='));
-  const device = JSON.parse(line.slice('AGENT_DEVICES_JSON='.length))[0];
-  if (!device?.controller_token) throw new Error('No laptop is registered in backend/.env.');
-  return { host: BACKEND_ORIGIN, token: device.controller_token, deviceId: device.device_id };
+  const devices = JSON.parse(process.env.AGENT_DEVICES_JSON || line?.slice('AGENT_DEVICES_JSON='.length) || '[]');
+  if (!Array.isArray(devices)) throw new Error('The local laptop registration is invalid.');
+  const device = process.env.AGENT_DEVICE_ID
+    ? devices.find((entry) => entry?.device_id === process.env.AGENT_DEVICE_ID)
+    : devices.length === 1 ? devices[0] : null;
+  if (!device) throw new Error('Select a registered laptop before starting JANUS.');
+  return validConnection({ host: process.env.JANUS_BACKEND_URL || process.env.VITE_BACKEND_URL || BACKEND_ORIGIN,
+    token: device.controller_token, deviceId: device.device_id });
 }
 
 ipcMain.handle('janus:local-connection', (event) => {
@@ -52,15 +95,41 @@ ipcMain.handle('janus:agent-start', async (event) => {
   if (!trusted(event)) throw new Error('Not available from this page.');
   // Never start a second agent for the same laptop: the backend would refuse it, and it would only add a process.
   if (agentProcess || (await runningAgent())) return { running: true, alreadyRunning: true };
-  agentProcess = spawn(process.execPath, [path.join(REPO_ROOT, 'scripts', 'start.mjs'), '--only=agent'], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  agentProcess.on('exit', () => { agentProcess = null; });
-  agentProcess.on('error', () => { agentProcess = null; });
-  return { running: true };
+  if (startingAgent) return startingAgent;
+  startingAgent = (async () => {
+    const connection = localConnection();
+    const { response } = await dialog.showMessageBox(studioWindow, {
+      type: 'warning', title: 'Allow JANUS laptop controls?',
+      message: 'Allow JANUS controls and paired phones to use this laptop for this session?',
+      detail: 'This enables mouse and volume control, screen sharing, locking the desktop, and process inspection. '
+        + 'Generated jobs may read and write files, access the network, send data externally, spawn processes, '
+        + 'request administrator access, and make persistent changes within your local validation policy and isolation worker. '
+        + 'Job outputs may be shared with the backend and paired phones. Generated jobs still require an installed isolation adapter. '
+        + 'Approval ends when the agent stops or JANUS exits.',
+      buttons: ['Allow this session', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    if (response !== 0) throw new Error('Laptop permissions declined. The agent was not started.');
+    // Re-check ownership after the local dialog: navigation cannot inherit approval.
+    if (!trusted(event)) throw new Error('The Studio page changed before laptop permissions were approved.');
+    const backend = localUrl(connection.host);
+    const child = spawn(process.execPath, [path.join(REPO_ROOT, 'scripts', 'start.mjs'), '--only=agent',
+      '--startup-approval-stdin', '--device-id', connection.deviceId, '--backend-port', backend.port || '80'], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', AGENT_DEVICE_ID: connection.deviceId, JANUS_BACKEND_URL: connection.host },
+      stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true,
+    });
+    agentProcess = child;
+    const clear = () => { if (agentProcess === child) agentProcess = null; };
+    child.on('exit', clear);
+    child.on('error', clear);
+    child.stdin.on('error', () => { child.kill(); clear(); });
+    await new Promise((resolve, reject) => {
+      child.once('error', () => reject(new Error('Could not start the local JANUS agent.')));
+      child.once('spawn', () => { child.stdin.end('JANUS_STARTUP_APPROVED\n'); resolve(); });
+    });
+    return { running: true };
+  })();
+  try { return await startingAgent; } finally { startingAgent = null; }
 });
 
 app.on('before-quit', () => { if (agentProcess) agentProcess.kill(); });
@@ -88,6 +157,7 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  studioWindow = win;
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(DOCS_PREFIX)) void shell.openExternal(url);
@@ -101,7 +171,9 @@ function createWindow() {
   if (app.isPackaged) {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   } else {
-    win.loadURL('http://127.0.0.1:5173');
+    const url = localUrl(process.env.JANUS_STUDIO_URL || 'http://127.0.0.1:5173', true);
+    studioOrigin = url.origin;
+    win.loadURL(url.href);
   }
 }
 

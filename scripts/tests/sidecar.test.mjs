@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { withIpv4First } from '../lib/common.mjs';
+import { normalizeLauncherArgs } from '../start.mjs';
 
 describe('withIpv4First', () => {
   it('adds IPv4-first DNS when NODE_OPTIONS is empty or unset', () => {
@@ -30,17 +30,12 @@ describe('withIpv4First', () => {
   });
 });
 
-describe('start.mjs wiring for the sidecar', () => {
-  const source = readFileSync(new URL('../start.mjs', import.meta.url), 'utf8');
-
-  it('always launches the sidecar with merged IPv4-first NODE_OPTIONS', () => {
-    expect(source).toContain('NODE_OPTIONS: withIpv4First()');
+describe('shared-launcher iMessage requests', () => {
+  it('preserves an explicit sidecar request for Python startup and monitoring', () => {
+    expect(normalizeLauncherArgs(['--imessage'], {})).toEqual(['--imessage']);
   });
 
-  it('prints a loud red line when the sidecar stops and tells the backend straight away', () => {
-    expect(source).toContain("RED = '\\x1b[1;31m'");
-    expect(source).toContain('iMessage sidecar stopped — texts will not be received');
-    expect(source).toContain('markSidecarDown(');
-    expect(source).toContain('JSON.stringify({ connected: false })');
+  it('recovers the request when npm swallowed its flag', () => {
+    expect(normalizeLauncherArgs([], { npm_config_imessage: 'true' })).toEqual(['--imessage']);
   });
 });

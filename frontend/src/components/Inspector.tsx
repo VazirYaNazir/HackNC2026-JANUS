@@ -1,12 +1,11 @@
 import { useState, type FocusEvent, type KeyboardEvent } from 'react'
 import { ICONS, Icon, type Rect } from '@janus/design'
 import type { Widget } from '@janus/schema'
-import { getWidgetAccent, isDialWidget, isInputWidget } from '@janus/widgets'
+import { builtinActions, builtinSources, getWidgetAccent, isDialWidget, isInputWidget, sourceUnit } from '@janus/widgets'
 import type { EditorMode } from '../editor/useEditorState'
 
 const tabs = ['General', 'Style', 'Data', 'Logic'] as const
 const colors = ['amber', 'cyan', 'green', 'graphite', 'coral'] as const
-const sources = ['cpu.percent', 'mem.percent', 'mem.used_mb', 'cpu.temperature', 'volume.percent', 'process.tree', 'screen.frame', 'native.metrics.status']
 type Tab = typeof tabs[number]
 type GeometryKey = keyof Rect
 
@@ -47,6 +46,7 @@ export function Inspector({ widget, mode, error, onGeometryChange, onWidgetChang
   }
 
   const disabled = mode === 'preview'
+  const sources = widget && isDialWidget(widget) ? builtinSources(widget.type) : []
 
   return <aside className="inspector studio-glass" aria-label="Inspector">
     <div className="panel-heading"><div><span className="panel-eyebrow">SELECTION</span><h2>Inspector</h2></div><Icon name="settings" size={18} /></div>
@@ -69,12 +69,14 @@ export function Inspector({ widget, mode, error, onGeometryChange, onWidgetChang
       {active === 'Data' && (isDialWidget(widget) ? <>
         <InspectorTextField label="Source ID" value={widget.source} disabled={disabled} onCommit={(value) => onWidgetChange(widget.id, (current) => isDialWidget(current) ? { ...current, source: value } : current)} />
         <InspectorTextField label="Unit" value={widget.unit ?? ''} disabled={disabled} onCommit={(value) => onWidgetChange(widget.id, (current) => isDialWidget(current) ? { ...current, unit: value || undefined } : current)} />
-        <label className="inspector-field"><span>Built-in data</span><select aria-label="Built-in data" value={sources.includes(widget.source) ? widget.source : ''} disabled={disabled} onChange={event => { const source = event.target.value; if (source) onWidgetChange(widget.id, current => isDialWidget(current) ? { ...current, source } : current) }}><option value="">Custom source</option>{sources.map(source => <option key={source}>{source}</option>)}</select></label>
+        <label className="inspector-field"><span>Built-in data</span><select aria-label="Built-in data" value={sources.includes(widget.source) ? widget.source : ''} disabled={disabled} onChange={event => { const source = event.target.value; if (source) onWidgetChange(widget.id, current => isDialWidget(current) ? { ...current, source, unit: sourceUnit(source) } : current) }}><option value="">Custom source</option>{sources.map(source => <option key={source}>{source}</option>)}</select></label>
+        {!sources.includes(widget.source) && <p className="inspector-note">Custom sources need a matching backend data publisher.</p>}
         {(['warn', 'critical'] as const).map(key => <InspectorTextField key={key} label={key === 'warn' ? 'Warning threshold' : 'Critical threshold'} value={widget[key]?.toString() ?? ''} disabled={disabled} onCommit={value => { if (value && !Number.isFinite(Number(value))) return false; return onWidgetChange(widget.id, current => isDialWidget(current) ? { ...current, [key]: value ? Number(value) : undefined } : current) }} />)}
       </> : <p className="inspector-note">This control has no data source binding.</p>)}
       {active === 'Logic' && (isInputWidget(widget) ? <>
         <InspectorTextField label="Action ID" value={widget.action} disabled={disabled} onCommit={(value) => onWidgetChange(widget.id, (current) => isInputWidget(current) ? { ...current, action: value } : current)} />
-        <label className="inspector-field"><span>Built-in action</span><select aria-label="Built-in action" value={widget.action.startsWith('native_') ? widget.action : ''} disabled={disabled} onChange={event => onWidgetChange(widget.id, current => isInputWidget(current) ? { ...current, action: event.target.value, confirm: false } : current)}><option value="">Generated / custom action</option>{(widget.type === 'slider' || widget.type === 'knob' ? ['native_volume', 'native_scroll'] : widget.type === 'joystick' ? ['native_mouse'] : widget.type === 'button' ? ['native_left_click', 'native_right_click'] : []).map(action => <option key={action}>{action}</option>)}</select></label>
+        <label className="inspector-field"><span>Built-in action</span><select aria-label="Built-in action" value={builtinActions(widget.type).includes(widget.action) ? widget.action : ''} disabled={disabled} onChange={event => onWidgetChange(widget.id, current => isInputWidget(current) ? { ...current, action: event.target.value, confirm: false, ...(event.target.value === 'native_scroll' ? { min: -100, max: 100, step: 1 } : event.target.value === 'native_volume' ? { min: 0, max: 100, step: 1 } : {}) } : current)}><option value="">Generated / custom action</option>{builtinActions(widget.type).map(action => <option key={action}>{action}</option>)}</select></label>
+        {!widget.action && <p className="inspector-note">Choose a built-in action or use the AI assistant to configure this control. Generated programs need an isolation adapter on the laptop.</p>}
         {(widget.type === 'slider' || widget.type === 'knob') && (['min', 'max', 'step'] as const).map(key => <InspectorTextField key={key} label={key === 'min' ? 'Minimum' : key === 'max' ? 'Maximum' : 'Step'} value={widget[key]?.toString() ?? ''} disabled={disabled} onCommit={value => { if (value && !Number.isFinite(Number(value))) return false; return onWidgetChange(widget.id, current => isInputWidget(current) ? { ...current, [key]: value ? Number(value) : undefined } : current) }} />)}
         <label className="inspector-check"><input type="checkbox" checked={widget.confirm ?? false} disabled={disabled} onChange={(event) => onWidgetChange(widget.id, (current) => isInputWidget(current) ? { ...current, confirm: event.target.checked } : current)} /><span>Require confirmation</span></label>
       </> : <p className="inspector-note">Display widgets do not define actions.</p>)}

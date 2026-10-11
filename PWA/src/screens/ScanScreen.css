@@ -56,3 +56,5 @@
   gap: 16px;
 }
 .scan__panel h1 { margin: 0 0 4px; font-size: 24px; }
+.scan__methods { display: flex; gap: 8px; }
+.scan__methods .btn { flex: 1; }

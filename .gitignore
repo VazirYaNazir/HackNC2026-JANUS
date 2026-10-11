@@ -32,7 +32,14 @@ env/
 backend/data/
 *.db
 *.sqlite
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 .cloudflared/
+.janus/
 *.pem
 .DS_Store
 Thumbs.db

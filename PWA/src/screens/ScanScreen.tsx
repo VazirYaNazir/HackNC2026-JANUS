@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Icon } from "@janus/design";
 import type { PairQR, SavedPanel } from "@janus/schema";
-import { pairingLink } from "@janus/client";
+import { pairingLink, pairingTarget } from "@janus/client";
 import { pair, parsePairingLink, type PairResult } from "../lib/connection";
 import { addPanel, renamePanel, repairPanel } from "../lib/panels";
 import "./ScanScreen.css";
@@ -13,7 +13,7 @@ interface ScanScreenProps {
   /** Set when re-pairing a saved panel: it keeps its name and id, and only its connection is replaced. */
   repairing?: SavedPanel;
   initialTarget?: PairQR;
-  /** "manual" opens the paste-link form. */
+  /** "manual" opens the link or address/code entry form. */
   method?: "scan" | "manual";
 }
 
@@ -27,6 +27,9 @@ export default function ScanScreen({ onDone, repairing, initialTarget, method = 
   const [error, setError] = useState("");
   // A launch link opened from the PC's QR code arrives pre-filled; the user still presses Pair.
   const [link, setLink] = useState(() => (initialTarget ? pairingLink(initialTarget) : ""));
+  const [entryMode, setEntryMode] = useState<'link' | 'code'>('link');
+  const [host, setHost] = useState(import.meta.env.VITE_BACKEND_URL || '');
+  const [code, setCode] = useState('');
   const [name, setName] = useState("");
   const [frameSize, setFrameSize] = useState<number>();
   const [paired, setPaired] = useState<(PairResult & { panel: SavedPanel }) | null>(null);
@@ -132,9 +135,13 @@ export default function ScanScreen({ onDone, repairing, initialTarget, method = 
 
   const submitLink = (e: FormEvent) => {
     e.preventDefault();
-    const target = parsePairingLink(link);
-    if (target) void startPairing(target, "link");
-    else setError("That isn't a valid pairing link. Paste the whole link shown in Studio's Pair Device dialog.");
+    try {
+      const target = entryMode === 'code' ? pairingTarget(host, code) : parsePairingLink(link);
+      if (target) void startPairing(target, "link");
+      else setError("That isn't a valid pairing link. Paste the whole link shown in Studio's Pair Device dialog.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Check the backend address and complete pairing code.');
+    }
   };
 
   const save = (e: FormEvent) => {
@@ -168,8 +175,12 @@ export default function ScanScreen({ onDone, repairing, initialTarget, method = 
       {phase === "link" && (
         <form className="scan__panel" onSubmit={submitLink}>
           <h1>{repairing ? "Pair again" : "Enter code"}</h1>
-          <p className="scan__hint">In desktop Studio, choose Pair Device, then copy the full pairing link and paste it here.</p>
-          <label className="field">
+          <p className="scan__hint">In desktop Studio, choose Pair Device. Paste the pairing link or enter its backend address and code.</p>
+          <div className="scan__methods" role="group" aria-label="Pairing method">
+            <button type="button" className={`btn${entryMode === 'link' ? ' btn--amber' : ''}`} aria-pressed={entryMode === 'link'} onClick={() => { setEntryMode('link'); setError(''); }}>Paste link</button>
+            <button type="button" className={`btn${entryMode === 'code' ? ' btn--amber' : ''}`} aria-pressed={entryMode === 'code'} onClick={() => { setEntryMode('code'); setError(''); }}>Backend and code</button>
+          </div>
+          {entryMode === 'link' ? <label className="field">
             <span>Pairing link</span>
             <input
               value={link}
@@ -182,9 +193,12 @@ export default function ScanScreen({ onDone, repairing, initialTarget, method = 
               spellCheck={false}
               autoFocus
             />
-          </label>
+          </label> : <>
+            <label className="field"><span>PC address</span><input value={host} onChange={event => setHost(event.target.value)} placeholder="https://abc.trycloudflare.com" inputMode="url" autoCapitalize="none" autoComplete="off" autoCorrect="off" spellCheck={false} autoFocus /></label>
+            <label className="field"><span>Pairing code</span><input value={code} onChange={event => setCode(event.target.value)} placeholder="A1B2C3D4E5F6" maxLength={12} autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} /></label>
+          </>}
           {error && <p className="error" role="alert">{error}</p>}
-          <button type="submit" className="btn btn--amber" disabled={!link.trim()}>
+          <button type="submit" className="btn btn--amber" disabled={entryMode === 'link' ? !link.trim() : !host.trim() || !code.trim()}>
             Pair
           </button>
           <button

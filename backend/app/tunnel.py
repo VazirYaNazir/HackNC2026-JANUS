@@ -1,120 +1,159 @@
-# app/tunnel.py
+"""Optional standalone quick tunnel; the full JANUS launcher manages its own."""
 import asyncio
 import logging
 import re
 from typing import Optional
 
-# uvicorn's logger, like the rest of the backend: a module-named logger has no handler and its INFO lines never show.
 logger = logging.getLogger("uvicorn.error")
-
 _tunnel_url: Optional[str] = None
 _tunnel_process: Optional[asyncio.subprocess.Process] = None
 _drain_task: Optional[asyncio.Task] = None
+_start_task: Optional[asyncio.Task] = None
 
 # "api.trycloudflare.com" is the Cloudflare API host that cloudflared mentions in its own log lines, not a tunnel.
 TUNNEL_REGEX = re.compile(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com")
 
 
 def get_tunnel_url() -> Optional[str]:
-    """Returns the active Cloudflare Tunnel public URL, or None if not running."""
+    """Return only a connected, live tunnel; assigned hostnames are not ready."""
+    global _tunnel_url
+    if _tunnel_process is None or _tunnel_process.returncode is not None:
+        _tunnel_url = None
     return _tunnel_url
 
 
-async def start_tunnel(port: int = 8000) -> str:
-    """Executes cloudflared tunnel --url http://localhost:<port> as a non-blocking subprocess,
-    captures the assigned https://*.trycloudflare.com URL, and stores it in memory.
-    """
+async def _terminate(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not terminate cloudflared: %s", type(exc).__name__)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+
+async def _launch(port: int, timeout: float) -> str:
     global _tunnel_url, _tunnel_process, _drain_task
-
-    if _tunnel_process is not None and _tunnel_url:
-        return _tunnel_url
-
-    cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
+    process = None
+    reader = None
+    ready = asyncio.get_running_loop().create_future()
     try:
-        _tunnel_process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except FileNotFoundError:
-        logger.error("cloudflared executable not found in PATH.")
-        raise RuntimeError("cloudflared executable not found in PATH.")
-
-    async def _extract_url() -> str:
-        assert _tunnel_process is not None and _tunnel_process.stdout is not None
-        while True:
-            line_bytes = await _tunnel_process.stdout.readline()
-            if not line_bytes:
-                break
-            line = line_bytes.decode("utf-8", errors="replace")
-            match = TUNNEL_REGEX.search(line)
-            if match:
-                return match.group(0)
-        return ""
-
-    try:
-        captured_url = await asyncio.wait_for(_extract_url(), timeout=30.0)
-        if not captured_url:
-            returncode = _tunnel_process.returncode
-            raise RuntimeError(
-                f"cloudflared exited unexpectedly (code {returncode}) without producing a tunnel URL."
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", f"http://127.0.0.1:{port}",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
-        _tunnel_url = captured_url
-        logger.info(f"Cloudflare Tunnel active at: {_tunnel_url}")
-    except Exception as exc:
-        await stop_tunnel()
+        except FileNotFoundError:
+            raise RuntimeError("cloudflared executable not found in PATH.") from None
+        _tunnel_process = process
+
+        async def monitor() -> None:
+            global _tunnel_url, _tunnel_process
+            candidate = None
+            connected = False
+            try:
+                if process.stdout is None:
+                    raise RuntimeError("cloudflared output pipe unavailable")
+                while line_bytes := await process.stdout.readline():
+                    line = line_bytes.decode("utf-8", errors="replace")
+                    match = TUNNEL_REGEX.search(line)
+                    if match:
+                        candidate = match.group(0)
+                    if "Registered tunnel connection" in line:
+                        connected = True
+                    if candidate and connected and not ready.done():
+                        _tunnel_url = candidate
+                        ready.set_result(candidate)
+                # EOF can precede wait() completing; stop advertising immediately.
+                if _tunnel_process is process:
+                    _tunnel_url = None
+                await process.wait()
+                if not ready.done():
+                    ready.set_exception(RuntimeError("cloudflared exited before its tunnel connected"))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if not ready.done():
+                    ready.set_exception(exc)
+                else:
+                    logger.warning("Cloudflare tunnel output failed: %s", type(exc).__name__)
+            finally:
+                if _tunnel_process is process:
+                    _tunnel_url = None
+
+        reader = asyncio.create_task(monitor(), name="janus-tunnel-output")
+        _drain_task = reader
+        url = await asyncio.wait_for(ready, timeout=timeout)
+        if process.returncode is not None or _tunnel_url != url:
+            raise RuntimeError("cloudflared exited after assigning its tunnel URL")
+        logger.info("Cloudflare tunnel connected at %s", url)
+        return url
+    except BaseException as exc:
+        if reader is not None:
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+        if process is not None:
+            await _terminate(process)
+        if _tunnel_process is process:
+            _tunnel_process = None
+            _tunnel_url = None
+            _drain_task = None
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         raise RuntimeError(f"Failed to start Cloudflare Tunnel: {exc}") from exc
 
-    async def _drain_output():
-        try:
-            assert _tunnel_process is not None and _tunnel_process.stdout is not None
-            while True:
-                line = await _tunnel_process.stdout.readline()
-                if not line:
-                    break
-        except Exception:
-            pass
 
-    _drain_task = asyncio.create_task(_drain_output())
-    return _tunnel_url
+async def start_tunnel(port: int = 8000, *, timeout: float = 45) -> str:
+    """Share concurrent starts and wait for Cloudflare connection readiness."""
+    global _start_task
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ValueError("Invalid tunnel target port")
+    live = get_tunnel_url()
+    if live:
+        return live
+    if _start_task is None or _start_task.done():
+        # A previous disconnected process may still need reaping.
+        await stop_tunnel()
+        _start_task = asyncio.create_task(_launch(port, timeout), name="janus-tunnel-start")
+    task = _start_task
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await stop_tunnel()
+        raise
+    finally:
+        if task.done() and _start_task is task:
+            _start_task = None
 
 
 async def stop_tunnel() -> None:
-    """Terminates the cloudflared subprocess and clears in-memory state."""
-    global _tunnel_url, _tunnel_process, _drain_task
-
-    if _drain_task and not _drain_task.done():
-        _drain_task.cancel()
-        try:
-            await _drain_task
-        except asyncio.CancelledError:
-            pass
+    """Cancel startup/output readers, terminate the child, and reap it."""
+    global _tunnel_url, _tunnel_process, _drain_task, _start_task
+    starter, reader, process = _start_task, _drain_task, _tunnel_process
+    _tunnel_url = None
+    _start_task = None
+    if starter and not starter.done():
+        starter.cancel()
+        await asyncio.gather(starter, return_exceptions=True)
+    if reader and not reader.done():
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+    # A cancelled launch has already reaped its process.
+    if process is not None and _tunnel_process is process:
+        await _terminate(process)
+    _tunnel_process = None
     _drain_task = None
-
-    if _tunnel_process is not None:
-        try:
-            _tunnel_process.terminate()
-            wait_res = _tunnel_process.wait()
-            if asyncio.iscoroutine(wait_res):
-                await asyncio.wait_for(wait_res, timeout=5.0)
-        except (ProcessLookupError, asyncio.TimeoutError):
-            try:
-                kill_res = _tunnel_process.kill()
-                if asyncio.iscoroutine(kill_res):
-                    await kill_res
-                wait_res = _tunnel_process.wait()
-                if asyncio.iscoroutine(wait_res):
-                    await wait_res
-            except Exception:
-                pass
-        except Exception as exc:
-            logger.warning(f"Error stopping cloudflared tunnel: {exc}")
-        finally:
-            _tunnel_process = None
-            _tunnel_url = None
 
 
 def __getattr__(name: str):
     if name == "tunnel_url":
-        return _tunnel_url
+        return get_tunnel_url()
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

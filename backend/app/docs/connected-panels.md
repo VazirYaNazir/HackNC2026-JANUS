@@ -70,9 +70,12 @@ macOS/Windows isolation adapter is included. Without one the agent returns
    Phones refresh automatically. Studio offers **Load saved panel** explicitly
    so a remote update does not overwrite unsaved work.
 3. Use **Pair Device** and scan its QR in the PWA, choose **Enter code instead**
-   from the home screen and paste the full pairing link shown in the dialog. Studio chooses the backend's existing
-   HTTPS origin, its Cloudflare tunnel (opt-in: `npm start -- --tunnel`) for local connections, or an
-   explicit `PUBLIC_BACKEND_URL`. **Phone backend address** can also be edited
+   from the home screen to paste the full pairing link or enter its phone backend
+   address and full 12-character code, or use **Paste pairing link**. Studio chooses the backend's existing
+   HTTPS origin, the full launcher's current backend/PWA tunnels, its standalone
+   opt-in automatic tunnel (`JANUS_TUNNEL_MODE=auto` or `npm start -- --tunnel`), or an explicit `PUBLIC_BACKEND_URL`. Managed pairing waits
+   for a published backend origin; it never creates a phone QR with loopback
+   while the launcher tunnel is unavailable. **Phone backend address** can also be edited
    to a manually started tunnel's HTTPS URL. Codes last 60 seconds and are
    consumed transactionally once. Expired QR codes disappear; **New code**
    creates a fresh code. A phone gets a separate credential bound to one laptop,

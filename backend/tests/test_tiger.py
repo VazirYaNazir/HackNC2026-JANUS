@@ -477,7 +477,7 @@ class SchemaTests(unittest.TestCase):
             self.assertEqual(migrate_main(), 1)
 
 
-class ConnectionTests(unittest.TestCase):
+class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     def test_conninfo_keeps_the_host_name_but_adds_the_ipv4_address(self):
         info = tiger_connection.conninfo_for("postgres://tsdbadmin:secret@abc.tsdb.cloud.timescale.com:35432/tsdb?sslmode=require", "203.0.113.7")
         for part in ("host=abc.tsdb.cloud.timescale.com", "hostaddr=203.0.113.7", "port=35432", "sslmode=require", "connect_timeout=5"):
@@ -528,6 +528,7 @@ class ConnectionTests(unittest.TestCase):
         with self.assertLogs("uvicorn.error", level="WARNING"):
             await writer._flush([("metrics", (datetime.now(timezone.utc), DEVICE, "cpu.percent", 1.0))])
         self.assertEqual((writer.written, writer.failures), (0, 1))
+        await writer.stop()
 
     def test_url_helper(self):
         with patch.dict(os.environ, {"TIGER_DATABASE_URL": "  postgres://x  "}):

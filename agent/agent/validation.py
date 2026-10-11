@@ -95,8 +95,11 @@ def load_policies(path: str | None) -> dict[str, ExecutionPolicy]:
     if file.stat().st_size > 256 * 1024:
         raise ValueError("Local policy file is too large")
     data = json.loads(file.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or set(data) != {"jobs"} or not isinstance(data["jobs"], list) or len(data["jobs"]) > 256:
+    if not isinstance(data, dict) or "jobs" not in data or not data.keys() <= {"jobs", "session"} or not isinstance(data["jobs"], list) or len(data["jobs"]) > 256:
         raise ValueError("Local policy must contain a jobs list (at most 256)")
+    if "session" in data:
+        from .authorization import SessionScope
+        SessionScope.parse(data["session"])
     policies = {}
     fields = {"job_id", "operation", "capabilities", "dependencies", "execute_authorized", "share_outputs", "side_effects", "output_protocol", "fixtures", "execution_stdin", "max_attempts", "max_source_bytes"}
     for item in data["jobs"]:
@@ -130,6 +133,7 @@ class Job:
     architecture: str
     capabilities: frozenset[str]
     dependencies: frozenset[str]
+    output_protocol: str = "text"
 
     def __post_init__(self):
         if not isinstance(self.job_id, str) or not ID.fullmatch(self.job_id) or type(self.attempt) is not int or self.attempt != 1 or self.language != "c11":
@@ -140,11 +144,13 @@ class Job:
             raise ValueError("Invalid platform metadata")
         if not isinstance(self.capabilities, frozenset) or not isinstance(self.dependencies, frozenset) or not self.capabilities <= CAPABILITIES or not self.dependencies <= DEPENDENCIES.keys():
             raise ValueError("Invalid capability/dependency declaration")
+        if self.output_protocol not in ("text", "json-v1"):
+            raise ValueError("Invalid output protocol")
 
     @classmethod
     def parse(cls, data):
         fields = {"type", "job_id", "attempt", "language", "source", "operation", "platform", "architecture", "capabilities", "dependencies"}
-        if not isinstance(data, dict) or set(data) != fields or data["type"] != "validate_job":
+        if not isinstance(data, dict) or not fields <= data.keys() or not data.keys() <= fields | {"output_protocol"} or data["type"] != "validate_job":
             raise ValueError("Malformed job manifest; cloud policy/paths are not accepted")
         if not isinstance(data["job_id"], str) or not ID.fullmatch(data["job_id"]):
             raise ValueError("Invalid job ID")

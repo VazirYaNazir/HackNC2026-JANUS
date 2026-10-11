@@ -29,7 +29,7 @@ class LiveNativeTests(unittest.IsolatedAsyncioTestCase):
             return processes[binary]
         with patch("agent.live_native.asyncio.create_subprocess_exec", side_effect=spawn): await native.start(Outbox())
         self.assertEqual(len(started), 5)
-        self.assertIn(("screen", ("--interval", "500", "--max-width", "960")), started)
+        self.assertIn(("screen", ("--interval", "500", "--max-width", "960", "--request-permission")), started)
         self.assertIn(("metrics", ("--temperature-file", "sensor.txt")), started)
         await native.close(); self.assertTrue(all(task.done() for task in native.tasks))
         self.assertTrue(all(process.returncode == 0 for process in processes.values()))

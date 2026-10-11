@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import '@janus/design/tokens.css'
 import { normalizeLayout } from '@janus/design'
 import { isNativeAction, type GenerationRequest, type LogicalCanvasLayout, type Widget, type WidgetType, type WidgetValue } from '@janus/schema'
 import { isInputWidget } from '@janus/widgets'
-import { PanelClient, RequestDialog, activeJob, jobText, useMetricHistory, useNativeControls, usePanel } from '@janus/client'
+import { PanelClient, RequestDialog, activeJob, jobText, useMetricHistory, useNativeControls, usePanel, widgetStates, type Connection } from '@janus/client'
 import '@janus/client/styles.css'
 import { TopBar } from './components/TopBar'
 import { WidgetPalette } from './components/WidgetPalette'
@@ -19,12 +19,14 @@ import { ConnectionDialog } from './components/ConnectionDialog'
 import { PairingDialog } from './components/PairingDialog'
 import { ProjectDialog } from './components/ProjectDialog'
 import { useEditorState } from './editor/useEditorState'
+import { startupConnection } from './editor/startup'
 import './styles/glass.css'
 import './styles/studio.css'
 import './styles/connection.css'
 
 function App() {
   const editor = useEditorState()
+  const loadLayout = editor.loadLayout
   const [pendingType, setPendingType] = useState<WidgetType | null>(null)
   const [client, setClient] = useState<PanelClient | null>(null)
   const live = usePanel(client)
@@ -38,7 +40,22 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [dismissed, setDismissed] = useState('')
   const controls = useNativeControls(client, setNotice)
+  const startup = useRef<Promise<Connection | null> | null>(null)
   const message = notice || live.error || (live.document && live.document.revision !== revision ? 'The saved panel changed in another window.' : '')
+
+  useEffect(() => {
+    let active = true
+    startup.current ??= startupConnection(window.location, window.history)
+    void startup.current.then(async connection => {
+      if (!connection || !active) return
+      const next = new PanelClient(connection)
+      await next.request('/api/v1/studio/session')
+      const document = await next.layout()
+      if (!active) return
+      loadLayout(normalizeLayout(document.layout)); setRevision(document.revision); setClient(next); setPending(null); setNotice('')
+    }).catch(reason => { if (active) setNotice(reason instanceof Error ? reason.message : 'Startup connection failed. Connect manually.') })
+    return () => { active = false }
+  }, [loadLayout])
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -85,6 +102,7 @@ function App() {
     editor.triggerWidget(widget, value)
     if (!client) { setSheet('connect'); return }
     if (live.status !== 'connected' || live.session?.online === false) { setNotice('Connect your laptop agent before using this control.'); return }
+    if (isInputWidget(widget) && !widget.action) { setNotice('Select this control in Edit mode and use the AI assistant or choose a built-in action in Inspector → Logic.'); return }
     if (isInputWidget(widget) && isNativeAction(widget.action)) {
       if (!widget.confirm || window.confirm(`Run ${widget.label} on your laptop?`)) controls.send(widget, value)
       return
@@ -99,7 +117,7 @@ function App() {
     <TopBar name={editor.layout.name} onName={editor.renameLayout} onProject={() => setSheet('project')} connected={client !== null && live.status === 'connected'} status={client ? `${live.session?.online ? 'Laptop online' : 'Laptop offline'} · ${live.status}` : 'Connect backend'} busy={busy} onConnect={() => setSheet('connect')} onPair={() => setSheet('pair')} onSave={() => void save().catch(() => undefined)} onHistory={() => setSheet('history')} />
     <div className="studio-body">
       <WidgetPalette onDragStart={setPendingType} onDragEnd={() => setPendingType(null)} disabled={editor.mode === 'preview'} />
-      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} history={history} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
+      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} history={history} states={widgetStates(live.jobs)} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
       <Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} />
     </div>
     <ActivityPanel feed={activity} />

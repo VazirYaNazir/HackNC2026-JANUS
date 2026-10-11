@@ -12,6 +12,8 @@ export interface WidgetProps {
   /** Last-hour trend for a dial's `source` (oldest first), when the backend has history for it. */
   history?: number[];
   state?: WidgetState;
+  /** Native publisher status, including permission or capture failures. */
+  telemetryStatus?: string;
   selected?: boolean;
   onSelect?: (id: string) => void;
   onTrigger?: (widget: Widget, value?: WidgetValue) => void;

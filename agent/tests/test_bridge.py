@@ -301,7 +301,7 @@ class ConnectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(process.returncode == 0 for process in processes.values()))
         arguments = {name: argv for name, argv, _ in calls}
         self.assertEqual(arguments["metrics"], ("--temperature-file", "local sensor.txt"))
-        self.assertEqual(arguments["screen"], ("--interval", "500"))
+        self.assertEqual(arguments["screen"], ("--interval", "500", "--request-permission"))
         self.assertTrue(all(kwargs["limit"] == MAX_LINE for _, _, kwargs in calls))
         hello = next(event for event in socket.sent if event["type"] == "agent_hello")
         self.assertFalse(hello["validation"]["build_boundary_available"])

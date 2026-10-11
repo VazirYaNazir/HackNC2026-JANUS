@@ -4,6 +4,7 @@ import type { Layout, Widget } from "@janus/schema";
 import WidgetView from "./WidgetView";
 import { isInputWidget, type WidgetProps, type WidgetState, type WidgetValue } from "./types";
 import "./widgets.css";
+import { telemetryStatus } from './bindings';
 
 export interface PanelGridProps {
   layout: Layout;
@@ -74,6 +75,7 @@ export default function PanelGrid({
                 value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
                 history={isInputWidget(widget) ? undefined : history[widget.source]}
                 state={states[widget.id]}
+                telemetryStatus={telemetryStatus(widget, data)}
                 selected={selectedId === widget.id}
                 onSelect={onSelect}
                 onTrigger={blocked ? undefined : onTrigger}

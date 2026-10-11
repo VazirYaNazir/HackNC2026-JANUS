@@ -1,9 +1,11 @@
 """CLI parsing, startup authorization, native invocation, and error reporting."""
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 from pathlib import Path
 import runpy
 import sys
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -80,6 +82,43 @@ class MainTests(unittest.TestCase):
             main(["connect", "--url", "wss://fixture/ws/agents/laptop", "--device-id", "laptop"])
         self.assertEqual(caught.exception.code, 2)
         detect.assert_not_called()
+
+    def test_session_approval_pipe_creates_scoped_service_without_second_prompt(self):
+        from agent.authorization import APPROVAL_LINE, default_session_policy
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text(json.dumps(default_session_policy("Darwin")))
+            compiler = CCompiler("clang", "fixture", "Darwin")
+            connection = AsyncMock()
+            with patch.dict("os.environ", {"AGENT_TOKEN": "fixture"}, clear=True), patch("agent.main.detect_compiler", return_value=compiler), patch("agent.authorization.sys.stdin", io.StringIO(APPROVAL_LINE)), patch("agent.transport.run_connection", connection):
+                code, _, stderr = self.call(["connect", "--device-id", "laptop", "--url", "wss://fixture/ws/agents/laptop", "--validation-policy", str(path), "--session-approval-stdin"])
+            self.assertEqual(code, 0)
+            self.assertIsNotNone(connection.call_args.args[2].session_authorization)
+            self.assertNotIn("Type APPROVE", stderr)
+
+    def test_session_decline_or_noninteractive_prompt_stops_before_compiler(self):
+        from agent.authorization import default_session_policy
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text(json.dumps(default_session_policy("Darwin")))
+            for flag, answer in (("--approve-session", "APPROVE\n"), ("--session-approval-stdin", "DENY\n")):
+                with self.subTest(flag=flag), patch.dict("os.environ", {"AGENT_TOKEN": "fixture"}, clear=True), patch("agent.main.detect_compiler") as compiler, patch("agent.authorization.sys.stdin", io.StringIO(answer)), patch("agent.transport.run_connection", AsyncMock()) as connection:
+                    code, _, _ = self.call(["connect", "--device-id", "laptop", "--url", "wss://fixture/ws/agents/laptop", "--validation-policy", str(path), flag])
+                self.assertEqual(code, 1)
+                compiler.assert_not_called()
+                connection.assert_not_awaited()
+
+    def test_session_config_alone_remains_unapproved_and_flags_are_mutually_exclusive(self):
+        from agent.authorization import default_session_policy
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text(json.dumps(default_session_policy("Darwin")))
+            with patch.dict("os.environ", {"AGENT_TOKEN": "fixture"}, clear=True), patch("agent.main.detect_compiler", return_value=CCompiler("clang", "fixture", "Darwin")), patch("agent.transport.run_connection", AsyncMock()) as connection:
+                code, _, _ = self.call(["connect", "--device-id", "laptop", "--url", "wss://fixture/ws/agents/laptop", "--validation-policy", str(path)])
+            self.assertEqual(code, 0)
+            self.assertIsNone(connection.call_args.args[2].session_authorization)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser().parse_args(["connect", "--approve-session", "--session-approval-stdin"])
 
     def test_registered_native_tools_and_screen_opt_in_use_the_same_connection(self):
         compiler = CCompiler("clang", "fixture", "Darwin")

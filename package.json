@@ -8,6 +8,7 @@
     "imessage"
   ],
   "scripts": {
+    "test:startup": "uv run --locked --project backend python -m unittest discover -s tests/startup -v",
     "test": "node scripts/test.mjs all",
     "test:unit": "node scripts/test.mjs unit",
     "test:coverage": "node scripts/test.mjs coverage",

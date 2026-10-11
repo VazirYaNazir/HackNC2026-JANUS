@@ -29,7 +29,13 @@ class ContractTests(unittest.TestCase):
     def test_manifest_matches_existing_agent_contract(self):
         from agent.validation import Job, check_source, ExecutionPolicy
         job = Job.parse(program().manifest("job-1"))
+        self.assertEqual(job.output_protocol, "json-v1")
         self.assertEqual(check_source(job.source, job, ExecutionPolicy("job-1", "compute")), GOOD.encode())
+        legacy = program().manifest("legacy-job")
+        legacy.pop("output_protocol")
+        self.assertEqual(Job.parse(legacy).output_protocol, "text")
+        text_program = program(request().model_copy(update={"output_protocol": "text"}))
+        self.assertEqual(Job.parse(text_program.manifest("text-job")).output_protocol, "text")
 
     def test_provider_declaration_order_has_no_semantic_effect_but_duplicates_are_rejected(self):
         req = GenerationRequest(**{**request().model_dump(), "capabilities": ["files.read", "network"]})

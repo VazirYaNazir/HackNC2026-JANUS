@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { GRID, gridSizeToLogical, paddedCanvas, paddedRectStyle, screenFractionToCanvas, snapPositionToGrid, validatePlacement, type Rect } from '@janus/design'
 import type { LogicalCanvasLayout, Widget, WidgetType } from '@janus/schema'
-import { getWidgetDef, isInputWidget, WidgetView, type WidgetValue } from '@janus/widgets'
+import { getWidgetDef, isInputWidget, telemetryStatus, WidgetView, type WidgetValue } from '@janus/widgets'
 import { moveRect, resizeRect, viewportDeltaToLogical } from '../editor/geometry'
 import type { EditorMode } from '../editor/useEditorState'
 
@@ -13,6 +13,7 @@ interface DevicePreviewProps {
   mode: EditorMode
   values: Record<string, WidgetValue>
   data?: Record<string, number | string | null>
+  states?: Record<string, string>
   history?: Record<string, number[]>
   onSelect: (id: string | null) => void
   onInsert: (type: WidgetType, rect: Rect) => boolean
@@ -42,13 +43,15 @@ function clientPoint(event: { clientX: number; clientY: number }, element: HTMLE
   return screenFractionToCanvas({ x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height }, layout.canvas, GRID.padding)
 }
 
-function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, history, onSelect, onGeometryChange, onTrigger }: {
+function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, state, status, history, onSelect, onGeometryChange, onTrigger }: {
   widget: Widget
   layout: LogicalCanvasLayout
   selected: boolean
   snapToGrid: boolean
   mode: EditorMode
   value?: WidgetValue
+  state?: string
+  status?: string
   history?: number[]
   onSelect: (id: string) => void
   onGeometryChange: (id: string, rect: Rect) => boolean
@@ -124,6 +127,8 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, histo
       widget={widget}
       mode={mode === 'preview' ? 'live' : 'edit'}
       value={value}
+      state={state}
+      telemetryStatus={status}
       history={history}
       selected={selected && mode === 'edit'}
       onSelect={mode === 'edit' ? onSelect : undefined}
@@ -139,7 +144,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, histo
   </div>
 }
 
-export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, data = {}, history = {}, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
+export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, data = {}, states = {}, history = {}, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
   const [placement, setPlacement] = useState<DraftGeometry | null>(null)
 
   function proposedPlacement(event: DragEvent<HTMLDivElement>): DraftGeometry | null {
@@ -185,6 +190,8 @@ export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mod
         snapToGrid={snapToGrid}
         mode={mode}
         value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
+        state={states[widget.id]}
+        status={telemetryStatus(widget, data)}
         history={isInputWidget(widget) ? undefined : history[widget.source]}
         onSelect={onSelect}
         onGeometryChange={onGeometryChange}

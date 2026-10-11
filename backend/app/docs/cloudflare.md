@@ -1,235 +1,80 @@
-# Cloudflare Tunnel Integration Specification
+# Cloudflare phone connectivity
 
-This document details the architecture, lifecycle management, endpoint integration, and vital code segments of the quick Cloudflare Tunnel manager implemented in `app/tunnel.py`.
+The full-app launcher, `python start.py`, manages **two** quick tunnels: one for
+backend API/WebSockets and one for the phone PWA. It starts the backend and waits
+for `/health` before starting either tunnel. The PWA tunnel targets the local
+HTTP development server; it does not disable certificate validation to proxy a
+self-signed HTTPS server.
 
----
+The launcher sets `JANUS_TUNNEL_MODE=off` on the backend so it does not start a
+second competing backend tunnel. It publishes ready origins through an atomic,
+private JSON file selected by `JANUS_PUBLIC_URLS_FILE`:
 
-## 1. Overview & Architecture
-
-To allow mobile devices (PWA) to interact with the local workstation without port-forwarding or manual DNS configuration, the backend creates an on-demand, temporary Cloudflare Quick Tunnel on startup.
-
-```
-                    +------------------------------------+
-                    |        Internet / Mobile PWA       |
-                    +------------------------------------+
-                                      |
-                                      | HTTPS (Public URL)
-                                      v
-                    +------------------------------------+
-                    | Cloudflare Edge (*.trycloudflare)  |
-                    +------------------------------------+
-                                      |
-                                      | Encrypted Tunnel Protocol
-                                      v
-+-------------------------------------------------------------------------+
-| Workstation Host                                                        |
-|                                                                         |
-|  [cloudflared subprocess]                                               |
-|          |                                                              |
-|          | HTTP Proxy                                                   |
-|          v                                                              |
-|  [FastAPI Public API (Port 8000)] <--- Tunnel URL registered via memory |
-|                                                                         |
-|  [FastAPI Admin API (Port 8001)]  <--- Localhost only (127.0.0.1)       |
-+-------------------------------------------------------------------------+
+```json
+{"backend": "https://backend-name.trycloudflare.com", "pwa": "https://phone-name.trycloudflare.com"}
 ```
 
-### Network Isolation Policy
-- **Port 8000 (Public API)**: Bound to `0.0.0.0:8000`. Proxied by `cloudflared`. Hosts WebSocket agent endpoints, mobile device pairing validation, and panel execution.
-- **Port 8001 (Admin API)**: Bound strictly to `127.0.0.1:8001`. Never routed through the tunnel. Scripts and device management are inaccessible from the outside world.
+An unavailable service is represented by `null`. URLs contain only HTTPS origins;
+credentials, paths, query parameters and fragments are rejected. The file is
+read on each pairing request, so recovered tunnel URLs are advertised without
+restarting the backend. No credentials are placed in these URLs.
 
----
+`PUBLIC_BACKEND_URL` and `PWA_PUBLIC_URL` override their respective file values.
+Use these variables for a stable deployed HTTPS backend or phone application.
 
-## 2. Tunnel Subprocess Lifecycle
+`POST /api/v1/studio/pairing` returns the public backend `host`, optional `pwa_url`,
+a single-use 60-second code and `status: "ready"`. If the launcher file is set
+but the backend origin is unavailable, the endpoint returns HTTP 503 with
+`PUBLIC_BACKEND_UNAVAILABLE` **before creating a pairing code**. This prevents
+QR codes that point a phone at its own loopback address. Invalid local origin
+configuration returns a generic HTTP 503 error without echoing its contents.
 
-The tunnel is managed entirely in `app/tunnel.py` using non-blocking asynchronous subprocesses via `asyncio`.
+## Standalone backend
 
-```
-Application Boot (lifespan)
-        |
-        v
-start_tunnel(port=8000)
-        |
-        +---> Spawn: cloudflared tunnel --url http://localhost:8000
-        |     (stdout=PIPE, stderr=STDOUT)
-        |
-        +---> Read stdout stream line-by-line (with 30s timeout)
-        |
-        +---> Match Regex: https://[a-zA-Z0-9.-]+\.trycloudflare\.com
-        |
-        +---> Store URL in-memory (_tunnel_url)
-        |
-        +---> Launch background drain task (_drain_output)
-        |
-Application Running (requests retrieve get_tunnel_url())
-        |
-Application Shutdown (lifespan exit)
-        |
-        v
-stop_tunnel()
-        |
-        +---> Cancel & await stdout drain task
-        +---> Send SIGTERM to cloudflared subprocess
-        +---> Wait up to 5s; fallback to SIGKILL if unresponsive
-        +---> Reset _tunnel_process and _tunnel_url to None
+Standalone tunneling is opt-in. `JANUS_TUNNEL_MODE=auto` starts the
+optional quick backend tunnel in a background task. If mode is unset, the
+legacy `JANUS_AUTO_TUNNEL=1` flag also enables it; otherwise it remains off. Cloudflare connection
+failures do not delay HTTP startup or block local API access. Set
+`JANUS_BACKEND_PORT` to match the port used by uvicorn; its default is 8000.
+Set `JANUS_TUNNEL_MODE=off` when a reverse proxy, named tunnel or full launcher
+already manages public connectivity.
+
+`cloudflared` must be installed and available on `PATH`. The Python `cloudflare`
+package is an API client and does not install the tunnel executable. On macOS,
+install it with `brew install cloudflared`; on Windows use
+`winget install --id Cloudflare.cloudflared` or Cloudflare's official binary.
+
+The standalone manager runs:
+
+```text
+cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:<JANUS_BACKEND_PORT>
 ```
 
----
+An assigned `trycloudflare.com` hostname alone is not connection readiness. The
+manager publishes it only after a `Registered tunnel connection` log message,
+and clears it as soon as the process exits or its output closes. Concurrent
+starts share one subprocess. Startup has a bounded timeout; cancellation,
+connection failure and server shutdown terminate and reap the child. A stubborn
+child receives a kill after the termination timeout.
 
-## 3. Vital Code Segments & Explanations
+Without a launcher URL file, Studio pairing retains the current HTTPS request
+origin, a live automatic tunnel, or the local development request address (with
+`status: "local"`). A loopback address is suitable only for local testing; a
+phone needs a public HTTPS backend and a reachable PWA.
 
-### A. Subprocess Spawning & URL Parsing (`start_tunnel`)
-`cloudflared` writes operational logs and assigned hostnames to standard error/standard output. Stderr is redirected to stdout so a single asynchronous reader can inspect the logs.
+## Troubleshooting
 
-```python
-cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
-_tunnel_process = await asyncio.create_subprocess_exec(
-    *cmd,
-    stdout=asyncio.subprocess.PIPE,
-    stderr=asyncio.subprocess.STDOUT,
-)
+- **Executable not found:** install the `cloudflared` CLI and reopen the shell.
+- **Connection never registers:** inspect the tunnel log and check network or
+  firewall access to Cloudflare. Local backend startup remains available.
+- **Pairing returns `PUBLIC_BACKEND_UNAVAILABLE`:** the launcher has not yet
+  published a live backend origin, or its tunnel is recovering. Retry when the
+  launcher reports the public services as ready.
+- **Link stopped working after a restart:** quick tunnel hostnames change. Make
+  a new QR/manual pairing link after recovery, or configure stable public URLs.
+- **Custom backend port:** use the same port in the launcher/uvicorn and
+  `JANUS_BACKEND_PORT` for standalone auto mode.
 
-async def _extract_url() -> str:
-    assert _tunnel_process is not None and _tunnel_process.stdout is not None
-    while True:
-        line_bytes = await _tunnel_process.stdout.readline()
-        if not line_bytes:
-            break
-        line = line_bytes.decode("utf-8", errors="replace")
-        match = TUNNEL_REGEX.search(line)
-        if match:
-            return match.group(0)
-    return ""
-
-captured_url = await asyncio.wait_for(_extract_url(), timeout=30.0)
-_tunnel_url = captured_url
-```
-
-* **Regex Pattern**: `re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")` matches the assigned ephemeral domain generated by Cloudflare.
-* **Timeout Protection**: `asyncio.wait_for(..., timeout=30.0)` prevents the FastAPI startup sequence from hanging indefinitely if network resolution fails or `cloudflared` hangs.
-
-### B. Prevention of OS Buffer Deadlocks (`_drain_output`)
-Subprocesses writing large volumes of logs to `PIPE` will stall once the OS pipe buffer fills (~64KB) if the buffer is not read continuously. Once the URL is captured, a detached background task keeps draining the stream:
-
-```python
-async def _drain_output():
-    try:
-        assert _tunnel_process is not None and _tunnel_process.stdout is not None
-        while True:
-            line = await _tunnel_process.stdout.readline()
-            if not line:
-                break
-    except Exception:
-        pass
-
-_drain_task = asyncio.create_task(_drain_output())
-```
-
-### C. Clean Subprocess Teardown (`stop_tunnel`)
-Guarantees zombie processes are reaped cleanly on FastAPI shutdown:
-
-```python
-async def stop_tunnel() -> None:
-    global _tunnel_url, _tunnel_process, _drain_task
-
-    if _drain_task and not _drain_task.done():
-        _drain_task.cancel()
-        try:
-            await _drain_task
-        except asyncio.CancelledError:
-            pass
-    _drain_task = None
-
-    if _tunnel_process is not None:
-        try:
-            _tunnel_process.terminate()
-            wait_res = _tunnel_process.wait()
-            if asyncio.iscoroutine(wait_res):
-                await asyncio.wait_for(wait_res, timeout=5.0)
-        except (ProcessLookupError, asyncio.TimeoutError):
-            try:
-                kill_res = _tunnel_process.kill()
-                if asyncio.iscoroutine(kill_res):
-                    await kill_res
-                wait_res = _tunnel_process.wait()
-                if asyncio.iscoroutine(wait_res):
-                    await wait_res
-            except Exception:
-                pass
-        except Exception as exc:
-            logger.warning(f"Error stopping cloudflared tunnel: {exc}")
-        finally:
-            _tunnel_process = None
-            _tunnel_url = None
-```
-
-### D. Dynamic Attribute Access
-Module-level `__getattr__` allows external consumers to read `app.tunnel.tunnel_url` or call `get_tunnel_url()`:
-
-```python
-def get_tunnel_url() -> Optional[str]:
-    return _tunnel_url
-
-def __getattr__(name: str):
-    if name == "tunnel_url":
-        return _tunnel_url
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
-```
-
----
-
-## 4. Application Integration Points
-
-### A. FastAPI Lifespan (`app/main.py`)
-Mounted inside `lifespan(app: FastAPI)` so the tunnel is created when the public server starts and destroyed when the server terminates:
-
-```python
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 1. Init Database & Admin Server
-    init_db()
-    ...
-    admin_thread.start()
-
-    # 2. Start Cloudflare Tunnel for Public API (Port 8000)
-    try:
-        await start_tunnel(8000)
-    except Exception as exc:
-        logger.warning(f"Could not start Cloudflare tunnel: {exc}")
-
-    yield
-
-    # 3. Teardown Tunnel & Admin Server
-    await stop_tunnel()
-    if admin_server is not None:
-        admin_server.should_exit = True
-```
-
-### B. Device Pairing Endpoint (`app/routes/scripts.py`)
-The endpoint `GET /api/v1/scripts/pairing/request` dynamically constructs QR payloads using the active tunnel:
-
-```python
-@router.get("/pairing/request", dependencies=[Security(verify_admin_key)])
-def request_pairing_code(tunnel_url: Optional[str] = None):
-    active_tunnel = tunnel_url or get_tunnel_url() or "http://localhost:8000"
-    code = generate_pairing_code(ttl_seconds=60)
-    qr_payload = f"{active_tunnel.rstrip('/')}?pairing_code={code}"
-    return {
-        "pairing_code": code,
-        "expires_in_seconds": 60,
-        "qr_payload": qr_payload,
-    }
-```
-- No query parameter is required.
-- If `get_tunnel_url()` is available (e.g., `https://example-slug.trycloudflare.com`), the QR code encodes `https://example-slug.trycloudflare.com?pairing_code=...`.
-- If running offline or without `cloudflared`, it falls back to `http://localhost:8000`.
-
----
-
-## 5. Troubleshooting & Operational Notes
-
-| Issue | Cause | Resolution |
-| :--- | :--- | :--- |
-| `cloudflared executable not found in PATH` | `cloudflared` CLI is not installed on host | Install via `brew install cloudflared` (macOS) or download official binary |
-| `Failed to capture Cloudflare Tunnel URL` | DNS/network firewall blocking Cloudflare edge connection, or startup timed out (>30s) | Verify internet access and test `cloudflared tunnel --url http://localhost:8000` manually in a shell |
-| QR Code displays `http://localhost:8000` | Tunnel failed to boot or hasn't finished connecting | Check backend console logs for warning: `Could not start Cloudflare tunnel` |
+Regression tests cover readiness before publication, simultaneous startup,
+unexpected exit/recovery, missing executable, output failures, timeout,
+cancellation, forceful cleanup, and dynamic pairing-origin replacement.

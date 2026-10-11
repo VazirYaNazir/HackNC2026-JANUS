@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 const BACKEND = 'http://127.0.0.1:18980'
 const PHONE = 'http://127.0.0.1:18982'
-/** The pairing link a user pastes into the PWA (the PWA accepts only the full link). */
+/** The pairing link a user pastes into the PWA as an alternative to address/code entry. */
 const linkFor = (code: string) => `${BACKEND}?pairing_code=${code}`
 const headers = (device = 1) => ({ Authorization: `Bearer control-${device}-` + 'b'.repeat(32) })
 
@@ -50,6 +50,9 @@ test('manual code entry pairs without camera access and receives published layou
   const phone = await context.newPage()
   await phone.setViewportSize({ width: 390, height: 844 })
   await manual(phone, code.toLowerCase())
+  await phone.getByRole('button', { name: 'Backend and code', exact: true }).click()
+  await phone.getByLabel('PC address', { exact: true }).fill(BACKEND)
+  await phone.getByLabel('Pairing code', { exact: true }).fill(code.toLowerCase())
   await phone.getByRole('button', { name: 'Pair', exact: true }).click()
   await save(phone, 'Manual desk')
   const current = await (await request.get(`${BACKEND}/api/layout`, { headers: headers() })).json()

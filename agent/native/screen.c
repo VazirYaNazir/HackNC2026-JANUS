@@ -210,23 +210,51 @@ static int capture(unsigned limit,unsigned char **out,size_t *size,unsigned *wid
 #else
 static int capture(unsigned limit,unsigned char **out,size_t *n,unsigned *w,unsigned *h) {(void)limit;(void)out;(void)n;(void)w;(void)h;return 0;}
 #endif
+/* The backend accepts at most 800000 base64 characters (600000 JPEG bytes).
+ * Retry a smaller frame rather than emitting an image the live transport drops. */
+#define MAX_JPEG_BYTES 600000U
+typedef int (*capture_function)(unsigned,unsigned char **,size_t *,unsigned *,unsigned *);
+static int capture_bounded(unsigned limit,unsigned char **out,size_t *size,unsigned *width,unsigned *height,capture_function grab) {
+    for(unsigned attempt=0;attempt<5;attempt++) {
+        *out=NULL;*size=0;*width=0;*height=0;
+        if(!grab(limit,out,size,width,height)) {free(*out);*out=NULL;return 0;}
+        if(*out && *size && *size<=MAX_JPEG_BYTES && *width && *height) return 1;
+        free(*out);*out=NULL;
+        if(limit<=64) return 0;
+        limit=(unsigned)fmax(64,floor(limit*0.75));
+    }
+    return 0;
+}
 int main(int argc,char **argv) {
-    setvbuf(stdout,NULL,_IOFBF,65536);unsigned interval=1000,limit=960;int once=0;
+    setvbuf(stdout,NULL,_IOFBF,65536);unsigned interval=1000,limit=960;int once=0,request_permission=0;
     signal(SIGINT,on_stop);signal(SIGTERM,on_stop);
     for(int i=1;i<argc;i++) {
         if(!strcmp(argv[i],"--once")) once=1;
+        else if(!strcmp(argv[i],"--request-permission")) request_permission=1;
         else if(!strcmp(argv[i],"--interval") && i+1<argc) interval=interval_arg(argv[++i],200,60000);
         else if(!strcmp(argv[i],"--max-width") && i+1<argc) limit=interval_arg(argv[++i],64,1920);
-        else {fprintf(stderr,"Usage: screen [--once] [--interval ms] [--max-width pixels]\n");return 2;}
+        else {fprintf(stderr,"Usage: screen [--once] [--interval ms] [--max-width pixels] [--request-permission]\n");return 2;}
     }
+#ifdef __APPLE__
+    if(request_permission && !CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
+#else
+    (void)request_permission;
+#endif
 #ifdef _WIN32
     SetProcessDPIAware();if(FAILED(CoInitializeEx(NULL,COINIT_MULTITHREADED))) return 1;
 #endif
     int failed=0;
     do {
         uint64_t start=monotonic_ms();unsigned char *jpeg=NULL;size_t size=0;unsigned w=0,h=0;
-        if(!capture(limit,&jpeg,&size,&w,&h)) {
-            failure("screen","Capture failed: requires an interactive desktop and screen recording access on macOS",0);failed=1;
+        if(!capture_bounded(limit,&jpeg,&size,&w,&h,capture)) {
+#ifdef __APPLE__
+            failure("screen","Screen capture unavailable. Enable Screen Recording for your terminal or JANUS in System Settings > Privacy & Security, then restart JANUS.",0);
+#elif defined(_WIN32)
+            failure("screen","Screen capture unavailable. Run JANUS in the signed-in user's interactive desktop; locked desktops and services cannot be mirrored.",0);
+#else
+            failure("screen","Screen capture requires macOS or Windows with an interactive desktop",0);
+#endif
+            failed=1;
         } else {
             failed=0;event_start("telemetry","screen");
             printf("\"data\":{\"mime\":\"image/jpeg\",\"width\":%u,\"height\":%u,\"display\":\"primary\",\"base64\":\"",w,h);

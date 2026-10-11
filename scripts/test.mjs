@@ -22,6 +22,7 @@ async function pythonTests(folder) {
 if (mode !== 'browser') {
   const results = await Promise.allSettled([
     pythonTests('agent'), pythonTests('backend'),
+    run('uv', ['run', '--locked', '--project', 'backend', 'python', '-m', 'unittest', 'discover', '-s', 'tests/startup']),
     run(npm, ['exec', '--', 'vitest', 'run', '--config', 'vitest.config.ts', ...(mode === 'unit' ? [] : ['--coverage'])]),
   ]);
   const failures = results.filter(result => result.status === 'rejected');

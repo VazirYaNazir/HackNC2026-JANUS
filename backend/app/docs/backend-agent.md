@@ -64,6 +64,9 @@ persisted registration. Existing connections and jobs terminate on shutdown.
 | `APP_ENV` | `development` allows loopback `ws`; every other value requires `wss` on the new agent endpoint. |
 | `PUBLIC_BACKEND_URL` | Optional stable HTTPS backend origin advertised for phone pairing; otherwise the current HTTPS request or the Cloudflare tunnel (started only with `JANUS_AUTO_TUNNEL=1`, e.g. `npm start -- --tunnel`) is used. |
 | `PWA_PUBLIC_URL` | Optional deployed phone app HTTPS origin; Studio's QR opens it with a pairing review form. |
+| `JANUS_TUNNEL_MODE` | `auto` starts an optional backend quick tunnel after HTTP startup; `off` lets the full launcher or external proxy manage connectivity. When unset, tunneling requires the legacy `JANUS_AUTO_TUNNEL=1` opt-in. |
+| `JANUS_BACKEND_PORT` | 8000; must match uvicorn's bound port in standalone automatic tunnel mode. |
+| `JANUS_PUBLIC_URLS_FILE` | Optional launcher-owned atomic JSON file with `backend`/`pwa` HTTPS-or-null origins; pairing reads changes dynamically and waits for a public backend. |
 | `JANUS_DB_PATH` | Optional path in an existing writable directory; default `app/app.db`. Persist it and its WAL sidecars outside standalone containers. |
 
 From the repository root, use the existing Docker workflow:

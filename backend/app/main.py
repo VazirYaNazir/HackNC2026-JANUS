@@ -52,6 +52,16 @@ admin_server: uvicorn.Server | None = None
 async def lifespan(app: FastAPI):
     global admin_server
 
+    tunnel_mode = os.getenv("JANUS_TUNNEL_MODE", "").strip().lower()
+    if not tunnel_mode:
+        # Preserve the existing npm --tunnel opt-in; the full launcher sets off.
+        tunnel_mode = "auto" if os.getenv("JANUS_AUTO_TUNNEL", "").lower() in ("1", "true", "yes") else "off"
+    if tunnel_mode not in ("auto", "off"):
+        raise ValueError("JANUS_TUNNEL_MODE must be auto or off")
+    backend_port = int(os.getenv("JANUS_BACKEND_PORT", "8000"))
+    if not 1 <= backend_port <= 65535:
+        raise ValueError("Invalid JANUS_BACKEND_PORT")
+
     # This service stays on the public server's loop; the admin server has its
     # own thread/loop and does not share asyncio connection or job objects.
     app.state.agent_runtime = await AgentRuntime.persisted()
@@ -72,13 +82,15 @@ async def lifespan(app: FastAPI):
     admin_thread = threading.Thread(target=admin_server.run, daemon=True)
     admin_thread.start()
 
-    # Cloudflare Tunnel for the public API (port 8000) exposes the backend to the internet, so it only
-    # starts on request (JANUS_AUTO_TUNNEL=1, set by `npm start -- --tunnel`).
-    if os.getenv("JANUS_AUTO_TUNNEL", "").lower() in ("1", "true", "yes"):
+    # Backend readiness must not depend on Cloudflare or prevent the target
+    # server from binding. The full launcher owns its two public tunnels.
+    async def optional_tunnel():
         try:
-            await start_tunnel(8000)
+            await start_tunnel(backend_port)
         except Exception as exc:
-            logger.warning(f"Could not start Cloudflare tunnel: {exc}")
+            logger.warning("Could not start Cloudflare tunnel: %s", exc)
+
+    tunnel_task = asyncio.create_task(optional_tunnel()) if tunnel_mode == "auto" else None
 
     # Launch background system stats broadcaster loop
     stats_task = asyncio.create_task(broadcast_system_stats_loop())
@@ -86,6 +98,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if tunnel_task is not None:
+            tunnel_task.cancel()
+            await asyncio.gather(tunnel_task, return_exceptions=True)
         stats_task.cancel()
         try:
             await stats_task
@@ -125,4 +140,4 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=int(os.getenv("JANUS_BACKEND_PORT", "8000")), reload=True)

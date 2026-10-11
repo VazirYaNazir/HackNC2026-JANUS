@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { pathKey, tunnelUrlFrom } from '../lib/common.mjs';
+import { launcherCommand, normalizeLauncherArgs } from '../start.mjs';
 
 describe('tunnelUrlFrom', () => {
   it('reads the URL out of the line the backend logs through uvicorn', () => {
@@ -31,21 +32,21 @@ describe('pathKey', () => {
 });
 
 describe('start.mjs wiring for the tunnel', () => {
-  const source = readFileSync(new URL('../start.mjs', import.meta.url), 'utf8');
   const scripts = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts;
 
   it('start:demo asks for the tunnel', () => {
     expect(scripts['start:demo']).toBe('node scripts/start.mjs --imessage --screen --tunnel');
   });
 
-  it('shows the tunnel URL when it comes up, and says loudly when it did not', () => {
-    expect(source).toContain('onLine: (line) =>');
-    expect(source).toContain('Cloudflare tunnel is up: ${url}');
-    expect(source).toContain('The Cloudflare tunnel did not come up, so phone pairing will not work');
+  it('delegates explicit tunnel requests to the common Python launcher', () => {
+    const [command, args] = launcherCommand(normalizeLauncherArgs(['--tunnel'], {}));
+    expect(command).toBe('uv');
+    expect(args.at(-1)).toBe('--tunnel');
+    expect(args.some((value) => value.endsWith('start.py'))).toBe(true);
   });
 
-  it('puts the pinned cloudflared first on the real PATH variable, not a second copy of it', () => {
-    expect(source).toContain('backendEnv[pathKey()] =');
-    expect(source).not.toContain('backendEnv.PATH');
+  it('preserves an explicit executable path containing spaces as one argument', () => {
+    const [, args] = launcherCommand(normalizeLauncherArgs(['--cloudflared', 'C:/Program Files/cloudflared.exe'], {}));
+    expect(args.slice(-2)).toEqual(['--cloudflared', 'C:/Program Files/cloudflared.exe']);
   });
 });

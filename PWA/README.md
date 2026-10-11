@@ -28,10 +28,11 @@ no credentials are bundled into the build. Both the current JSON QR and pairing
 URL formats are supported, including the complete 12-character scoped code.
 
 From the home screen, **Scan to add panel** opens the camera. **Enter code
-instead** opens a single field without requesting camera access; paste the
-full pairing link shown in Studio's Pair Device dialog and the PWA reads the
-backend address and code from it. Invalid/expired/used codes, network failures,
-and camera failures have separate messages. Failed attempts retain the pasted link.
+instead** opens a form without requesting camera access. Paste the full pairing
+link shown in Studio's Pair Device dialog, or choose **Backend and code** and
+enter its backend address and complete pairing code separately.
+Invalid/expired/used codes, network failures, and camera failures have separate
+messages. Failed attempts retain the entered link or address and code.
 The credential is saved immediately after pairing; **Save** names the panel.
 
 Set the optional `PWA_PUBLIC_URL` backend variable to this app's deployed HTTPS

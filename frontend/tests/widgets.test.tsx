@@ -2,7 +2,7 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { InputWidget, Widget, WidgetType } from '@janus/schema';
-import { PanelGrid, WIDGET_TYPES, WidgetView, createWidget, getWidgetAccent, getWidgetComponent, getWidgetDef, getWidgetMinimumSize, snapWidgetSize } from '@janus/widgets';
+import { PanelGrid, WIDGET_TYPES, WidgetView, builtinActions, builtinSources, createWidget, getWidgetAccent, getWidgetComponent, getWidgetDef, getWidgetMinimumSize, snapWidgetSize } from '@janus/widgets';
 import { asNumber, formatNumber } from '../../shared/widgets/src/format';
 import { polar, sweepPath } from '../../shared/widgets/src/arc';
 import { levelOf } from '../../shared/widgets/src/level';
@@ -15,6 +15,13 @@ const widget = (type: WidgetType): Widget => createWidget(type, `${type}-1`, { x
 const input = (type: WidgetType, action = ''): InputWidget => ({ ...widget(type), action }) as InputWidget;
 
 describe('every widget in the registry', () => {
+  it.each(WIDGET_TYPES)('%s has a real compatible binding or an explicit generated-action requirement', type => {
+    const w = widget(type);
+    if ('source' in w) {
+      expect(w.source).not.toBe(''); expect(builtinSources(w.type)).toContain(w.source);
+    } else if (w.action) expect(builtinActions(w.type)).toContain(w.action);
+    else expect(['button', 'toggle', 'dpad', 'command', 'agent']).toContain(type);
+  });
   it.each(WIDGET_TYPES)('%s renders in edit/live modes and releases observers', type => {
     const w = widget(type), onSelect = vi.fn(), onTrigger = vi.fn();
     const view = render(<WidgetView widget={w} mode="edit" onSelect={onSelect} onTrigger={onTrigger} />);
@@ -145,7 +152,25 @@ describe('every widget in the registry', () => {
     expect(screen.getByText(/Waiting for stream/)).toBeTruthy();
     view.rerender(<WidgetView widget={w} mode="live" value="data:image/jpeg;base64,first" />);
     fireEvent.error(view.container.querySelector('img')!); expect(screen.getByText('Stream offline')).toBeTruthy();
-    view.rerender(<WidgetView widget={w} mode="live" value="data:image/jpeg;base64,second" />); expect(screen.getByText('LIVE')).toBeTruthy();
+    view.rerender(<WidgetView widget={w} mode="live" value="data:image/jpeg;base64,second" />);
+    expect(screen.getByText('Loading screen…')).toBeTruthy(); expect(screen.queryByText('LIVE')).toBeNull();
+    fireEvent.load(view.container.querySelector('img')!); expect(screen.getByText('LIVE')).toBeTruthy();
+  });
+
+  it('routes native screen failures into the mirror, clears failed images and resumes on a valid frame', () => {
+    const layout = { schemaVersion: 2 as const, coordinateSpace: 'logical' as const, canvas: { width: 360, height: 780 }, name: 'Mirror', widgets: [widget('stream')] };
+    const view = render(<PanelGrid layout={layout} data={{ 'screen.frame': null, 'native.screen.status': 'Screen Recording permission denied' }} />);
+    expect(screen.getByText('Screen Recording permission denied')).toBeTruthy(); expect(screen.getByText('OFF')).toBeTruthy();
+    view.rerender(<PanelGrid layout={layout} data={{ 'screen.frame': 'data:image/jpeg;base64,next', 'native.screen.status': 'Live' }} />);
+    fireEvent.load(view.container.querySelector('img')!); expect(screen.getByText('LIVE')).toBeTruthy();
+    view.rerender(<PanelGrid layout={layout} data={{ 'screen.frame': null, 'native.screen.status': 'Capture failed' }} />);
+    expect(view.container.querySelector('img')).toBeNull(); expect(screen.getByText('Capture failed')).toBeTruthy();
+  });
+
+  it('shows unavailable process and temperature statuses instead of an unexplained missing reading', () => {
+    const layout = { schemaVersion: 2 as const, coordinateSpace: 'logical' as const, canvas: { width: 360, height: 780 }, name: 'Metrics', widgets: [widget('temperature'), { ...widget('processes'), y: 200 }] };
+    render(<PanelGrid layout={layout} data={{ 'cpu.temperature': null, 'native.metrics.status': 'Temperature sensor unavailable', 'process.tree': null, 'native.processes.status': 'Process inspection denied' }} />);
+    expect(screen.getByText('Temperature sensor unavailable')).toBeTruthy(); expect(screen.getByText('Process inspection denied')).toBeTruthy();
   });
 
   it('shows relevant process hierarchy, escaped names and the empty state', () => {

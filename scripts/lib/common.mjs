@@ -112,7 +112,16 @@ function parentPid(pid) {
 }
 
 export function isAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    if (process.platform === 'linux') {
+      // A terminated orphan can wait for PID 1 to reap it. It cannot run or
+      // control the laptop, even though kill(pid, 0) still succeeds.
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      if (stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z ')) return false;
+    }
+    return true;
+  } catch { return false; }
 }
 
 export function killTree(pid) {

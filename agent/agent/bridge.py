@@ -236,7 +236,7 @@ async def connected_session(websocket, options, binaries, validation_service=Non
         "processes": ["--min-cpu", str(options.min_cpu), "--min-ram-mb", str(options.min_ram_mb)],
     }
     if options.screen:
-        args["screen"] = ["--interval", str(options.screen_interval)]
+        args["screen"] = ["--interval", str(options.screen_interval), "--request-permission"]
 
     async def start(name, argv):
         process = await asyncio.create_subprocess_exec(str(binaries[name]), *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, limit=MAX_LINE)

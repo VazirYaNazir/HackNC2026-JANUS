@@ -82,11 +82,34 @@ describe('complete editor state', () => {
     expect((screen.getByLabelText('Action ID') as HTMLInputElement).value).toBe('native_volume');
     fireEvent.change(screen.getByLabelText('Minimum'), { target: { value: '10' } }); fireEvent.blur(screen.getByLabelText('Minimum'));
     fireEvent.change(screen.getByLabelText('Maximum'), { target: { value: '5' } }); fireEvent.blur(screen.getByLabelText('Maximum'));
-    expect(screen.getByRole('alert').textContent).toContain('Minimum'); expect((screen.getByLabelText('Maximum') as HTMLInputElement).value).toBe('');
+    expect(screen.getByRole('alert').textContent).toContain('Minimum'); expect((screen.getByLabelText('Maximum') as HTMLInputElement).value).toBe('100');
     fireEvent.change(screen.getByLabelText('Step'), { target: { value: '0' } }); fireEvent.blur(screen.getByLabelText('Step')); expect(screen.getByRole('alert').textContent).toContain('Step');
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Logic' }), { key: 'ArrowLeft' }); expect(screen.getByRole('tab', { name: 'Data' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByText('Preview')); fireEvent.click(screen.getByRole('tab', { name: 'General' }));
     expect(screen.getByLabelText('Label').hasAttribute('disabled')).toBe(true); expect(screen.getByRole('button', { name: 'Delete widget' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('configures a bipolar native scroll range and switches safely back to volume', () => {
+    function Harness() {
+      const editor = useEditorState();
+      return <><button onClick={() => editor.addWidget('knob', { x: 0, y: 0, w: 170, h: 170 })}>Add</button><Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} /></>;
+    }
+    render(<Harness />); fireEvent.click(screen.getByText('Add')); fireEvent.click(screen.getByRole('tab', { name: 'Logic' }));
+    fireEvent.change(screen.getByLabelText('Built-in action'), { target: { value: 'native_scroll' } });
+    expect((screen.getByLabelText('Minimum') as HTMLInputElement).value).toBe('-100'); expect((screen.getByLabelText('Step') as HTMLInputElement).value).toBe('1');
+    fireEvent.change(screen.getByLabelText('Built-in action'), { target: { value: 'native_volume' } });
+    expect((screen.getByLabelText('Minimum') as HTMLInputElement).value).toBe('0'); expect((screen.getByLabelText('Maximum') as HTMLInputElement).value).toBe('100');
+  });
+
+  it.each(['stream', 'processes', 'log', 'gauge'] as const)('offers only compatible native sources for %s', type => {
+    const widget: Widget = { id: 'w', type, label: type, source: '', x: 0, y: 0, w: 170, h: 170 };
+    render(<Inspector widget={widget} mode="edit" error={null} onGeometryChange={() => true} onWidgetChange={() => true} onDelete={() => true} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Data' }));
+    const options = [...(screen.getByLabelText('Built-in data') as HTMLSelectElement).options].map(option => option.value);
+    if (type === 'stream') expect(options).toEqual(['', 'screen.frame']);
+    else if (type === 'processes') expect(options).toEqual(['', 'process.tree']);
+    else if (type === 'log') { expect(options).toContain('native.screen.status'); expect(options).not.toContain('screen.frame'); }
+    else { expect(options).toContain('cpu.percent'); expect(options).not.toContain('process.tree'); }
   });
 });
 

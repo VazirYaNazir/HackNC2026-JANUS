@@ -6,63 +6,41 @@ Both frontends share the same authenticated panel and live job client.
 
 ## Quick start
 
-```sh
-npm run setup   # checks prerequisites, installs dependencies, creates backend/.env, builds native tools
-npm start       # backend + laptop agent + Studio
-```
-
-Prerequisites: Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Python 3.12+). In Studio, choose
-**Connect backend → Use this laptop’s local backend**; nothing needs pasting. To pair a phone, add `-- --tunnel`
-(`npm start -- --tunnel`) and use **Pair Device**.
-
-**On Windows, use the shortcut scripts.** PowerShell drops the `--` that separates npm's options from the script's,
-so `npm start -- --imessage` reaches npm as its own (unknown) option. The scripts below have their flags built in:
+Install Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Python 3.12+), then run from the repository root:
 
 ```sh
-npm run start:demo       # backend + agent + Studio + iMessage + screen sharing + Cloudflare tunnel  (--imessage --screen --tunnel)
-npm run start:imessage   # the same without screen sharing or the tunnel                (--imessage)
+npm start
 ```
 
-With the tunnel, the console prints a green `Cloudflare tunnel is up: https://….trycloudflare.com` line once cloudflared is running
-(or a red warning if it could not start), and **Pair Device** in Studio uses that URL.
+The launcher installs locked dependencies, preserves existing registrations and environment settings, starts the backend, SQLite, browser Studio and phone PWA, and creates HTTPS Cloudflare connections for phone pairing. Studio connects automatically through a single-use local credential handoff. On macOS or Windows, the terminal asks whether JANUS may control this laptop for the session. Type `yes` to enable the native tools and screen mirror; declining keeps the web services running. macOS also requires Accessibility and Screen Recording permission, and Windows native compilation requires the Visual Studio C tools and Windows SDK.
 
-The scripts also read flags that npm swallowed (`npm_config_<flag>`), so `npm start --imessage` works too, with an
-"Unknown env config" warning from npm that you can ignore.
+Choose **Project → Laptop controls starter**, then **Save & Push → Pair Device**. Open the HTTPS phone app address printed in the terminal and scan the QR, paste the pairing link, or enter its backend address and code. When a tunnel fails, local Studio stays available and pairing reports that the public connection is unavailable. A tunnel restart changes its address: generate a new pairing code.
 
-### What the scripts do
+```sh
+npm start -- --local-only                    # local development without public tunnels
+npm start -- --local-only --no-agent         # web development without laptop permissions
+npm start -- --studio=electron               # optional Electron Studio instead of a browser
+npm start -- --studio=none --no-agent        # backend and phone app without Studio
+npm start -- --no-screen                     # approve controls without screen capture
+npm start -- --only=agent                    # approve/start an agent against an existing backend
+npm run start:imessage                       # also start the configured messaging sidecar
+npm run start:demo                           # compatibility shortcut; includes messaging
+npm run doctor                              # diagnose optional integrations and prerequisites
+```
 
-- `npm run setup` runs the preflight checks first and stops on blocking problems before installing anything. It
-  is safe to re-run: it adds any keys that `backend/.env.example` gained since your `.env` was written, never
-  changes values you already set, generates `ADMIN_SECRET` and this laptop’s two credentials only when empty,
-  and restricts `backend/.env` to your user (`chmod 600` / an owner-only Windows ACL). Options:
-  `--skip-native`, `--reinstall`, `--pwa-url=https://…` (or `JANUS_PWA_URL`, or `scripts/defaults.json`) to set
-  `PWA_PUBLIC_URL` so the pairing QR opens the hosted PWA. If none is configured that value stays empty.
-- `npm start` starts the backend, waits for `/health`, then the agent (`--native-tools`) and Studio. Closing
-  Studio stops everything. Flags (pass after `--`):
-  - `--tunnel` exposes the backend through a Cloudflare tunnel for phone pairing. **Off by default**, because it
-    puts the backend on the public internet (behind its credentials) for as long as JANUS runs. Without
-    `cloudflared`, a pinned, SHA-256-verified copy is downloaded to `.janus/bin`.
-  - `--pwa` also runs the PWA dev server on port 5174. Off by default: phones use the hosted PWA.
-  - `--studio=browser|none` runs Studio in a browser tab, or not at all. `--no-agent` skips the agent.
-  - `--only=agent` starts just the agent against a running backend (Studio’s **Start agent** button uses this).
-- JANUS only stops processes it started itself, recorded in `.janus/pids.json` with each process's start time (so a
-  recycled PID is never mistaken for one of ours). Ctrl+C, a closed console, or a crash kills every child's whole
-  process tree (`taskkill /T /F` on Windows): backend, agent, iMessage sidecar, Vite and Electron. If the
-  orchestrator itself is hard-killed and leaves children behind, the next `npm start` stops exactly those recorded
-  leftovers. A second `npm start` while one is healthy refuses ("JANUS is already running") instead of killing it,
-  and if something else holds port 8000, 5173 or 5174 it names the process and exits.
-- One agent per laptop. Studio's **Start agent** button only appears while no agent is connected, never while one
-  is running or starting, and `npm start -- --only=agent` refuses when a recorded agent is alive. The backend also
-  refuses a second connection for the same device (close code 4409), and an agent that receives that stops instead
-  of retrying forever.
-- `npm run doctor` runs the same checks on demand. Setup and start run them automatically and print failures only.
+`--no-install` uses installed dependencies; `--no-browser` leaves browser Studio running without opening a tab. `--device-id`, `--backend-port`, `--admin-port`, `--studio-port` and `--pwa-port` select the laptop and local ports. Legacy `--pwa`, `--tunnel` and `--screen` flags remain accepted because those features are now included by default. The wrapper also accepts flags npm places in `npm_config_<flag>` on Windows.
 
-### Studio and the laptop agent
+### Startup permissions and private state
 
-In the Electron Studio, the credential for this laptop is read by Electron’s main process from `backend/.env`
-and handed to the window over IPC; only the dev-server page can request it, and there is no HTTP endpoint that
-returns it. In a plain browser Studio, paste the controller credential instead. When no agent is connected,
-Electron shows a **Start agent** button; a browser shows the command to copy.
+Startup creates `agent/.validation-policy.json` with all supported capabilities and the maximum supported validation budgets if no policy exists. It preserves custom scopes and explicit job grants. The file alone grants no approval: interactive terminal consent or Electron's local permission dialog activates the session, and approval ends when the agent exits. An unattended launch never approves itself. Generated jobs remain scoped, bounded, replay protected, and require an audited isolation adapter; see **AI widgets** below.
+
+The launcher uses private local files in `.janus/`: registrations, the manual controller credential, SQLite, process records, tunnel origins and redacted service logs. POSIX permissions and Windows owner ACLs protect sensitive launcher files. Existing `backend/.env` and its credentials are preserved. On first startup the previous `backend/app/app.db` is copied using SQLite backup, including committed WAL data, into writable `.janus/janus.sqlite`; the original is preserved. Set `JANUS_DB_PATH` to use a different writable database. `JANUS_STATE_DIR` can select another private state directory.
+
+Ctrl+C stops the owned process trees and clears published phone origins. Verified PID records prevent a second launcher from replacing an active session and let the next startup clean up its own leftovers after a crash. A stopped agent or messaging sidecar leaves the web services running. The default browser receives its credential once through an origin-restricted loopback handoff, keeps it only in memory, and removes the handoff fragment immediately. Electron also supports local IPC and a permission dialog for **Start agent**.
+
+`npm run setup` remains available for manual prerequisite checks, environment initialization, native builds and optional Tiger Data schema setup. It preserves configured values. Standalone backend startup uses `JANUS_AUTO_TUNNEL=1` or `JANUS_TUNNEL_MODE=auto` for its own tunnel; the full launcher owns its tunnels and disables duplicate backend tunneling.
+
+See the [widget integration audit](frontend/docs/widget-integration.md) for every widget family, live telemetry sources, generated/custom actions and hardware requirements.
 
 ## Manual setup
 
@@ -124,9 +102,7 @@ generated source. Neither the backend nor a policy file can enable an adapter. D
 
 ### Local authorization
 
-Running a generated program also needs a grant that only the laptop can create: an entry for that request ID in the
-agent’s local policy file (`--validation-policy`, read when the agent starts). Confirming in Studio or the phone
-never grants OS permissions. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
+Running a generated program needs a local grant: either a fresh job grant minted within the session you approved at startup, or an explicit request-ID entry in the agent’s local policy file. Confirming in Studio or the phone never grants OS permissions. Startup approval does not supply the required isolation adapter. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
 
 ## Text your laptop (iMessage)
 
@@ -200,20 +176,16 @@ only when you export **both** `TIGER_DATABASE_URL` and `JANUS_TIGER_INTEGRATION=
 
 ## Link a phone
 
-Studio runs at `http://127.0.0.1:5173`. Phones normally use the hosted PWA; with
-`npm start -- --pwa` a dev server runs at `https://<laptop-LAN-IP>:5174` instead.
-Open the PWA on your phone first. Camera scanning requires an HTTPS certificate
-trusted by the phone; manual code entry does not need camera permission.
+Studio runs at `http://127.0.0.1:5173`. `npm start` includes a PWA server on loopback port 5174 and publishes it through a separate trusted HTTPS Cloudflare address. Open the printed **Phone app** address on your phone. Camera scanning needs HTTPS and camera permission; manual entry does not need camera permission. A configured hosted `PWA_PUBLIC_URL` takes precedence.
 
-Start JANUS with `npm start -- --tunnel` so the phone can reach the backend.
+Start JANUS with `npm start` so the phone can reach the backend.
 In Studio, select **Pair Device**. The dialog uses the backend's Cloudflare
 tunnel when one is running and Studio is connected locally, or its existing HTTPS
 backend address. Set `PUBLIC_BACKEND_URL` in `backend/.env` for a stable/custom
 HTTPS backend origin, or edit **Phone backend address** in the dialog to the
 URL printed by `cloudflared tunnel --url http://127.0.0.1:8000`.
 
-On the phone choose **Scan to add panel**, or **Enter code instead** and paste
-the full pairing link shown in Studio's Pair Device dialog. Codes expire after 60 seconds and can be used once;
+On the phone choose **Scan to add panel**, or **Enter code instead** to paste the full pairing link or enter the HTTPS backend address and code shown in Studio’s Pair Device dialog. Codes expire after 60 seconds and can be used once;
 choose **New code** in Studio to retry. The connection is saved as soon as
 pairing succeeds, before naming the panel.
 
@@ -236,7 +208,7 @@ Use the device ID from `AGENT_DEVICES_JSON`. Omit `--screen` to keep screen shar
 
 In Studio choose **Project → Laptop controls starter**, then **Save & Push** and pair the phone. The volume slider, mouse joystick and click buttons send fixed native commands; RAM, CPU temperature, relevant process trees and screen frames arrive live in both apps. CPU utilization is also available as `cpu.percent`. Process relevance defaults to at least 1% CPU or 100 MiB RAM, including parent context; adjust `--min-cpu` and `--min-ram-mb` when starting the agent. Joystick movement stops on release, lost focus, and the native mouse timeout.
 
-Native processes start concurrently, with separate readers and bounded queues; commands for a given tool remain ordered. These built-in operations use the laptop's explicit local startup permission. Generated programs still need a fresh local job grant and an audited isolation adapter. Gemini suggestions remain opt-in for each generated execution.
+Native processes start concurrently, with separate readers and bounded queues; commands for a given tool remain ordered. These built-in operations use the laptop's explicit local startup permission. Generated programs still need a fresh scoped job grant, obtained from your approved startup session or explicit local policy, and an audited isolation adapter. Gemini suggestions remain opt-in for each generated execution.
 
 Project names, icons, colors, toggle styles, ranges, steps, source bindings, and thresholds can be edited in Studio. Project import/export stores layout JSON without credentials or generated source. The supplied JANUS logo is used in both apps, browser icons, PWA installation icons and Electron.
 
