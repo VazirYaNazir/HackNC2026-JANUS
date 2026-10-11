@@ -13,3 +13,14 @@
 .generation-status.is-warning { color: var(--amber-light); }
 .generation-status a { margin-left: 8px; color: var(--cyan); }
 .messaging-status { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--graphite); }
+
+.activity-panel { margin: 0; padding: 4px 18px; font-size: 12px; color: var(--text-muted); }
+.activity-panel summary { cursor: pointer; padding: 4px 0; }
+.activity-panel ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 150px; overflow-y: auto; }
+.activity-panel li { display: grid; grid-template-columns: minmax(80px, 1fr) 80px minmax(80px, 1.2fr) 70px; gap: 8px; padding: 3px 0; align-items: baseline; }
+.activity-panel li strong { color: var(--text); font-weight: 500; }
+.activity-panel time { text-align: right; }
+.activity-ok { color: var(--green); }
+.activity-pending { color: var(--cyan); }
+.activity-error { color: var(--coral); }
+.activity-empty { margin: 4px 0; }

@@ -9,6 +9,8 @@ export interface WidgetProps {
   widget: Widget;
   mode: "edit" | "live";
   value?: WidgetValue;
+  /** Last-hour trend for a dial's `source` (oldest first), when the backend has history for it. */
+  history?: number[];
   state?: WidgetState;
   selected?: boolean;
   onSelect?: (id: string) => void;

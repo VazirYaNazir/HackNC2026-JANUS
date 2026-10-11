@@ -250,6 +250,9 @@
   max-width: 100%;
 }
 .jw__face svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* Last-hour trend under the dial (live data = cyan). Inside the face, so it goes away with the dial in short cells. */
+.jw__face svg.jw__spark { position: absolute; left: 22%; right: 22%; bottom: 3%; width: 56%; height: 14%; overflow: hidden; pointer-events: none; }
+.jw__spark path { fill: none; stroke: var(--cyan); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: 0.85; }
 .jw__tick { stroke: var(--text-muted); stroke-width: 1; stroke-linecap: round; opacity: 0.35; }
 .jw__arc { fill: none; stroke-width: 8; stroke-linecap: round; }
 .jw__arc--groove-dark { stroke: var(--groove-dark); transform: translate(-1.5px, -1.5px); }

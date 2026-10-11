@@ -13,6 +13,7 @@ interface DevicePreviewProps {
   mode: EditorMode
   values: Record<string, WidgetValue>
   data?: Record<string, number | string | null>
+  history?: Record<string, number[]>
   onSelect: (id: string | null) => void
   onInsert: (type: WidgetType, rect: Rect) => boolean
   onGeometryChange: (id: string, rect: Rect) => boolean
@@ -43,13 +44,14 @@ function clientPoint(event: { clientX: number; clientY: number }, element: HTMLE
   }
 }
 
-function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, onSelect, onGeometryChange, onTrigger }: {
+function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, history, onSelect, onGeometryChange, onTrigger }: {
   widget: Widget
   layout: LogicalCanvasLayout
   selected: boolean
   snapToGrid: boolean
   mode: EditorMode
   value?: WidgetValue
+  history?: number[]
   onSelect: (id: string) => void
   onGeometryChange: (id: string, rect: Rect) => boolean
   onTrigger: (widget: Widget, value?: WidgetValue) => void
@@ -124,6 +126,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, onSel
       widget={widget}
       mode={mode === 'preview' ? 'live' : 'edit'}
       value={value}
+      history={history}
       selected={selected && mode === 'edit'}
       onSelect={mode === 'edit' ? onSelect : undefined}
       onTrigger={mode === 'preview' ? onTrigger : undefined}
@@ -138,7 +141,7 @@ function EditorWidget({ widget, layout, selected, snapToGrid, mode, value, onSel
   </div>
 }
 
-export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, data = {}, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
+export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mode, values, data = {}, history = {}, onSelect, onInsert, onGeometryChange, onTrigger }: DevicePreviewProps) {
   const [placement, setPlacement] = useState<DraftGeometry | null>(null)
 
   function proposedPlacement(event: DragEvent<HTMLDivElement>): DraftGeometry | null {
@@ -183,6 +186,7 @@ export function DevicePreview({ layout, selectedId, pendingType, snapToGrid, mod
         snapToGrid={snapToGrid}
         mode={mode}
         value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
+        history={isInputWidget(widget) ? undefined : history[widget.source]}
         onSelect={onSelect}
         onGeometryChange={onGeometryChange}
         onTrigger={onTrigger}
