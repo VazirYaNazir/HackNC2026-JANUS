@@ -148,10 +148,10 @@ class TrustedFixtureBoundary(IsolationBoundary):
 
 
 class RunningServer:
-    async def start(self, *, sdk=None, settings=None):
+    async def start(self, *, sdk=None, settings=None, store=None, port=0):
         self.sdk = sdk or FakeSDK()
         settings = settings or RuntimeSettings(require_tls=False, heartbeat_interval=.04, heartbeat_timeout=.5, send_timeout=.5)
-        self.runtime = AgentRuntime.create(registry(), GeminiProvider(client=self.sdk, timeout=2), settings)
+        self.runtime = AgentRuntime.create(registry(), GeminiProvider(client=self.sdk, timeout=2), settings, store=store)
         @asynccontextmanager
         async def lifespan(app):
             yield
@@ -159,13 +159,21 @@ class RunningServer:
         self.app = FastAPI(lifespan=lifespan)
         self.app.state.agent_runtime = self.runtime
         self.app.include_router(router)
+        from app.routes.studio import router as studio_router
+        from app.routes.ws import router as panels_ws
+        from app.routes.panels import router as panels_router
+        from fastapi.middleware.cors import CORSMiddleware
+        self.app.include_router(studio_router)
+        self.app.include_router(panels_ws)
+        self.app.include_router(panels_router)
+        self.app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
         ready = asyncio.Event()
         class Server(uvicorn.Server):
             async def startup(inner, sockets=None):
                 await super().startup(sockets)
                 ready.set()
         self.socket = socket.socket()
-        self.socket.bind(("127.0.0.1", 0))
+        self.socket.bind(("127.0.0.1", port))
         self.socket.listen(128)
         self.port = self.socket.getsockname()[1]
         config = uvicorn.Config(self.app, log_level="error", ws="websockets-sansio", ws_max_size=1024 * 1024)

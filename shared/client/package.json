@@ -1,0 +1,9 @@
+{
+  "name": "@janus/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.ts", "./styles.css": "./styles.css" },
+  "dependencies": { "@janus/schema": "*" },
+  "peerDependencies": { "react": ">=18" }
+}

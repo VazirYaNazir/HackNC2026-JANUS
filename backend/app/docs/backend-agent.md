@@ -3,8 +3,10 @@
 This extension adds a device-specific, authenticated job channel and backend
 generation services. It uses the existing agent `ValidationService`, local
 policies, compiler, preflight, artifact verification, and single-use execution.
-The existing mobile, legacy agent, and Cloudflare routes/configuration are not
-changed. No frontend integration is implemented here.
+The desktop Studio and PWA now use this channel through scoped panel controls,
+pairing, and SQLite persistence. See [connected panels](connected-panels.md) for
+the full frontend workflow. Legacy agent and Cloudflare configuration remain
+available; public mobile controls route to the laptop agent.
 
 ## Configuration and startup
 
@@ -16,7 +18,7 @@ reference on case-sensitive systems. `.dockerignore` excludes local environment
 files, data, databases, virtual environments, and tests from the image.
 
 Keep credentials in environment settings or the ignored `backend/.env`. Register
-laptops independently of the mobile pairing system through `AGENT_DEVICES_JSON`:
+laptops through `AGENT_DEVICES_JSON`; Studio pairs phones to these laptops:
 
 ```json
 [
@@ -44,8 +46,10 @@ into Docker when needed. With the existing `backend:/app` Compose mount, a file
 in `backend/data/agent-devices.json` is `/app/data/agent-devices.json` in Docker.
 There are at most 128 registrations and 64 KiB of configuration. Invalid
 configuration stops startup with a generic error without echoing credentials.
-Reload/restart the server to apply registrations or revoke credentials; existing
-connections and their jobs terminate on shutdown.
+Registrations import into SQLite at startup, and database registrations also
+load when environment entries are absent. Restart to apply explicitly imported
+credential rotations. Removing an environment entry alone does not revoke a
+persisted registration. Existing connections and jobs terminate on shutdown.
 
 | Variable | Default / purpose |
 | --- | --- |
@@ -58,6 +62,7 @@ connections and their jobs terminate on shutdown.
 | `AGENT_MAX_JOBS_PER_DEVICE` | 4 outstanding jobs, local range 1–4; distinct from native worker count. |
 | `AGENT_JOB_TIMEOUT` | 150 seconds total, including generation, validation, repair, and execution. |
 | `APP_ENV` | `development` allows loopback `ws`; every other value requires `wss` on the new agent endpoint. |
+| `JANUS_DB_PATH` | Optional path in an existing writable directory; default `app/app.db`. Persist it and its WAL sidecars outside standalone containers. |
 
 From the repository root, use the existing Docker workflow:
 
@@ -69,9 +74,11 @@ docker compose up --build -d backend
 Configure actual registrations and Gemini credentials in the environment file
 before live use. Health remains `GET /health`. The new job routes are mounted
 on the public backend's event loop, not the existing admin server's separate
-thread. Run one Uvicorn process: connections and job state are in memory. Running
-multiple worker processes without shared routing state is not supported. Server
-restart loses stored job views; neither reconnect nor restart replays a job.
+thread. Run one Uvicorn process: active connection routing is in memory. Running
+multiple worker processes without shared routing state is not supported.
+SQLite preserves scoped job views, replay IDs, layouts, action templates,
+paired phones, and validated programs. Restart marks unfinished jobs
+`INTERRUPTED / BACKEND_RESTART`; neither reconnect nor restart replays a job.
 
 Deployment uses WSS and preserves certificate verification. Configure the
 existing TLS terminator/reverse proxy to pass the scheme through Uvicorn's
@@ -119,16 +126,19 @@ passed to a compiler. An absent local grant reports `AUTHORIZATION_REQUIRED`.
 
 ## Control endpoints
 
-All HTTP job endpoints require `Authorization: Bearer <controller-token>`.
-They are backend control interfaces for later integration; no mobile endpoint
-or frontend caller is added. Job submission returns HTTP 202 immediately and
-does not occupy a request while Gemini or native work runs.
+HTTP job endpoints accept the registered controller credential or a paired
+phone's scoped credential through `Authorization: Bearer <token>`. Studio-only
+mutation/pairing endpoints require the controller role. Job submission returns
+HTTP 202 after durable admission and does not occupy a request while Gemini or
+native work runs. Both frontends use the prepared panel action endpoints
+described in [connected panels](connected-panels.md).
 
 | Method / path | Behavior |
 | --- | --- |
 | `WS /ws/agents/{device_id}` | Outbound laptop connection, authenticated with that device's agent token. |
 | `POST /api/v1/agent-jobs/generate` | Structured request -> Gemini -> local validation/repair -> execution request. |
 | `POST /api/v1/agent-jobs/source` | Already generated source through the same local pipeline; no initial provider call. Compile repair can still invoke Gemini. |
+| `GET /api/v1/agent-jobs` | Recent persisted history scoped to the authenticated laptop and owner. |
 | `GET /api/v1/agent-jobs/{job_id}` | Current state/result for the authenticated controller. |
 | `GET /api/v1/agent-jobs/{job_id}/wait?timeout=30` | Async event-driven wait, 0 < timeout <= 180 seconds. Wait timeout is HTTP 504 and leaves the job running. |
 | `POST /api/v1/agent-jobs/{job_id}/cancel` | Cancel generation/repair and request local cleanup. `cancellation_confirmed` becomes true only after the agent reports completed cleanup. |
@@ -172,12 +182,13 @@ Errors: 401 invalid credentials, 403 wrong device scope, 404 inaccessible/missin
 job, 409 duplicate ID, 422 malformed request/target, 429 active job capacity,
 503 offline device/service capacity, and 504 wait timeout. Submission to an
 offline device makes no provider call. Duplicate IDs never regenerate source.
-Retain at most 256 job views (evict oldest records whose cleanup has finished), and reject new work
-after the bounded 4096-ID replay ledger fills. IDs are never evicted from that
-ledger during a server process's lifetime. Its bounded ownership metadata lets
-late results for evicted jobs be discarded without disrupting another job.
-Cleanup in progress still counts toward active job capacity. Restart/local authorization recovery
-must not reissue a previously consumed job grant.
+At most 256 active/recent views remain in memory, evicting oldest records whose
+cleanup has finished. Production's SQLite admission ledger rejects duplicate
+IDs across restarts; the memory ownership cache stays bounded to 4096 IDs and
+scoped database lookup handles late evicted results. Store-free test runtimes
+reject new IDs once their lifetime 4096-ID ledger fills. Cleanup and pending
+database admissions count toward active capacity. Restart/local authorization
+recovery must not reissue a previously consumed job grant.
 
 ## Versioned WebSocket protocol
 
@@ -275,10 +286,12 @@ uv run --locked coverage run -m unittest discover -s tests
 uv run --locked coverage report -m
 ```
 
-Coverage targets the new `app.agent_runtime` and `app.routes.agent_jobs` modules,
-with a 95% statement/branch gate. Existing mobile/Cloudflare modules are outside
-this coverage target. From `agent/`, run the existing same commands; its entire
-Python package keeps the 99% gate. No coverage exclusions are added.
+Coverage targets `app.agent_runtime`, job/Studio/socket/panel routes, panel
+models, and `app.db`, with a 95% statement/branch gate. Existing Cloudflare and
+legacy admin/agent modules are outside this target. From `agent/`, run the same
+commands; its entire Python package keeps the 99% gate. No coverage exclusions
+are added. Frontend builds, transport/editor unit tests, and a production browser
+test are documented in [connected panels](connected-panels.md#verification).
 
 Backend tests establish real loopback Uvicorn/WebSocket/HTTP connections and use
 the actual agent transport, `ValidationService`, source contract, preflight,
@@ -304,11 +317,13 @@ Verified in this Linux cloud environment with the locked dependencies:
 | Suite | Tests | Passed | Skipped | Combined statement/branch coverage |
 | --- | ---: | ---: | ---: | ---: |
 | Entire agent Python package | 210 | 209 | 1 native platform SDK check | 99.84% |
-| New backend job pipeline | 55 | 54 | 1 optional live Gemini test | 96.47% |
+| Backend jobs, database, connected panels | 86 | 85 | 1 optional live Gemini test | 97.10% |
+| Frontend editor/shared client | 26 | 26 | 0 | Not measured |
+| Production Studio + PWA browser workflow | 1 | 1 | 0 | Not measured |
 
 The measured eight-job run used two authenticated devices belonging to different
-owners. It finished in 319.614 ms; median per-job latency was 260.507 ms and
-maximum latency was 277.176 ms. Each device reached four simultaneous compile
+owners. It finished in 427.044 ms; median per-job latency was 342.459 ms and
+maximum latency was 378.876 ms. Each device reached four simultaneous compile
 workers, and the mocked Gemini service received exactly eight initial generation
 requests. The trusted fixture binaries were compiled and executed locally.
 These values are a single coverage-instrumented loopback run, not a performance
@@ -322,7 +337,8 @@ were absent from the standalone image. This cloud's restricted container network
 required a temporary Compose/build override using its existing proxy DNS and a
 read-only public CA bundle; certificate verification remained enabled. That
 override lives outside the checkout and is reproduced by the saved environment
-setup draft. Repository Cloudflare and frontend configuration were unchanged.
+setup draft. Repository Cloudflare configuration was unchanged; both frontend
+applications now connect through the documented shared client.
 
 The live provider test is opt-in and performs generation/schema validation only:
 

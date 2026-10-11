@@ -1,79 +1,40 @@
-import subprocess
-import sys
-from fastapi import APIRouter, Depends, HTTPException, Security, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
-
-from app.db import (
-    get_all_scripts,
-    get_script_by_id,
-    register_device,
-    validate_device_token,
-    verify_and_consume_code,
-)
+"""Compatibility aliases for the same scoped panel and laptop pipeline."""
+from fastapi import APIRouter, HTTPException
+from pydantic import Field
+from app.agent_runtime.models import StrictModel
+from app.panels import PairRequest, DispatchRequest
+from app.routes.agent_jobs import CONTROLLER, SERVICE
+from app.routes.studio import pair, submit
 
 router = APIRouter(prefix="/api/v1/panels", tags=["Panels Mobile"])
 
-security = HTTPBearer()
 
-class PairExchangeRequest(BaseModel):
-    pairing_code: str
-    device_name: str = "Mobile Phone"
+@router.get("/session")
+async def session(identity: CONTROLLER, service: SERVICE):
+    connection = service.hub.connections.get(identity.device_id)
+    return {"device_id": identity.device_id, "online": bool(connection and not connection.closed),
+            "target": connection.hello.model_dump() if connection and not connection.closed else None}
 
-def verify_device_token(credentials: HTTPAuthorizationCredentials = Security(security)):
-    device_info = validate_device_token(credentials.credentials)
-    if not device_info:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized: Token invalid or revoked.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return device_info
+
+class PairExchangeRequest(StrictModel):
+    pairing_code: str = Field(min_length=1, max_length=32)
+    device_name: str = Field(default="Mobile Phone", min_length=1, max_length=80)
+
 
 @router.post("/pair")
-def pair_device(payload: PairExchangeRequest):
-    if not verify_and_consume_code(payload.pairing_code):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired pairing code.",
-        )
-    device_data = register_device(payload.device_name)
-    return {"status": "paired", **device_data}
+async def pair_device(payload: PairExchangeRequest, service: SERVICE):
+    result = await pair(PairRequest(code=payload.pairing_code, name=payload.device_name), service)
+    return {"status": "paired", "device_id": result["deviceId"], **result}
+
 
 @router.get("/widgets")
-def get_active_widgets(current_device: dict = Depends(verify_device_token)):
-    scripts = get_all_scripts()
-    widgets = [
-        {"script_id": s["id"], "name": s["name"], "widget": s["widget"]}
-        for s in scripts
-    ]
-    return {"device": current_device["name"], "widgets": widgets}
+async def get_active_widgets(identity: CONTROLLER, service: SERVICE):
+    document = await service.store.layout(identity)
+    return {"device": identity.device_id, "widgets": document["layout"]["widgets"], **document}
 
-@router.post("/run/{script_id}")
-def execute_script(
-    script_id: str,
-    payload: dict = None,
-    current_device: dict = Depends(verify_device_token),
-):
-    script = get_script_by_id(script_id)
-    if not script:
-        raise HTTPException(status_code=404, detail="Script not found")
 
-    try:
-        process = subprocess.run(
-            [sys.executable, "-c", script["code"]],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return {
-            "status": "success",
-            "triggered_by": current_device["name"],
-            "returncode": process.returncode,
-            "stdout": process.stdout.strip(),
-            "stderr": process.stderr.strip(),
-        }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Script execution timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Execution error: {str(e)}")
+@router.post("/run/{script_id}", status_code=202)
+async def execute_script(script_id: str, payload: DispatchRequest, identity: CONTROLLER, service: SERVICE):
+    if script_id != payload.widget_id:
+        raise HTTPException(422, "WIDGET_MISMATCH")
+    return await submit(payload, identity, service)

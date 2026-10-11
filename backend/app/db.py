@@ -2,19 +2,22 @@ import hashlib
 import sqlite3
 import secrets
 import time
+import os
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional, List, Dict
 
 # Fix C: Absolute DB path relative to app/ directory
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "app.db"
+DB_PATH = Path(os.getenv("JANUS_DB_PATH", str(BASE_DIR / "app.db")))
 
 # Fix A: Context manager that guarantees conn.close()
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
     finally:
@@ -56,6 +59,44 @@ def init_db():
                 default_val TEXT
             )
         """)
+        # Additive migrations: retain existing phone pairing and script records.
+        cursor.executescript("""
+            CREATE TABLE IF NOT EXISTS agent_devices (
+                device_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+                name TEXT NOT NULL, agent_hash BLOB UNIQUE NOT NULL,
+                controller_hash BLOB UNIQUE NOT NULL, created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS panel_layouts (
+                device_id TEXT PRIMARY KEY REFERENCES agent_devices(device_id),
+                layout_json TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS panel_actions (
+                device_id TEXT NOT NULL REFERENCES agent_devices(device_id),
+                action_id TEXT NOT NULL, request_json TEXT NOT NULL,
+                PRIMARY KEY(device_id, action_id)
+            );
+            CREATE TABLE IF NOT EXISTS panel_pairing (
+                code TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES agent_devices(device_id),
+                expires_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS panel_clients (
+                phone_id TEXT PRIMARY KEY REFERENCES devices(device_id) ON DELETE CASCADE,
+                device_id TEXT NOT NULL REFERENCES agent_devices(device_id)
+            );
+            CREATE TABLE IF NOT EXISTS agent_jobs (
+                job_id TEXT PRIMARY KEY, device_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL, request_json TEXT NOT NULL,
+                view_json TEXT NOT NULL, terminal INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS agent_jobs_scope ON agent_jobs(device_id, owner_id, created_at);
+            CREATE TABLE IF NOT EXISTS generated_programs (
+                id TEXT PRIMARY KEY, device_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+                scope_key TEXT NOT NULL, request_json TEXT NOT NULL,
+                program_json TEXT NOT NULL, created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS programs_scope ON generated_programs(device_id, owner_id, scope_key, created_at);
+        """)
         conn.commit()
 
 # --- PAIRING CODE LOGIC ---
@@ -85,17 +126,10 @@ def verify_and_consume_code(code: str) -> bool:
     
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT expires_at FROM pairing_codes WHERE code = ?", (code,))
+        cursor.execute("DELETE FROM pairing_codes WHERE code = ? RETURNING expires_at", (code,))
         row = cursor.fetchone()
-        
-        if not row:
-            return False
-        
-        # Immediately delete within the same database transaction regardless of whether expired or valid
-        cursor.execute("DELETE FROM pairing_codes WHERE code = ?", (code,))
         conn.commit()
-        
-        return now < row["expires_at"]
+        return row is not None and now < row["expires_at"]
 
 # --- DEVICE MANAGEMENT ---
 

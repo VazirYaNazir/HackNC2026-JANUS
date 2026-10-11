@@ -1,0 +1,102 @@
+import { parseServerMessage, type GenerationRequest, type JobView, type Layout, type PairResponse, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
+
+export interface Connection { host: string; token: string }
+export interface PanelDocument { layout: Layout; revision: number }
+export interface Session { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
+export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
+export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
+
+export function backendHost(value: string): string {
+  const url = new URL(value);
+  if (url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Enter the backend address without paths or credentials.');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error('Remote backends require HTTPS.');
+  return url.origin;
+}
+
+export class PanelClient {
+  readonly host: string;
+  readonly token: string;
+  constructor(connection: Connection) {
+    this.host = backendHost(connection.host);
+    this.token = connection.token;
+  }
+
+  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Invalid API path');
+    const url = new URL(path, this.host);
+    if (url.origin !== this.host) throw new Error('Invalid API path');
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${this.token}`);
+    if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+    const response = await fetch(url, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30000) });
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
+      try { const body = await response.json(); if (typeof body.detail === 'string') detail = body.detail; } catch { /* no JSON response */ }
+      throw new Error(detail);
+    }
+    return response.json() as Promise<T>;
+  }
+
+  layout(signal?: AbortSignal) { return this.request<PanelDocument>('/api/layout', { signal }); }
+  history(signal?: AbortSignal) { return this.request<{ jobs: JobView[] }>('/api/v1/agent-jobs', { signal }); }
+  session(signal?: AbortSignal) { return this.request<Session>('/api/v1/panels/session', { signal }); }
+  save(layout: Layout, revision: number) { return this.request<PanelDocument>('/api/v1/studio/layout', { method: 'PUT', body: JSON.stringify({ layout, revision }) }); }
+  configure(action: string, request: GenerationRequest) { return this.request(`/api/v1/studio/actions/${encodeURIComponent(action)}`, { method: 'PUT', body: JSON.stringify(request) }); }
+  pairing() { return this.request<{ code: string; expires_in_seconds: number }>('/api/v1/studio/pairing', { method: 'POST' }); }
+  prepare(payload: Dispatch, signal?: AbortSignal) { return this.request<Prepared>('/api/v1/panel-actions/prepare', { method: 'POST', body: JSON.stringify(payload), signal }); }
+  dispatch(payload: Dispatch) { return this.request<JobView>('/api/v1/panel-actions/dispatch', { method: 'POST', body: JSON.stringify(payload) }); }
+  cancel(jobId: string) { return this.request<JobView>(`/api/v1/agent-jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }); }
+
+  subscribe(receive: (message: ServerMessage) => void, status: (value: string) => void): () => void {
+    let socket: WebSocket | undefined;
+    let stopped = false, retry = 500;
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let lastPong = Date.now();
+    const open = () => {
+      const url = new URL('/ws', this.host);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      status('connecting');
+      socket = new WebSocket(url);
+      socket.onopen = () => socket?.send(JSON.stringify({ type: 'auth', token: this.token }));
+      socket.onmessage = ({ data }) => {
+        if (typeof data !== 'string') return;
+        const message = parseServerMessage(data);
+        if (!message) return;
+        if (message.type === 'auth_ok') {
+          retry = 500;
+          lastPong = Date.now();
+          status('connected');
+          heartbeat = setInterval(() => {
+            if (Date.now() - lastPong > 45000) socket?.close();
+            else if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'ping' }));
+          }, 15000);
+        } else if (message.type === 'pong') lastPong = Date.now();
+        receive(message);
+      };
+      socket.onerror = () => socket?.close();
+      socket.onclose = ({ code }) => {
+        clearInterval(heartbeat);
+        if (stopped) return;
+        if (code === 4003 || code === 1008) { status('unauthorized'); return; }
+        status('disconnected');
+        reconnect = setTimeout(open, retry * (.5 + Math.random() / 2));
+        retry = Math.min(30000, retry * 2);
+      };
+    };
+    open();
+    return () => { stopped = true; clearTimeout(reconnect); clearInterval(heartbeat); socket?.close(); };
+  }
+}
+
+export async function pairBackend(host: string, code: string, name = 'Mobile phone'): Promise<PairResponse> {
+  const response = await fetch(new URL('/api/pair', backendHost(host)), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }), signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error('Pairing code is invalid or expired.');
+  const result = await response.json() as PairResponse;
+  if (typeof result.token !== 'string' || typeof result.agentDeviceId !== 'string' || typeof result.pcName !== 'string') throw new Error('Invalid pairing response.');
+  return result;
+}
+
+const ACTIVE = new Set(['QUEUED', 'GENERATING', 'VALIDATING', 'REPAIRING', 'EXECUTING']);
+export function activeJob(job: JobView) { return ACTIVE.has(job.state); }
+export function jobText(job: JobView) { return job.result?.stdout?.trim() || job.reason || job.state; }

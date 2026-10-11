@@ -26,12 +26,11 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
   const longPressed = useRef(false);
 
   // Ping each saved PC so its dot shows whether it is reachable.
-  const hosts = panels.map((p) => `${p.id}|${p.host}`).join(" ");
+  const hosts = JSON.stringify(panels.map(({ id, host, token }) => ({ id, host, token })));
   useEffect(() => {
     let cancelled = false;
-    for (const entry of hosts ? hosts.split(" ") : []) {
-      const [id, host] = entry.split("|");
-      void checkHost(host).then((ok) => {
+    for (const { id, host, token } of JSON.parse(hosts) as Pick<SavedPanel, "id" | "host" | "token">[]) {
+      void checkHost(host, token).then((ok) => {
         if (!cancelled) setStatus((prev) => ({ ...prev, [id]: ok ? "online" : "offline" }));
       });
     }

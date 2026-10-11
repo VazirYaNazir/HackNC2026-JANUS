@@ -70,6 +70,7 @@ class ConnectionHub:
         self.lock = asyncio.Lock()
         self.on_event: Callable[[AgentConnection, Envelope], Awaitable[None]] | None = None
         self.on_disconnect: Callable[[AgentConnection], Awaitable[None]] | None = None
+        self.on_presence = None
         self.tasks: set[asyncio.Task] = set()
 
     def get(self, device_id: str) -> AgentConnection:
@@ -101,6 +102,8 @@ class ConnectionHub:
                     raise PipelineError("DEVICE_ALREADY_CONNECTED")
                 self.connections[device_id] = connection
             await connection.send("connection_ready", None, "CONNECTED", {"heartbeat_interval": self.settings.heartbeat_interval})
+            if self.on_presence is not None:
+                self.on_presence(connection, True)
             tasks = [asyncio.create_task(self._read(connection)), asyncio.create_task(connection.heartbeat())]
             self.tasks.update(tasks)
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -120,6 +123,8 @@ class ConnectionHub:
                 async with self.lock:
                     if self.connections.get(device_id) is connection:
                         self.connections.pop(device_id)
+                        if self.on_presence is not None:
+                            self.on_presence(connection, False)
                 if self.on_disconnect is not None:
                     await self.on_disconnect(connection)
             await self._close_socket(websocket, 1000)
