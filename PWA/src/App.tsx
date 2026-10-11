@@ -6,11 +6,14 @@ import { touchPanel } from "./lib/panels";
 import { mockData, mockLayout, mockValues } from "./lib/mockLayout";
 import "./ui.css";
 
+// The widget gallery is a dev tool: reachable only by URL (/?gallery) on the local dev server, with no link
+// to it in the app. In a production build `Gallery` is null and the import is dropped from the bundle.
+const Gallery = import.meta.env.DEV ? lazy(() => import("./screens/Gallery")) : null;
 const isGallery = () =>
-  new URLSearchParams(window.location.search).has("gallery") || window.location.pathname.endsWith("/gallery");
+  Gallery !== null &&
+  (new URLSearchParams(window.location.search).has("gallery") || window.location.pathname.endsWith("/gallery"));
 
-// Loaded on demand: the QR scanner is the heaviest dependency, and the gallery is a dev tool.
-const Gallery = lazy(() => import("./screens/Gallery"));
+// Loaded on demand: the QR scanner is the heaviest dependency.
 const ScanScreen = lazy(() => import("./screens/ScanScreen"));
 
 type Screen = { name: "home" } | { name: "scan" } | { name: "panel"; panel: SavedPanel };
@@ -28,14 +31,8 @@ export default function App() {
 
   return (
     <>
-      {import.meta.env.DEV && (
-        <nav className="app-nav">
-          <a href="/" aria-current={gallery ? undefined : "page"}>App</a>
-          <a href="/?gallery" aria-current={gallery ? "page" : undefined}>Gallery</a>
-        </nav>
-      )}
       <Suspense fallback={null}>
-      {gallery ? (
+      {gallery && Gallery ? (
         <Gallery />
       ) : screen.name === "scan" ? (
         <ScanScreen onDone={home} />

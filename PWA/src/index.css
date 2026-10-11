@@ -14,15 +14,3 @@ html, body, #root {
   color-scheme: dark;
 }
 
-.app-nav { display: flex; justify-content: center; gap: 8px; padding: 8px 18px 0; }
-.app-nav a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 16px;
-  border-radius: var(--radius-small);
-  color: var(--text-muted);
-  font-size: 14px;
-  text-decoration: none;
-}
-.app-nav a[aria-current="page"] { color: var(--amber); box-shadow: var(--neu-inset-sm); }
