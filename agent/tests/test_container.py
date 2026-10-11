@@ -64,6 +64,41 @@ class BoundaryFixtures:
 
 
 class ClientConfigurationTests(BoundaryFixtures, unittest.TestCase):
+    def test_private_config_discovers_mac_bundled_homebrew_and_user_plugins_without_auth(self):
+        existing = {"/user/.docker/cli-plugins", "/Applications/Docker.app/Contents/Resources/cli-plugins", "/opt/homebrew/lib/docker/cli-plugins"}
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "private", "HOME": "/user"}, clear=True), \
+             patch("agent.container.Path.home", return_value=Path("/user")), \
+             patch("agent.container.platform.system", return_value="Darwin"), \
+             patch("agent.container.Path.is_dir", lambda path: str(path) in existing):
+            boundary = self.boundary(False)
+            config = json.loads((Path(boundary._config.name) / "config.json").read_text())
+            self.assertEqual(config, {"cliPluginsExtraDirs": ["/user/.docker/cli-plugins", "/Applications/Docker.app/Contents/Resources/cli-plugins", "/opt/homebrew/lib/docker/cli-plugins"]})
+            self.assertNotIn("private", json.dumps(config))
+            self.assertNotIn("GEMINI_API_KEY", container.client_environment())
+
+    def test_windows_plugin_paths_respect_original_config_but_never_copy_credentials(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "original"
+            (original / "cli-plugins").mkdir(parents=True)
+            (original / "config.json").write_text('{"auths":{"registry":"private"},"credsStore":"desktop","currentContext":"remote"}')
+            program_files = Path(folder) / "apps"
+            bundled = program_files / "Docker" / "Docker" / "resources" / "cli-plugins"
+            bundled.mkdir(parents=True)
+            with patch.dict(os.environ, {"DOCKER_CONFIG": str(original), "ProgramFiles": str(program_files)}, clear=True), \
+                 patch("agent.container.platform.system", return_value="Windows"):
+                boundary = self.boundary(False)
+                config = json.loads((Path(boundary._config.name) / "config.json").read_text())
+                self.assertEqual(config, {"cliPluginsExtraDirs": [str(original / "cli-plugins"), str(bundled)]})
+                self.assertNotEqual(Path(boundary._config.name), original)
+                self.assertNotIn("DOCKER_CONFIG", container.client_environment())
+                self.assertEqual(set(config), {"cliPluginsExtraDirs"})
+
+    def test_missing_plugin_directories_produce_only_empty_discovery_config(self):
+        with patch.dict(os.environ, {}, clear=True), patch("agent.container.platform.system", return_value="Linux"), \
+             patch("agent.container.Path.home", return_value=Path("/missing")), patch("agent.container.Path.is_dir", return_value=False):
+            boundary = self.boundary(False)
+            self.assertEqual(json.loads((Path(boundary._config.name) / "config.json").read_text()), {"cliPluginsExtraDirs": []})
+
     def test_trusted_creation_allowance_is_separate_from_guest_limits(self):
         boundary = self.boundary()
         self.assertEqual(boundary.operation_timeout(ResourceLimits(), "compile"), 50)

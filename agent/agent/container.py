@@ -51,6 +51,20 @@ def client_environment(*, provision=False):
     return {name: value for name in names if (value := os.environ.get(name))}
 
 
+def client_plugin_directories():
+    """Discover locally installed CLI plugins without importing Docker secrets."""
+    configured = os.environ.get("DOCKER_CONFIG")
+    user_config = Path(configured).expanduser() if configured else Path.home() / ".docker"
+    candidates = [user_config / "cli-plugins"]
+    system = platform.system()
+    if system == "Darwin":
+        candidates.append(Path("/Applications/Docker.app/Contents/Resources/cli-plugins"))
+    elif system == "Windows":
+        candidates.append(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Docker" / "Docker" / "resources" / "cli-plugins")
+    candidates.append(Path("/opt/homebrew/lib/docker/cli-plugins"))
+    return list(dict.fromkeys(str(path) for path in candidates if path.is_dir()))
+
+
 def provisioning_options():
     """Proxy and public CA configuration is scoped to trusted image building."""
     arguments = []
@@ -119,6 +133,11 @@ class ContainerBoundary(IsolationBoundary):
         self.image = None
         self.endpoint = None
         self._config = tempfile.TemporaryDirectory(prefix="janus-docker-client-")
+        # Desktop often keeps Buildx outside Docker's system plugin search.
+        # Preserve only local plugin discovery, never auths, credential helpers,
+        # contexts, or arbitrary settings from the user's Docker config file.
+        (Path(self._config.name) / "config.json").write_text(
+            json.dumps({"cliPluginsExtraDirs": client_plugin_directories()}), encoding="utf-8")
         self.build_guarantees = self.run_guarantees = frozenset()
         if self.docker:
             self._probe()
