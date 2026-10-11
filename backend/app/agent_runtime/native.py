@@ -81,6 +81,8 @@ class NativeManager:
     def __init__(self, hub, events):
         self.hub, self.events = hub, events
         self.pending, self.latest = {}, {}
+        # Optional observer (app.tiger.TigerSink); every call is exception-safe and non-blocking.
+        self.sink = None
 
     async def receive(self, connection, frame):
         if frame.job_id is not None or frame.state != "CONNECTED":
@@ -98,6 +100,8 @@ class NativeManager:
                 return
         values = readings(event)
         self.latest.setdefault(connection.identity, {}).update(values)
+        if self.sink is not None:
+            self.sink.readings(connection.identity.device_id, values)
         for source, value in values.items():
             self.events.publish(connection.identity, {"type": "data", "source": source, "value": value})
 
@@ -126,7 +130,23 @@ class NativeManager:
             raise PipelineError("NATIVE_COMMAND_CAPACITY", 429)
         return connection
 
-    async def command(self, identity, action, value):
+    def _record(self, identity, source, action, args, outcome, request_id):
+        if self.sink is not None:
+            self.sink.action(identity.device_id, source, action, args, outcome, request_id)
+
+    async def command(self, identity, action, value, *, source="widget", request_id=None):
+        """Run a fixed native control. `source` ("widget" or "imessage") and `request_id` only label the activity log."""
+        args = {} if action in ("native_left_click", "native_right_click") else {"value": value} if action in ("native_volume", "native_scroll") else {}
+        try:
+            result = await self._command(identity, action, value)
+        except PipelineError as error:
+            if action in NATIVE_ACTIONS:
+                self._record(identity, source, action, args, f"error:{error.reason}", request_id)
+            raise
+        self._record(identity, source, action, args, "ok", request_id)
+        return result
+
+    async def _command(self, identity, action, value):
         if action not in NATIVE_ACTIONS:
             raise PipelineError("NATIVE_ACTION_NOT_FOUND", 404)
         target = "volume" if action == "native_volume" else "mouse"
@@ -139,9 +159,15 @@ class NativeManager:
             return await self._dispatch(connection, target, "button", {"button": button, "state": "up"})
         return await self._dispatch(connection, target, kind, args)
 
-    async def lock(self, identity):
+    async def lock(self, identity, *, source="widget", request_id=None):
         """Lock the laptop's session. Deliberately not a panel widget action: only the messaging service calls it."""
-        return await self._dispatch(self._connection_for(identity, "mouse"), "mouse", "lock", {})
+        try:
+            result = await self._dispatch(self._connection_for(identity, "mouse"), "mouse", "lock", {})
+        except PipelineError as error:
+            self._record(identity, source, "lock", {}, f"error:{error.reason}", request_id)
+            raise
+        self._record(identity, source, "lock", {}, "ok", request_id)
+        return result
 
     def disconnected(self, connection):
         self.latest.pop(connection.identity, None)

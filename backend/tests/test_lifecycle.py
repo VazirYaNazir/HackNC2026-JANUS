@@ -21,12 +21,23 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(generation_available(SimpleNamespace(client=object())))
         self.assertTrue(generation_available(SimpleNamespace()))  # custom providers without a client attribute
 
+    async def test_tiger_data_is_started_and_stopped_with_the_app(self):
+        runtime = SimpleNamespace(close=AsyncMock())
+        async def stats():
+            await asyncio.Future()
+        target = SimpleNamespace(state=SimpleNamespace())
+        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": ""}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server", return_value=MagicMock()), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", AsyncMock()), patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", side_effect=stats), patch("app.main.start_tiger", AsyncMock()) as start, patch("app.main.stop_tiger", AsyncMock()) as stop:
+            async with lifespan(target):
+                start.assert_awaited_once_with(target, runtime)
+                stop.assert_not_awaited()
+        stop.assert_awaited_once_with(target)
+
     async def test_tunnel_stays_off_unless_requested(self):
         runtime = SimpleNamespace(close=AsyncMock())
         async def stats():
             await asyncio.Future()
         target = SimpleNamespace(state=SimpleNamespace())
-        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": ""}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server", return_value=MagicMock()), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", side_effect=stats):
+        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": ""}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server", return_value=MagicMock()), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", side_effect=stats), patch("app.main.start_tiger", AsyncMock()), patch("app.main.stop_tiger", AsyncMock()):
             async with lifespan(target):
                 pass
         tunnel.assert_not_awaited()
@@ -37,7 +48,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def stats():
             await asyncio.Future()
         target = SimpleNamespace(state=SimpleNamespace())
-        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": "1"}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)) as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats):
+        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": "1"}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)) as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats), patch("app.main.start_tiger", AsyncMock()), patch("app.main.stop_tiger", AsyncMock()):
             with self.assertRaisesRegex(RuntimeError, "fixture startup caller failure"):
                 async with lifespan(target):
                     self.assertIs(target.state.agent_runtime, runtime)

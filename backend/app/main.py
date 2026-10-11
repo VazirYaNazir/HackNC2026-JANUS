@@ -11,10 +11,12 @@ from app.routes.agent import router as agent_router
 from app.agent_runtime.runtime import AgentRuntime
 from app.routes.agent_jobs import router as agent_jobs_router
 from app.routes.studio import router as studio_router
+from app.routes.history import router as history_router
 from app.routes.messaging import router as messaging_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
 from app.routes.ws import broadcast_system_stats_loop, ws_router
+from app.tiger.lifecycle import start_tiger, stop_tiger
 from app.tunnel import start_tunnel, stop_tunnel
 
 logger = logging.getLogger("uvicorn.error")
@@ -53,6 +55,8 @@ async def lifespan(app: FastAPI):
     # This service stays on the public server's loop; the admin server has its
     # own thread/loop and does not share asyncio connection or job objects.
     app.state.agent_runtime = await AgentRuntime.persisted()
+    # Optional time-series store; a no-op unless TIGER_DATABASE_URL is set.
+    await start_tiger(app, app.state.agent_runtime)
 
     # Launch Admin API strictly bound to localhost:8001
     admin_host = os.getenv("ADMIN_HOST", "127.0.0.1")
@@ -88,6 +92,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+        await stop_tiger(app)
         await app.state.agent_runtime.close()
         await stop_tunnel()
         if admin_server is not None:
@@ -110,6 +115,7 @@ app.include_router(agent_router)
 app.include_router(agent_jobs_router)
 app.include_router(studio_router)
 app.include_router(messaging_router)
+app.include_router(history_router)
 app.include_router(ws_router)
 
 
