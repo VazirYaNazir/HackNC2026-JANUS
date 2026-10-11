@@ -1,0 +1,4 @@
+.coverage*
+htmlcov/
+coverage.json
+coverage.xml

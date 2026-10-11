@@ -59,6 +59,28 @@ class MainTests(unittest.TestCase):
         detect.assert_not_called()
         policies.assert_not_called()
 
+    def test_registered_connection_uses_local_grants_workers_and_no_telemetry_builds(self):
+        compiler = CCompiler("clang", "fixture", "Darwin")
+        connection = AsyncMock()
+        with patch.dict("os.environ", {"AGENT_TOKEN": "private-fixture-token", "AGENT_DEVICE_ID": "laptop", "AGENT_BACKEND_URL": "wss://fixture/ws/agents/laptop"}, clear=True), patch("agent.main.detect_compiler", return_value=compiler) as detect, patch("agent.main.build_tools") as build, patch("agent.validation.load_policies", return_value={}) as policies, patch("agent.transport.run_connection", connection):
+            code, stdout, stderr = self.call(["connect", "--validation-policy", "local.json", "--workers", "2"])
+        self.assertEqual(code, 0)
+        connection.assert_awaited_once()
+        options, token, service = connection.call_args.args
+        self.assertEqual(options.device_id, "laptop")
+        self.assertEqual(service.max_parallel, 2)
+        self.assertFalse(service.boundary.can_build())
+        detect.assert_called_once()
+        build.assert_not_called()
+        policies.assert_called_once_with("local.json")
+        self.assertNotIn(token, stdout + stderr)
+
+    def test_registered_connection_missing_token_stops_before_compiler(self):
+        with patch.dict("os.environ", {}, clear=True), patch("agent.main.detect_compiler") as detect, redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            main(["connect", "--url", "wss://fixture/ws/agents/laptop", "--device-id", "laptop"])
+        self.assertEqual(caught.exception.code, 2)
+        detect.assert_not_called()
+
     def test_invalid_stream_options_are_reported_without_starting_build(self):
         for args in (["--url", "ws://remote/ws/agent"], ["--url", "wss://fixture/ws/agent", "--screen-interval", "0"]):
             with self.subTest(args=args), patch("agent.main.build_tools") as build:

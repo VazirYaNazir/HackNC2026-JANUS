@@ -9,6 +9,8 @@ import uvicorn
 
 from app.db import init_db
 from app.routes.agent import router as agent_router
+from app.agent_runtime.runtime import AgentRuntime
+from app.routes.agent_jobs import router as agent_jobs_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
 from app.routes.ws import broadcast_system_stats_loop, ws_router
@@ -47,6 +49,10 @@ admin_server: uvicorn.Server | None = None
 async def lifespan(app: FastAPI):
     global admin_server
 
+    # This service stays on the public server's loop; the admin server has its
+    # own thread/loop and does not share asyncio connection or job objects.
+    app.state.agent_runtime = AgentRuntime.create()
+
     # Initialize SQLite database tables
     init_db()
 
@@ -73,18 +79,19 @@ async def lifespan(app: FastAPI):
     # Launch background system stats broadcaster loop
     stats_task = asyncio.create_task(broadcast_system_stats_loop())
 
-    yield
-
-    stats_task.cancel()
     try:
-        await stats_task
-    except asyncio.CancelledError:
-        pass
+        yield
+    finally:
+        stats_task.cancel()
+        try:
+            await stats_task
+        except asyncio.CancelledError:
+            pass
 
-    await stop_tunnel()
-
-    if admin_server is not None:
-        admin_server.should_exit = True
+        await app.state.agent_runtime.close()
+        await stop_tunnel()
+        if admin_server is not None:
+            admin_server.should_exit = True
 
 
 app = FastAPI(title="HackNC Public Backend (Mobile / Tunnel)", lifespan=lifespan)
@@ -100,6 +107,7 @@ app.add_middleware(
 # Only mount Panels, Agent, and Mobile WebSocket routes on the public app
 app.include_router(panels_router)
 app.include_router(agent_router)
+app.include_router(agent_jobs_router)
 app.include_router(ws_router)
 
 
