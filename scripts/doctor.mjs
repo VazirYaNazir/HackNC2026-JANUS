@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ENV_FILE, isJanusProcess, isWindows, listenerPid, makeFlags, portInUse, processName, readDevices, readEnvFile, which } from './lib/common.mjs';
+import { ENV_FILE, ROOT, capture, isJanusProcess, isWindows, listenerPid, makeFlags, portInUse, processName, readDevices, readEnvFile, which } from './lib/common.mjs';
 import { findCloudflared } from './lib/cloudflared.mjs';
 
 const MIN_NODE = [20, 19];
@@ -62,6 +62,33 @@ export function aiChecks() {
   return results;
 }
 
+/** Turns the JSON that `python -m app.tiger.check` prints into doctor results. Tiger is optional, so these only ever warn. */
+export function interpretTigerCheck(output) {
+  let report;
+  try { report = JSON.parse(output.trim().split('\n').pop() ?? ''); } catch {
+    return [{ level: 'warn', name: 'Tiger Data', message: 'Could not check Tiger Data (the check produced no readable result).', fix: 'Run `uv run --locked python -m app.tiger.check` in backend/ to see why.' }];
+  }
+  if (!report.configured) return [];
+  if (!report.reachable) {
+    return [{ level: 'warn', name: 'Tiger Data · connection', message: `TIGER_DATABASE_URL is set but the database is not reachable (${report.error ?? 'unknown error'}). Samples are dropped until it is, and history features report "unavailable".`, fix: 'Check the URL, that the service is running, and your network (IPv4 is preferred automatically).' }];
+  }
+  if (!report.schema) {
+    return [{ level: 'warn', name: 'Tiger Data · schema', message: `Connected to Tiger Data, but the schema is incomplete (missing: ${(report.missing ?? []).join(', ') || 'unknown'}).`, fix: 'Run `npm run setup` (or `uv run --locked python -m app.tiger.migrate` in backend/) to create it.' }];
+  }
+  return [];
+}
+
+/** Only runs when TIGER_DATABASE_URL is set (in the environment or backend/.env); otherwise Tiger Data is simply off. */
+export function tigerChecks(env = readEnvFile()) {
+  const url = (process.env.TIGER_DATABASE_URL || env?.get('TIGER_DATABASE_URL') || '').trim();
+  if (!url) return [];
+  const run = capture('uv', ['run', '--locked', 'python', '-m', 'app.tiger.check'], { cwd: path.join(ROOT, 'backend'), env: { ...process.env, TIGER_DATABASE_URL: url }, timeout: 45_000 });
+  if (run.code !== 0 && !run.stdout.trim()) {
+    return [{ level: 'warn', name: 'Tiger Data', message: 'Could not check Tiger Data (the backend check did not run).', fix: 'Run `npm run setup` so the backend dependencies are installed.' }];
+  }
+  return interpretTigerCheck(run.stdout);
+}
+
 const E164 = /^\+[1-9]\d{6,14}$/;
 
 /** Warnings for `npm start -- --imessage`: the channel does nothing without credentials and an allowlist. */
@@ -82,7 +109,7 @@ export function imessageChecks(env = readEnvFile()) {
   return results;
 }
 
-/** @param {{ tunnel?: boolean, pwa?: boolean, ports?: boolean, beforeSetup?: boolean, ai?: boolean, imessage?: boolean }} needs */
+/** @param {{ tunnel?: boolean, pwa?: boolean, ports?: boolean, beforeSetup?: boolean, ai?: boolean, imessage?: boolean, tiger?: boolean }} needs */
 export async function doctor(needs = {}) {
   const results = [nodeCheck(), uvCheck(), compilerCheck()];
   if (!needs.beforeSetup) results.push(envCheck());
@@ -95,6 +122,7 @@ export async function doctor(needs = {}) {
   }
   if (needs.ai) results.push(...aiChecks());
   if (needs.imessage) results.push(...imessageChecks());
+  if (needs.tiger) results.push(...tigerChecks());
   return results.filter(Boolean);
 }
 
@@ -108,7 +136,7 @@ export function report(results) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const flags = makeFlags();
-  const results = await doctor({ tunnel: flags.has('tunnel'), pwa: flags.has('pwa'), ports: true, ai: true, imessage: flags.has('imessage') });
+  const results = await doctor({ tunnel: flags.has('tunnel'), pwa: flags.has('pwa'), ports: true, ai: true, tiger: true, imessage: flags.has('imessage') });
   const ok = report(results);
   if (ok && results.length === 0) console.log('All checks passed.');
   process.exit(ok ? 0 : 1);

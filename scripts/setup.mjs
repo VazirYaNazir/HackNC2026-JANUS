@@ -24,6 +24,11 @@ export function mergeEnv(existing, example) {
   return { text: `${existing}${separator}\n# Added by npm run setup\n${missing.join('\n')}\n`, added: missing.map((line) => line.split('=')[0]) };
 }
 
+/** The Tiger Data URL from the environment or the .env text; empty means the feature is off. */
+export function tigerUrlFrom(text, env = process.env) {
+  return (env.TIGER_DATABASE_URL || parseEnv(text).get('TIGER_DATABASE_URL') || '').trim();
+}
+
 /** Sets KEY=value on its existing line (the key must already be present). */
 export function setEnvValue(text, key, value) {
   return text.replace(new RegExp(`^${key}=.*$`, 'm'), () => `${key}=${value}`);
@@ -113,6 +118,13 @@ async function main() {
       throw new Error(`${error.message}
 If JANUS or its agent is running, stop it first (Windows locks the running native tools), then re-run \`npm run setup\`.`);
     });
+  }
+  // Optional time-series store: only touched when TIGER_DATABASE_URL is set, and a failure never fails setup.
+  const tiger = tigerUrlFrom(filled.text);
+  if (tiger) {
+    console.log('Creating the Tiger Data schema (idempotent)…');
+    await run('uv', ['run', '--locked', 'python', '-m', 'app.tiger.migrate'], { cwd: path.join(ROOT, 'backend'), env: { ...process.env, TIGER_DATABASE_URL: tiger } })
+      .catch(() => console.warn('! The Tiger Data schema was not applied (see above). JANUS works without it; fix the URL and re-run `npm run setup`.'));
   }
   report(aiChecks());
   console.log('\nSetup complete. Start everything with:  npm start');
