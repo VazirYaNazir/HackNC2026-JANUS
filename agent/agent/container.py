@@ -187,7 +187,11 @@ class ContainerBoundary(IsolationBoundary):
                 self.reason = "DOCKER_LINUX_ENGINE_REQUIRED"
                 return
             if (str(engine.get("CgroupVersion")) != "2"
-                    or not all(engine.get(key) is True for key in ("MemoryLimit", "SwapLimit", "PidsLimit", "CpuCfsPeriod", "CpuCfsQuota"))
+                    or not all(engine.get(key) is True for key in ("MemoryLimit", "SwapLimit", "PidsLimit"))
+                    # New Docker API versions omit these legacy CPU summary
+                    # fields. Actual CPU enforcement remains mandatory in the
+                    # guest probe's cpu.max/quota/period/burst checks.
+                    or not all(engine.get(key, True) is True for key in ("CpuCfsPeriod", "CpuCfsQuota"))
                     or not any("seccomp" in item for item in engine.get("SecurityOptions", []))):
                 self.reason = "WORKER_ENFORCEMENT_UNAVAILABLE"
                 return

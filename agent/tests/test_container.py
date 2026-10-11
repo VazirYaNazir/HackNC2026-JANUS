@@ -302,6 +302,31 @@ class ReadinessProbeTests(BoundaryFixtures, unittest.TestCase):
                 self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
                 self.assertFalse(any("create" in args for args, _ in calls))
 
+    def test_new_docker_info_without_legacy_cpu_fields_still_requires_real_guest_attestation(self):
+        engine = {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
+                  "SwapLimit": True, "PidsLimit": True, "SecurityOptions": ["seccomp"], "Architecture": "arm64"}
+        boundary, calls = self.probe(engine=engine)
+        self.assertTrue(boundary.available)
+        self.assertTrue(boundary.can_run())
+        self.assertTrue(any("start" in args for args, _ in calls))
+        self.assertIn("rm", calls[-1][0])
+        boundary, calls = self.probe(engine=engine, response={"ready": False, "error": "Verified cgroup v2 resource enforcement is required"})
+        self.assertFalse(boundary.available)
+        self.assertFalse(boundary.can_run())
+        self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
+        self.assertIn("rm", calls[-1][0])
+
+    def test_explicit_legacy_cpu_failure_or_invalid_summary_is_not_ignored(self):
+        engine = {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
+                  "SwapLimit": True, "PidsLimit": True, "SecurityOptions": ["seccomp"], "Architecture": "amd64"}
+        for key in ("CpuCfsPeriod", "CpuCfsQuota"):
+            for value in (False, None, 1, "true"):
+                with self.subTest(key=key, value=value):
+                    boundary, calls = self.probe(engine={**engine, key: value})
+                    self.assertFalse(boundary.can_build())
+                    self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
+                    self.assertFalse(any("create" in args for args, _ in calls))
+
     def test_mutable_tag_wrong_digest_and_invalid_image_ids_cannot_attest_worker(self):
         for metadata in ([{}], [{"Config": {"Labels": {"org.janus.worker.digest": "wrong"}}, "Id": "sha256:" + "a" * 64}],
                          *([{ "Config": {"Labels": {"org.janus.worker.digest": "fixture-digest"}}, "Id": value}] for value in (None, 12, "sha256:short", "prefix:" + "a" * 64))):
