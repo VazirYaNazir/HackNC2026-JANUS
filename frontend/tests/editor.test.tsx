@@ -80,9 +80,9 @@ describe('project import, export and branding', () => {
     act(() => vi.advanceTimersByTime(1000)); expect(revoke).toHaveBeenCalledWith('blob:layout');
   });
 
-  it('renders the supplied Janus logo and renames the project without accepting blank names', () => {
+  it('renders the supplied JANUS logo and renames the project without accepting blank names', () => {
     const name = vi.fn(), action = vi.fn(); render(<TopBar name="Desk" onName={name} onProject={action} connected={false} status="Connect backend" busy={false} onConnect={action} onPair={action} onSave={action} onHistory={action} />);
-    expect(screen.getByRole('img', { name: 'Janus' }).getAttribute('src')).toBe('./janus-logo.svg');
+    expect(screen.getByRole('img', { name: 'JANUS' }).getAttribute('src')).toBe('./janus-logo.svg');
     fireEvent.change(screen.getByLabelText('Project name'), { target: { value: '  Work  ' } }); fireEvent.blur(screen.getByLabelText('Project name')); expect(name).toHaveBeenCalledWith('Work');
     fireEvent.change(screen.getByLabelText('Project name'), { target: { value: '  ' } }); fireEvent.blur(screen.getByLabelText('Project name')); expect((screen.getByLabelText('Project name') as HTMLInputElement).value).toBe('Desk');
     expect(screen.getByRole('button', { name: 'Pair Device' }).hasAttribute('disabled')).toBe(true);

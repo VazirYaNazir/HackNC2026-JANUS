@@ -40,9 +40,9 @@ describe('frontend forms and toolbars', () => {
     vi.useFakeTimers(); const client = new PanelClient({ host: 'http://localhost:8000', token: 'fixture' });
     const pairing = vi.spyOn(client, 'pairing').mockResolvedValue({ code: 'ABCDEF123456', host: 'https://backend.example', expires_in_seconds: 2, pwa_url: 'https://pwa.example' });
     render(<PairingDialog client={client} onClose={() => {}} />); await act(async () => {});
-    expect(screen.getByRole('img', { name: 'Janus pairing QR code' })).toBeTruthy(); expect(screen.getByText('ABCDEF123456')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'JANUS pairing QR code' })).toBeTruthy(); expect(screen.getByText('ABCDEF123456')).toBeTruthy();
     expect((screen.getByLabelText('Pairing link') as HTMLInputElement).value).toContain('https://pwa.example');
-    act(() => vi.advanceTimersByTime(2500)); expect(screen.queryByRole('img', { name: 'Janus pairing QR code' })).toBeNull();
+    act(() => vi.advanceTimersByTime(2500)); expect(screen.queryByRole('img', { name: 'JANUS pairing QR code' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'New code' })); await act(async () => {}); expect(pairing).toHaveBeenCalledTimes(2);
   });
   it('lists every control and display and disables dragging in preview', () => {

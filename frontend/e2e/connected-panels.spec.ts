@@ -20,7 +20,7 @@ test('desktop creates and runs a panel; a paired PWA approves source reuse and r
   const pairing = page.waitForResponse((response) => response.url().endsWith('/api/v1/studio/pairing'))
   await page.getByRole('button', { name: 'Pair Device' }).click()
   const { code } = await (await pairing).json() as { code: string }
-  await expect(page.getByRole('img', { name: 'Janus pairing QR code' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'JANUS pairing QR code' })).toBeVisible()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
 
   const phone = await context.newPage()

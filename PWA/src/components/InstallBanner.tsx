@@ -8,7 +8,7 @@ interface InstallBannerProps {
   prominent?: boolean;
 }
 
-/** Offers to install Janus. Hidden once installed (standalone) or where the browser can't install. */
+/** Offers to install JANUS. Hidden once installed (standalone) or where the browser can't install. */
 export default function InstallBanner({ prominent = false }: InstallBannerProps) {
   const kind = useInstallKind();
   const [dismissed, setDismissed] = useState(isDismissed);
@@ -16,16 +16,16 @@ export default function InstallBanner({ prominent = false }: InstallBannerProps)
   if (!kind || (dismissed && !prominent)) return null;
 
   return (
-    <section className={`install ${prominent ? "install--prominent" : ""}`} aria-label="Install Janus">
+    <section className={`install ${prominent ? "install--prominent" : ""}`} aria-label="Install JANUS">
       <div className="install__body">
-        <h2 className="install__title">Install Janus</h2>
+        <h2 className="install__title">Install JANUS</h2>
         {kind === "ios" ? (
           <p className="install__text">
             Tap <Icon name="share" size={18} className="install__share" aria-label="Share" /> Share, then{" "}
             <strong>Add to Home Screen</strong>.
           </p>
         ) : (
-          <p className="install__text">Add Janus to your home screen to open it like an app.</p>
+          <p className="install__text">Add JANUS to your home screen to open it like an app.</p>
         )}
         {prominent && (
           <p className="install__note">
@@ -36,7 +36,7 @@ export default function InstallBanner({ prominent = false }: InstallBannerProps)
       {kind === "prompt" && (
         <button type="button" className="btn btn--amber install__action" onClick={() => void promptInstall()}>
           <Icon name="download" size={18} />
-          Install Janus
+          Install JANUS
         </button>
       )}
       {!prominent && (

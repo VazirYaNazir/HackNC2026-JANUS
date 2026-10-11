@@ -6,7 +6,7 @@ export function TopBar({ name, connected, status, busy, onConnect, onPair, onSav
   onName: (name: string) => void; onProject: () => void;
 }) {
   return <header className="top-bar studio-glass">
-    <div className="studio-brand"><img className="brand-mark" src="./janus-logo.svg" alt="Janus" /><div><h1>Panel Builder</h1><span>JANUS STUDIO</span></div></div>
+    <div className="studio-brand"><img className="brand-mark" src="./janus-logo.svg" alt="JANUS" /><div><h1>Panel Builder</h1><span>JANUS STUDIO</span></div></div>
     <span className="toolbar-divider" aria-hidden="true" />
     <div className="project-name"><span>PROJECT</span><input aria-label="Project name" key={name} defaultValue={name} maxLength={80} onBlur={event => { const next = event.target.value.trim(); if (next) onName(next); else event.target.value = name; }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /></div>
     <div className="toolbar-spacer" />

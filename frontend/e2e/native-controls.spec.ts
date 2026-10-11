@@ -8,7 +8,7 @@ test('Studio starter, paired phone, native controls and all laptop streams work 
   await page.getByLabel('Laptop controller credential').fill('control-1-' + 'b'.repeat(32));
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByRole('button', { name: /Laptop online · connected/ })).toBeVisible();
-  await expect(page.getByRole('img', { name: 'Janus', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'JANUS', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Project', exact: true }).click();
   await page.getByRole('button', { name: 'Laptop controls starter' }).click();
   await page.getByLabel('Project name').fill('My laptop'); await page.getByLabel('Project name').press('Enter');

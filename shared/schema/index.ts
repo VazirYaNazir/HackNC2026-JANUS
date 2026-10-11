@@ -239,7 +239,7 @@ export function parsePanelDocument(raw: unknown): PanelDocument {
   if (!record(layout)) return fail('layout', 'an object');
   const version = layout.schemaVersion;
   if (version !== LEGACY_SCHEMA_VERSION && version !== SCHEMA_VERSION) {
-    throw new PanelDocumentError(`This panel uses layout version ${String(version)}, which this app can't show. Update Janus.`);
+    throw new PanelDocumentError(`This panel uses layout version ${String(version)}, which this app can't show. Update JANUS.`);
   }
   if (typeof layout.name !== 'string') fail('layout.name', 'a string');
   if (version === SCHEMA_VERSION) {

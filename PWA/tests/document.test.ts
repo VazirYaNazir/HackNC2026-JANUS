@@ -78,7 +78,7 @@ describe("parsePanelDocument", () => {
   it("tells the user to update the app for a layout version it does not know", () => {
     const doc = { revision: 1, layout: { schemaVersion: 3, name: "Future", widgets: [] } };
     expect(() => parsePanelDocument(doc)).toThrow("version 3");
-    expect(() => parsePanelDocument(doc)).toThrow("Update Janus");
+    expect(() => parsePanelDocument(doc)).toThrow("Update JANUS");
   });
 
   it("always starts its message in a way that is safe to show to the user", () => {

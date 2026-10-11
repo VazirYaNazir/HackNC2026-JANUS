@@ -61,7 +61,7 @@ export default function HomeScreen({ onOpen, onScan, onManual, onRepair }: HomeS
 
   return (
     <main className="home">
-      <h1 className="home__title"><img src="/janus-logo.svg" alt="" width="56" height="56" />Janus</h1>
+      <h1 className="home__title"><img src="/janus-logo.svg" alt="" width="56" height="56" />JANUS</h1>
 
       {panels.length === 0 ? (
         <>

@@ -31,7 +31,7 @@ describe('phone panel storage and home screen', () => {
     const p = addPanel(saved)[0], open = vi.fn(), scan = vi.fn(), manual = vi.fn(), repair = vi.fn(); vi.spyOn(connection, 'checkHost').mockResolvedValue(true);
     render(<HomeScreen onOpen={open} onScan={scan} onManual={manual} onRepair={repair} />);
     await waitFor(() => expect(screen.getByRole('img', { name: 'online' })).toBeTruthy());
-    expect(screen.getByRole('heading', { name: 'Janus' }).querySelector('img')?.getAttribute('src')).toBe('/janus-logo.svg');
+    expect(screen.getByRole('heading', { name: 'JANUS' }).querySelector('img')?.getAttribute('src')).toBe('/janus-logo.svg');
     fireEvent.click(screen.getByText('Desk')); expect(open).toHaveBeenCalledWith(p);
     fireEvent.click(screen.getByRole('button', { name: 'Options for Desk' })); fireEvent.click(screen.getByRole('button', { name: 'Rename', exact: true }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Office' } }); fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true })); expect(screen.getByText('Office')).toBeTruthy();
@@ -57,9 +57,9 @@ describe('PWA installation and dialog behavior', () => {
     Object.assign(event, { prompt, userChoice: Promise.resolve({ outcome: 'accepted' }) });
     const hook = renderHook(useInstallKind); expect(hook.result.current).toBeNull();
     act(() => fireEvent(window, event)); expect(event.defaultPrevented).toBe(true); expect(hook.result.current).toBe('prompt');
-    render(<InstallBanner />); expect(screen.getByRole('button', { name: 'Install Janus', exact: true })).toBeTruthy();
+    render(<InstallBanner />); expect(screen.getByRole('button', { name: 'Install JANUS', exact: true })).toBeTruthy();
     await act(async () => { await promptInstall(); await promptInstall(); }); expect(prompt).toHaveBeenCalledTimes(1); expect(hook.result.current).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Install Janus' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Install JANUS' })).toBeNull();
   });
   it('shows iOS guidance and dismisses the regular banner while keeping prominent instructions', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('iPhone'); const view = render(<InstallBanner />);
