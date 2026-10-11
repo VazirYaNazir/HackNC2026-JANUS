@@ -99,10 +99,12 @@ errors. `worker status` retains its compact availability report; `worker prepare
 attempts to prepare the shipped image. Custom adapters without a diagnostic
 method fall back to their availability report.
 
-The worker verifies its own network namespace through `/proc/self/net/dev` and
-requires loopback alone. Docker still uses `--network none`, and generated
-programs cannot create sockets. This avoids relying on a sysfs network view
-that can differ from the process namespace on Docker Desktop.
+The worker verifies its network namespace through the Linux kernel's interface
+query and requires loopback alone. Diagnostics also report whether the
+supplemental `/proc/self/net/dev` view is readable and shows loopback alone;
+that view does not determine readiness. Docker still uses `--network none`,
+and generated programs cannot create sockets. Kernel query failures or extra
+interfaces keep execution blocked.
 
 After changes to `agent/worker/runner.py` or its Dockerfile, run `worker prepare`
 to build the matching image, then fully restart JANUS. `npm start` also prepares

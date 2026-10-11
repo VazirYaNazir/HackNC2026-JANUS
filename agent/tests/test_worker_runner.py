@@ -346,6 +346,42 @@ class RuntimeBoundaryTests(unittest.TestCase):
             self.assert_rejected()
 
 
+@unittest.skipUnless(LINUX, "Linux kernel network namespace inspection")
+class KernelNetworkNamespaceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.runner = load_runner()
+
+    def test_loopback_comes_from_the_kernel_without_proc_or_sysfs_reads(self):
+        with patch.object(self.runner.socket, "if_nameindex", return_value=[(1, "lo")]) as query, \
+                patch.object(Path, "read_text", side_effect=AssertionError("proc must not be used")), \
+                patch.object(Path, "iterdir", side_effect=AssertionError("sysfs must not be used")):
+            self.assertEqual(self.runner._network_interfaces(), {"lo"})
+        query.assert_called_once_with()
+
+    def test_interface_indices_are_validated_but_need_not_be_contiguous(self):
+        with patch.object(self.runner.socket, "if_nameindex", return_value=[(7, "lo")]):
+            self.assertEqual(self.runner._network_interfaces(), {"lo"})
+
+    def test_connected_namespaces_preserve_interfaces_for_runtime_rejection(self):
+        for extra in ("eth0", "docker0", "veth123abc", "enp0s1"):
+            with self.subTest(interface=extra), patch.object(self.runner.socket, "if_nameindex", return_value=[(1, "lo"), (3, extra)]):
+                self.assertEqual(self.runner._network_interfaces(), {"lo", extra})
+
+    def test_malformed_empty_or_duplicate_kernel_evidence_fails_closed(self):
+        cases = (None, [], {}, "lo", [(1,)], [(1, "lo", "extra")], ["lo"],
+                 [(True, "lo")], [(0, "lo")], [(-1, "lo")], [(1.0, "lo")], [("1", "lo")],
+                 [(1, "")], [(1, None)], [(1, 5)],
+                 [(1, "lo"), (1, "eth0")], [(1, "lo"), (2, "lo")])
+        for values in cases:
+            with self.subTest(values=values), patch.object(self.runner.socket, "if_nameindex", return_value=values), self.assertRaises(ValueError):
+                self.runner._network_interfaces()
+
+    def test_kernel_query_failure_cannot_claim_disabled_networking(self):
+        with patch.object(self.runner.socket, "if_nameindex", side_effect=OSError("Kernel query unavailable")), self.assertRaises((OSError, ValueError)):
+            self.runner._network_interfaces()
+
+
 @unittest.skipUnless(LINUX, "Linux process network namespace inspection")
 class NetworkNamespaceTests(unittest.TestCase):
     HEADER = (
@@ -364,7 +400,7 @@ class NetworkNamespaceTests(unittest.TestCase):
 
     def interfaces(self, content):
         self.path.write_text(content, encoding="ascii")
-        return self.runner._network_interfaces(self.path)
+        return self.runner._proc_network_interfaces(self.path)
 
     def row(self, name="lo", counters=None):
         values = counters if counters is not None else [str(number) for number in range(16)]
