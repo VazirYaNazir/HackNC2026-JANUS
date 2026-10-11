@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import threading
@@ -10,6 +11,7 @@ from app.db import init_db
 from app.routes.agent import router as agent_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
+from app.routes.ws import broadcast_system_stats_loop, ws_router
 from app.tunnel import start_tunnel, stop_tunnel
 
 logger = logging.getLogger("uvicorn.error")
@@ -68,7 +70,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Could not start Cloudflare tunnel: {exc}")
 
+    # Launch background system stats broadcaster loop
+    stats_task = asyncio.create_task(broadcast_system_stats_loop())
+
     yield
+
+    stats_task.cancel()
+    try:
+        await stats_task
+    except asyncio.CancelledError:
+        pass
 
     await stop_tunnel()
 
@@ -86,9 +97,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Only mount Panels and Agent WebSocket routes on the public app
+# Only mount Panels, Agent, and Mobile WebSocket routes on the public app
 app.include_router(panels_router)
 app.include_router(agent_router)
+app.include_router(ws_router)
 
 
 @app.get("/health")
