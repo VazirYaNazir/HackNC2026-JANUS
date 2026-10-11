@@ -882,13 +882,33 @@ class LauncherOrchestrationTests(unittest.TestCase):
         self.services.append(service)
         return service
 
-    def run_launcher(self, arguments, *, approved=False, failure=None, recoveries=0, always_crash=False):
+    def run_launcher(self, arguments, *, approved=False, failure=None, recoveries=0, always_crash=False,
+                     monitor_iterations=None, http_readiness=None, tunnel_failures=None, on_publish=None,
+                     runtime_crashes=None):
         original_atomic = launcher.atomic_json
         owner = self
+        readiness = {url: list(results) for url, results in (http_readiness or {}).items()}
+        failed_starts = dict(tunnel_failures or {})
+        self.http_snapshots = []
+        self.monitor_clock = 0
+        self.cancellation = threading.Event()
+        self.signal_handlers = {}
+
+        def check_http(url, *_args, **_kwargs):
+            self.http_snapshots.append({"url": url, "published": list(owner.published),
+                                        "tunnels": {tunnel.name: {"starts": tunnel.starts, "stops": tunnel.stop.call_count}
+                                                    for tunnel in owner.tunnels}})
+            if url in readiness:
+                results = readiness[url]
+                result = results.pop(0) if len(results) > 1 else results[0]
+                return result(*_args, **_kwargs) if callable(result) else result
+            return failure != "readiness"
 
         def publish(path, data):
             if Path(path).name == "public-urls.json":
                 owner.published.append(json.loads(json.dumps(data)))
+                if on_publish:
+                    on_publish(data)
                 if failure == "clear" and len(owner.published) > 1:
                     raise OSError("fixture state directory unavailable")
             original_atomic(path, data)
@@ -899,10 +919,16 @@ class LauncherOrchestrationTests(unittest.TestCase):
 
             def wait(self, _):
                 self.calls += 1
-                return self.stopped or self.calls > (6 if always_crash else recoveries)
+                owner.monitor_clock += 6
+                limit = monitor_iterations if monitor_iterations is not None else (6 if always_crash else recoveries)
+                return self.stopped or self.calls > limit
 
             def set(self):
                 self.stopped = True
+                owner.cancellation.set()
+
+            def is_set(self):
+                return self.stopped
 
         class FakeTunnel:
             def __init__(self, name, executable, port, env, logs_dir):
@@ -910,20 +936,28 @@ class LauncherOrchestrationTests(unittest.TestCase):
                 self.service = Mock()
                 self.service.poll.side_effect = self.poll
                 self.stop = Mock()
-                self.crashes = recoveries
+                self.crashes = (runtime_crashes or {}).get(name, recoveries if name == "tunnel-backend" else 0)
+                self.started = False
                 owner.tunnels.append(self)
 
             def poll(self):
-                if self.name == "tunnel-backend" and (always_crash or self.crashes > 0):
+                if not self.started:
+                    return 1
+                if (self.name == "tunnel-backend" and always_crash) or self.crashes > 0:
                     self.crashes -= 1
                     return 1
                 return None
 
             def start(self):
                 self.starts += 1
+                self.started = False
                 owner.events.append("start-" + self.name)
                 if failure == "tunnel" and self.name == "tunnel-backend":
                     raise RuntimeError("fixture cloudflared startup failure")
+                if failed_starts.get(self.name, 0):
+                    failed_starts[self.name] -= 1
+                    raise RuntimeError("fixture cloudflared startup failure")
+                self.started = True
                 return f"https://{self.name}-{self.starts}.trycloudflare.com"
 
         with contextlib.ExitStack() as stack:
@@ -940,9 +974,10 @@ class LauncherOrchestrationTests(unittest.TestCase):
             stack.enter_context(patch.object(launcher, "CloudflareTunnel", FakeTunnel))
             self.cloudflare_installer = stack.enter_context(patch.object(launcher, "ensure_cloudflared", return_value="fixture-cloudflared"))
             stack.enter_context(patch.object(launcher, "threading", SimpleNamespace(Event=StopEvent)))
+            stack.enter_context(patch.object(launcher.time, "monotonic", side_effect=lambda: owner.monitor_clock))
             stack.enter_context(patch.object(launcher.signal, "getsignal", return_value=None))
-            stack.enter_context(patch.object(launcher.signal, "signal"))
-            self.http = stack.enter_context(patch.object(launcher, "wait_http", return_value=failure != "readiness"))
+            stack.enter_context(patch.object(launcher.signal, "signal", side_effect=self.signal_handlers.__setitem__))
+            self.http = stack.enter_context(patch.object(launcher, "wait_http", side_effect=check_http))
             self.browser = stack.enter_context(patch.object(launcher.webbrowser, "open"))
             self.browser.side_effect = lambda *_: self.events.append("browser")
             self.output = io.StringIO()
@@ -1000,8 +1035,137 @@ class LauncherOrchestrationTests(unittest.TestCase):
         self.assertTrue(all(service.stop.call_count == 1 for service in self.services))
         self.bootstrap.start.assert_called_once()
         self.assertTrue(all(document["backend"] is None for document in self.published))
+        self.assertIn({"backend": None, "pwa": "https://tunnel-pwa-1.trycloudflare.com"}, self.published)
         self.assertIn("Phone connection unavailable", self.output.getvalue())
-        self.assertIn("Local JANUS remains available", self.output.getvalue())
+        self.assertEqual(self.published[-1], {"backend": None, "pwa": None})
+
+    def test_pending_backend_public_url_preserves_the_healthy_pwa_and_both_connectors(self):
+        backend = "https://tunnel-backend-1.trycloudflare.com"
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"],
+                                           http_readiness={backend + "/health": [False], pwa: [True]}), 0)
+        self.assertIn({"backend": None, "pwa": pwa}, self.published)
+        self.assertTrue(all(document["backend"] is None for document in self.published))
+        self.assertTrue(any(call.args[0] == pwa for call in self.http.call_args_list))
+        self.assertTrue(all(tunnel.starts == 1 and tunnel.stop.call_count == 1 for tunnel in self.tunnels))
+        self.bootstrap.start.assert_called_once()
+        self.assert_local_tunnels_cleanup()
+
+    def test_healthy_pwa_is_published_while_backend_public_readiness_is_still_waiting(self):
+        backend = "https://tunnel-backend-1.trycloudflare.com"
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        pwa_published = threading.Event()
+        backend_observations = []
+
+        def publish(data):
+            if data.get("pwa") == pwa:
+                pwa_published.set()
+
+        def backend_pending(*_args, **_kwargs):
+            backend_observations.append(pwa_published.wait(1))
+            return False
+
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"], on_publish=publish,
+                                           http_readiness={backend + "/health": [backend_pending], pwa: [True]}), 0)
+        self.assertEqual(backend_observations, [True])
+        self.assertIn({"backend": None, "pwa": pwa}, self.published)
+        self.assertTrue(all(tunnel.starts == 1 and tunnel.stop.call_count == 1 for tunnel in self.tunnels))
+        self.assert_local_tunnels_cleanup()
+
+    def test_interrupt_cancels_a_pending_worker_before_executor_cleanup_joins_it(self):
+        backend = "https://tunnel-backend-1.trycloudflare.com"
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        backend_entered = threading.Event()
+        cancellations = []
+
+        def backend_pending(*_args, cancelled=None, **_kwargs):
+            backend_entered.set()
+            notified = self.cancellation.wait(1)
+            cancellations.append(notified and cancelled is not None and cancelled.is_set())
+            return False
+
+        def interrupt_when_pwa_is_published(data):
+            if data.get("pwa") == pwa:
+                self.assertTrue(backend_entered.wait(1))
+                self.signal_handlers[signal.SIGINT](signal.SIGINT, None)
+
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"],
+                                           on_publish=interrupt_when_pwa_is_published,
+                                           http_readiness={backend + "/health": [backend_pending], pwa: [True]}), 0)
+        self.assertEqual(cancellations, [True])
+        self.assertTrue(all(tunnel.starts == 1 and tunnel.stop.call_count == 1 for tunnel in self.tunnels))
+        self.assertTrue(all(document["backend"] is None for document in self.published))
+        self.assert_local_tunnels_cleanup()
+
+    def test_runtime_interrupt_during_backend_reconnect_prevents_restarting_the_sibling(self):
+        recovered_backend = "https://tunnel-backend-2.trycloudflare.com"
+
+        def interrupted_check(*_args, **_kwargs):
+            self.signal_handlers[signal.SIGINT](signal.SIGINT, None)
+            return False
+
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"], monitor_iterations=1,
+                                           runtime_crashes={"tunnel-backend": 1, "tunnel-pwa": 1},
+                                           http_readiness={recovered_backend + "/health": [interrupted_check]}), 0)
+        by_name = {tunnel.name: tunnel for tunnel in self.tunnels}
+        self.assertEqual(by_name["tunnel-backend"].starts, 2)
+        self.assertEqual(by_name["tunnel-pwa"].starts, 1)
+        self.assertEqual(by_name["tunnel-pwa"].stop.call_count, 1)
+        self.assertTrue(all(document["backend"] != recovered_backend for document in self.published))
+        self.assert_local_tunnels_cleanup()
+
+    def test_registered_pending_connectors_are_rechecked_without_restart_and_recovery_is_published(self):
+        backend = "https://tunnel-backend-1.trycloudflare.com"
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"], monitor_iterations=2,
+                                           http_readiness={backend + "/health": [False, True], pwa: [False]}), 0)
+        self.assertIn({"backend": backend, "pwa": None}, self.published)
+        self.assertTrue(all(document["pwa"] is None for document in self.published))
+        backend_checks = [snapshot for snapshot in self.http_snapshots if snapshot["url"] == backend + "/health"]
+        pwa_checks = [snapshot for snapshot in self.http_snapshots if snapshot["url"] == pwa]
+        self.assertEqual(len(backend_checks), 2)
+        self.assertGreaterEqual(len(pwa_checks), 2)
+        for snapshot in backend_checks + pwa_checks:
+            for tunnel in snapshot["tunnels"].values():
+                self.assertLessEqual(tunnel["starts"], 1)  # The parallel sibling may not have started yet.
+                self.assertEqual(tunnel["stops"], 0)
+            name = "tunnel-backend" if snapshot["url"] == backend + "/health" else "tunnel-pwa"
+            self.assertEqual(snapshot["tunnels"][name]["starts"], 1)
+        self.assertTrue(all(tunnel.starts == 1 and tunnel.stop.call_count == 1 for tunnel in self.tunnels))
+        self.assert_local_tunnels_cleanup()
+
+    def test_failed_backend_start_is_retried_without_discarding_the_healthy_pwa(self):
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        backend = "https://tunnel-backend-2.trycloudflare.com"
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"], monitor_iterations=1,
+                                           tunnel_failures={"tunnel-backend": 1}), 0)
+        partial = {"backend": None, "pwa": pwa}
+        self.assertIn(partial, self.published)
+        self.assertIn({"backend": backend, "pwa": pwa}, self.published)
+        self.assertLess(self.published.index(partial), self.published.index({"backend": backend, "pwa": pwa}))
+        self.assertTrue(all(document["pwa"] == pwa for document in self.published[self.published.index(partial):-1]))
+        by_name = {tunnel.name: tunnel for tunnel in self.tunnels}
+        self.assertEqual(by_name["tunnel-backend"].starts, 2)
+        self.assertEqual(by_name["tunnel-pwa"].starts, 1)
+        self.assertEqual(by_name["tunnel-pwa"].stop.call_count, 1)
+        self.assert_local_tunnels_cleanup()
+
+    def test_repeated_start_failures_are_bounded_without_stopping_the_healthy_pwa(self):
+        pwa = "https://tunnel-pwa-1.trycloudflare.com"
+        self.assertEqual(self.run_launcher(["--no-agent", "--no-browser", "--no-install"], monitor_iterations=6,
+                                           failure="tunnel"), 0)
+        by_name = {tunnel.name: tunnel for tunnel in self.tunnels}
+        self.assertEqual(by_name["tunnel-backend"].starts, 4)
+        self.assertEqual(by_name["tunnel-pwa"].starts, 1)
+        self.assertEqual(by_name["tunnel-pwa"].stop.call_count, 1)
+        partial = {"backend": None, "pwa": pwa}
+        self.assertIn(partial, self.published)
+        self.assertTrue(all(document == partial for document in self.published[self.published.index(partial):-1]))
+        self.assert_local_tunnels_cleanup()
+
+    def assert_local_tunnels_cleanup(self):
+        self.assertTrue(all(service.stop.call_count == 1 for service in self.services))
+        self.bootstrap.stop.assert_called_once()
         self.assertEqual(self.published[-1], {"backend": None, "pwa": None})
 
     def test_studio_bootstrap_and_browser_open_before_phone_tunnels_start(self):
