@@ -264,7 +264,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 return False
         options = SimpleNamespace(url="wss://backend/ws/agents/laptop", device_id="laptop", workers=4)
         seen = []
-        async def session(*args, on_ready):
+        async def session(*args, on_ready, native=None):
             on_ready()
         async def sleep(delay):
             seen.append(delay)

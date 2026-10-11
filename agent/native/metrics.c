@@ -193,6 +193,39 @@ static int temperature_file(const char *path,double *value) {
     if(!ok) return 0;buf[strcspn(buf,"\r\n")]=0;
     return number(buf,0.01,149.99,value);
 }
+/* A first sample, stopped counter or counter reset cannot supply utilization. */
+static int cpu_delta(uint64_t total,uint64_t idle,uint64_t *previous_total,uint64_t *previous_idle,double *value) {
+    uint64_t elapsed=total>=*previous_total?total-*previous_total:0;
+    uint64_t idle_elapsed=idle>=*previous_idle?idle-*previous_idle:0;
+    int available=*previous_total && elapsed && idle>=*previous_idle && idle_elapsed<=elapsed;
+    *previous_total=total;*previous_idle=idle;
+    if(available) *value=100.0*(elapsed-idle_elapsed)/elapsed;
+    return available;
+}
+/* CPU utilization from OS counters; the first sample has no elapsed interval. */
+static int cpu_percent(double *value) {
+    static uint64_t previous_total=0,previous_idle=0;
+    uint64_t total=0,idle=0;
+#ifdef _WIN32
+    FILETIME ft_idle,ft_kernel,ft_user;ULARGE_INTEGER i,k,u;
+    if(!GetSystemTimes(&ft_idle,&ft_kernel,&ft_user)) return 0;
+    i.LowPart=ft_idle.dwLowDateTime;i.HighPart=ft_idle.dwHighDateTime;
+    k.LowPart=ft_kernel.dwLowDateTime;k.HighPart=ft_kernel.dwHighDateTime;
+    u.LowPart=ft_user.dwLowDateTime;u.HighPart=ft_user.dwHighDateTime;
+    idle=i.QuadPart;total=k.QuadPart+u.QuadPart;
+#elif defined(__APPLE__)
+    host_cpu_load_info_data_t info;mach_msg_type_number_t count=HOST_CPU_LOAD_INFO_COUNT;
+    mach_port_t host=mach_host_self();
+    kern_return_t status=host_statistics(host,HOST_CPU_LOAD_INFO,(host_info_t)&info,&count);
+    mach_port_deallocate(mach_task_self(),host);
+    if(status!=KERN_SUCCESS) return 0;
+    idle=info.cpu_ticks[CPU_STATE_IDLE];
+    for(int state=0;state<CPU_STATE_MAX;state++) total+=info.cpu_ticks[state];
+#else
+    (void)value;return 0;
+#endif
+    return cpu_delta(total,idle,&previous_total,&previous_idle,value);
+}
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IOFBF,65536);unsigned interval=1000;int once=0;const char *file=NULL;
     for(int i=1;i<argc;i++) {
@@ -208,7 +241,10 @@ int main(int argc,char **argv) {
     open_sensors();
     do {
         uint64_t total=0,used=0;double temp=0;int available=file?temperature_file(file,&temp):temperature(&temp);
-        event_start("telemetry","metrics");printf("\"data\":{\"ram\":");
+        double cpu=0;int cpu_available=cpu_percent(&cpu);
+        event_start("telemetry","metrics");printf("\"data\":{\"cpu_percent\":");
+        if(cpu_available) printf("%.2f",cpu);else printf("null");
+        printf(",\"ram\":");
         if(ram(&total,&used)) printf("{\"total_bytes\":%llu,\"used_bytes\":%llu,\"percent\":%.2f}",(unsigned long long)total,(unsigned long long)used,total?100.0*used/total:0);
         else printf("null");
         printf(",\"cpu_temperature_c\":");if(available) printf("%.2f",temp);else printf("null");

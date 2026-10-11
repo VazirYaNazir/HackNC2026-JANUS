@@ -5,11 +5,20 @@ import { clearCachedDocument } from "./layoutCache";
 const KEY = "janus.panels";
 const DEMO_SEEDED_KEY = "janus.demoSeeded";
 const DEMO_ID = "demo";
+let transient: SavedPanel[] | null = null;
 
 function read(): SavedPanel[] | null {
   try {
+    if (transient) return transient;
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as SavedPanel[]) : null;
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(parsed)) return null;
+    const seen = new Set<string>();
+    return parsed.filter((p): p is SavedPanel => {
+      if (!p || typeof p !== 'object' || !['id', 'name', 'pcName', 'host', 'token'].every(key => typeof p[key] === 'string' && p[key].length > 0)
+        || typeof p.addedAt !== 'number' || !Number.isFinite(p.addedAt) || seen.has(p.id)) return false;
+      seen.add(p.id); return true;
+    });
   } catch {
     return null;
   }
@@ -18,8 +27,10 @@ function read(): SavedPanel[] | null {
 function write(panels: SavedPanel[]): SavedPanel[] {
   try {
     localStorage.setItem(KEY, JSON.stringify(panels));
+    transient = null;
   } catch {
-    // storage unavailable (private mode); the change just won't persist
+    // A just-used pairing code must retain its credential for the current session.
+    transient = panels;
   }
   return panels;
 }
@@ -36,7 +47,7 @@ export const renamePanel = (id: string, name: string): SavedPanel[] =>
 
 /** Replaces the connection of a saved panel after pairing again. Its id, name and history stay. */
 export const repairPanel = (id: string, connection: Pick<SavedPanel, "host" | "token" | "pcName" | "agentDeviceId">): SavedPanel[] =>
-  write(listPanels().map((p) => (p.id === id ? { ...p, ...connection } : p)));
+  write(listPanels().map((p) => (p.id === id ? { ...p, host: connection.host, token: connection.token, pcName: connection.pcName, agentDeviceId: connection.agentDeviceId } : p)));
 
 export function removePanel(id: string): SavedPanel[] {
   clearCachedDocument(id); // its saved layout goes with it

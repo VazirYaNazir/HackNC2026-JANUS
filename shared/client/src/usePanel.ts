@@ -9,7 +9,7 @@ interface PanelState {
   session: Session | null;
   jobs: JobView[];
   /** Latest value per dial source, from `data` messages. */
-  readings: Record<string, number | string>;
+  readings: Record<string, number | string | null>;
   /** Why the layout could not be loaded or shown; cleared as soon as a valid layout arrives. */
   layoutError: string;
   error: string;
@@ -74,7 +74,7 @@ export function usePanel(client: PanelClient | null) {
         ? { ...state, readings: { ...state.readings, [message.source]: message.value } }
         : state);
       else if (message.type === 'job_update') recordJob(message.job);
-      else if (message.type === 'agent_presence') update((state) => ({ ...state, session: message.session }));
+      else if (message.type === 'agent_presence') update((state) => ({ ...state, session: message.session, readings: message.session.online ? state.readings : {} }));
       else if (message.type === 'error') update((state) => ({ ...state, error: message.message }));
     }, (value) => {
       if (!current) return;

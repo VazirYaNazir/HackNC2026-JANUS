@@ -2,9 +2,13 @@ import { useState, type CSSProperties } from "react";
 import { Frame } from "./Frame";
 import WidgetTitle from "./WidgetTitle";
 import { activate, isInputWidget, type WidgetProps } from "./types";
+import { isNativeAction } from '@janus/schema';
+import { useThrottledSend } from './useThrottledSend';
 
 export default function SliderWidget(props: WidgetProps) {
   const { widget, mode, value } = props;
+  const native = isInputWidget(widget) && isNativeAction(widget.action);
+  const { push, sendNow } = useThrottledSend<number>((value) => activate(props, value), 100);
   const [draft, setDraft] = useState<number | null>(null);
   const [held, setHeld] = useState(false);
   const min = isInputWidget(widget) ? (widget.min ?? 0) : 0;
@@ -16,7 +20,8 @@ export default function SliderWidget(props: WidgetProps) {
   // Dragging only updates the draft; the action fires once on release.
   const commit = () => {
     if (draft === null) return;
-    activate(props, draft);
+    if (native) sendNow(draft);
+    else activate(props, draft);
     setDraft(null);
   };
 
@@ -33,7 +38,7 @@ export default function SliderWidget(props: WidgetProps) {
         step={step}
         value={current}
         disabled={mode === "edit"}
-        onChange={(e) => setDraft(Number(e.target.value))}
+        onChange={(e) => { const next = Number(e.target.value); setDraft(next); if (native) push(next); }}
         data-active={held || undefined}
         onPointerDown={() => setHeld(true)}
         onPointerUp={() => {

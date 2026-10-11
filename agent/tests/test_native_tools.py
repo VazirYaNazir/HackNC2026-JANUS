@@ -55,6 +55,18 @@ class NativeToolUnitTests(unittest.TestCase):
     held[0]=1;held[1]=0;held[2]=1;report_mouse(1,0.5,-0.25);return 0;
 }\n'''
             if tool == "metrics":
+                extra += '''if (!strcmp(argv[1],"cpu_delta")) {
+    uint64_t total=0,idle=0;double value=-1;
+    assert(!cpu_delta(100,50,&total,&idle,&value));
+    assert(cpu_delta(200,75,&total,&idle,&value) && fabs(value-75)<0.001);
+    assert(!cpu_delta(200,75,&total,&idle,&value));
+    assert(!cpu_delta(10,5,&total,&idle,&value));
+    assert(!cpu_delta(20,0,&total,&idle,&value));
+    assert(!cpu_delta(30,50,&total,&idle,&value));
+    assert(cpu_delta(40,50,&total,&idle,&value) && fabs(value-100)<0.001);
+    assert(cpu_delta(50,60,&total,&idle,&value) && fabs(value)<0.001);
+    return 0;
+}\n'''
                 extra += '''if (!strcmp(argv[1],"sensor")) {
     double value=-1;int ok=temperature_file(argv[2],&value);printf("%d %.2f",ok,value);return 0;
 }\n'''
@@ -210,6 +222,7 @@ int main(int argc,char **argv) {
         self.assertEqual(state["data"], {"joystick_x": 0.5, "joystick_y": -0.25, "buttons": [True, False, True], "position": None})
 
     def test_metrics_sensor_limits_missing_empty_stale_and_partial_telemetry(self):
+        self.assertEqual(self.run_tool("metrics", "cpu_delta").returncode, 0)
         path = Path(self.tmp.name) / "sensor.txt"
         for value, available in (("42.5\n", True), ("0.01", True), ("149.99", True), ("0", False), ("150", False), ("nan", False), ("", False), ("text", False)):
             with self.subTest(value=value):

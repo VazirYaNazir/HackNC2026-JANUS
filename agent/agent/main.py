@@ -30,6 +30,12 @@ def parser() -> argparse.ArgumentParser:
     connection.add_argument("--validation-policy", help="Local JSON grants by job ID")
     connection.add_argument("--workers", type=int, default=4, help="Local concurrent worker limit, 1–4")
     connection.add_argument("--isolation-adapter", default=os.getenv("AGENT_ISOLATION_ADAPTER"), help="Audited local worker module:factory; never provided by the backend")
+    connection.add_argument("--native-tools", action="store_true", help="Enable trusted built-in telemetry, volume and mouse control")
+    connection.add_argument("--screen", action="store_true", help="Also share primary-screen frames; requires --native-tools")
+    connection.add_argument("--screen-interval", type=int, default=1000)
+    connection.add_argument("--min-cpu", type=float, default=1)
+    connection.add_argument("--min-ram-mb", type=float, default=100)
+    connection.add_argument("--temperature-file", help="Optional local Celsius sensor file")
     return cli
 
 
@@ -51,13 +57,24 @@ def main(argv=None) -> int:
             from .validation import load_policies
             from .isolation import load_boundary
             validate_connection_options(options)
+            from .bridge import scalar
+            scalar(options.screen_interval, 200, 60000)
+            scalar(options.min_cpu, 0, 100000)
+            scalar(options.min_ram_mb, 0, 1000000)
+            if options.screen and not options.native_tools:
+                raise ValueError("--screen requires --native-tools")
             token = os.getenv("AGENT_TOKEN")
             if not token:
                 cli.error("Set AGENT_TOKEN in your local environment")
             policies = load_policies(options.validation_policy)
             compiler = detect_compiler()
             validation = ValidationService(compiler, policies, boundary=load_boundary(options.isolation_adapter), max_parallel=options.workers)
-            asyncio.run(run_connection(options, token, validation))
+            if options.native_tools:
+                names = TOOLS if options.screen else tuple(name for name in TOOLS if name != "screen")
+                binaries = build_tools(names, compiler=compiler)
+                asyncio.run(run_connection(options, token, validation, binaries))
+            else:
+                asyncio.run(run_connection(options, token, validation))
             return 0
         from .bridge import run_bridge, validate_options
         from .jobs import ValidationService

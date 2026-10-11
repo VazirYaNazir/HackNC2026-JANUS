@@ -120,6 +120,7 @@ class Hello(StrictModel):
     max_attempts: Literal[3]
     build_boundary_available: bool
     execution_boundary_available: bool
+    native_streams: list[Literal["volume", "mouse", "metrics", "processes", "screen"]] = Field(default_factory=list, max_length=5)
 
 
 HASH = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]

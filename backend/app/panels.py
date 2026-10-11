@@ -23,7 +23,7 @@ class Canvas(StrictModel):
 
 class PanelWidget(StrictModel):
     id: IDENTIFIER
-    type: Literal["button", "toggle", "slider", "joystick", "dpad", "knob", "command", "agent", "gauge", "bar", "line", "ring", "temperature", "number", "log", "stream"]
+    type: Literal["button", "toggle", "slider", "joystick", "dpad", "knob", "command", "agent", "gauge", "bar", "line", "ring", "temperature", "number", "log", "stream", "processes"]
     label: str = Field(min_length=1, max_length=128)
     x: float = Field(ge=0, le=360, allow_inf_nan=False)
     y: float = Field(ge=0, le=780, allow_inf_nan=False)
@@ -48,8 +48,11 @@ class PanelWidget(StrictModel):
             raise ValueError("Widget lies outside the canvas")
         if self.type in INPUTS and self.action is None or self.type not in INPUTS and self.source is None:
             raise ValueError("Widget binding is required")
-        if self.min is not None and self.max is not None and self.min >= self.max:
+        if (self.min is not None and self.max is not None and self.min >= self.max
+                or self.type in ("slider", "knob") and (self.min if self.min is not None else 0) >= (self.max if self.max is not None else 100)):
             raise ValueError("Invalid control range")
+        if self.warn is not None and self.critical is not None and self.warn > self.critical:
+            raise ValueError("Warning threshold exceeds critical threshold")
         return self
 
 

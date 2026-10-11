@@ -21,7 +21,7 @@ dev = [
 
 [tool.coverage.run]
 branch = true
-source = ["app.agent_runtime", "app.routes.agent_jobs", "app.routes.studio", "app.routes.ws", "app.routes.panels", "app.panels", "app.db"]
+source = ["app"]
 concurrency = ["thread"]
 
 [tool.coverage.report]

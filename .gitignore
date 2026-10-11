@@ -1,4 +1,9 @@
 node_modules/
+coverage/
+htmlcov/
+.coverage
+playwright-report/
+test-results/
 dist/
 dist-ssr/
 build/

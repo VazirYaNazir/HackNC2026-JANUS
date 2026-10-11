@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import '@janus/design/tokens.css'
 import { normalizeLayout } from '@janus/design'
-import type { GenerationRequest, LogicalCanvasLayout, Widget, WidgetType, WidgetValue } from '@janus/schema'
+import { isNativeAction, type GenerationRequest, type LogicalCanvasLayout, type Widget, type WidgetType, type WidgetValue } from '@janus/schema'
 import { isInputWidget } from '@janus/widgets'
-import { PanelClient, RequestDialog, activeJob, jobText, usePanel } from '@janus/client'
+import { PanelClient, RequestDialog, activeJob, jobText, useNativeControls, usePanel } from '@janus/client'
 import '@janus/client/styles.css'
 import { TopBar } from './components/TopBar'
 import { WidgetPalette } from './components/WidgetPalette'
@@ -12,6 +12,7 @@ import { Inspector } from './components/Inspector'
 import { BottomBar } from './components/BottomBar'
 import { ConnectionDialog } from './components/ConnectionDialog'
 import { PairingDialog } from './components/PairingDialog'
+import { ProjectDialog } from './components/ProjectDialog'
 import { useEditorState } from './editor/useEditorState'
 import './styles/glass.css'
 import './styles/studio.css'
@@ -23,10 +24,13 @@ function App() {
   const [client, setClient] = useState<PanelClient | null>(null)
   const live = usePanel(client)
   const [revision, setRevision] = useState(0)
-  const [sheet, setSheet] = useState<'connect' | 'pair' | 'history' | null>(null)
+  const [sheet, setSheet] = useState<'connect' | 'pair' | 'history' | 'project' | null>(null)
   const [pending, setPending] = useState<{ widget: Widget; value?: WidgetValue } | null>(null)
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [dismissed, setDismissed] = useState('')
+  const controls = useNativeControls(client, setNotice)
+  const message = notice || live.error || (live.document && live.document.revision !== revision ? 'The saved panel changed in another window.' : '')
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -59,7 +63,7 @@ function App() {
     const selected = editor.selectedWidget
     if (!client || !selected || !isInputWidget(selected)) return
     try {
-      const widget = { ...selected, action: selected.action || selected.id }
+      const widget = { ...selected, action: isNativeAction(selected.action) ? selected.id : selected.action || selected.id }
       const layout = { ...editor.layout, widgets: editor.layout.widgets.map((item) => item.id === widget.id ? widget : item) }
       await save(layout)
       await client.configure(widget.action, request)
@@ -72,6 +76,11 @@ function App() {
   const trigger = (widget: Widget, value?: WidgetValue) => {
     editor.triggerWidget(widget, value)
     if (!client) { setSheet('connect'); return }
+    if (live.status !== 'connected' || live.session?.online === false) { setNotice('Connect your laptop agent before using this control.'); return }
+    if (isInputWidget(widget) && isNativeAction(widget.action)) {
+      if (!widget.confirm || window.confirm(`Run ${widget.label} on your laptop?`)) controls.send(widget, value)
+      return
+    }
     if (!pending && isInputWidget(widget)) setPending({ widget, value })
   }
   const reload = () => {
@@ -79,14 +88,15 @@ function App() {
   }
 
   return <div className="studio-shell">
-    <TopBar name={editor.layout.name} connected={client !== null && live.status === 'connected'} status={client ? `${live.session?.online ? 'Laptop online' : 'Laptop offline'} · ${live.status}` : 'Connect backend'} busy={busy} onConnect={() => setSheet('connect')} onPair={() => setSheet('pair')} onSave={() => void save().catch(() => undefined)} onHistory={() => setSheet('history')} />
+    <TopBar name={editor.layout.name} onName={editor.renameLayout} onProject={() => setSheet('project')} connected={client !== null && live.status === 'connected'} status={client ? `${live.session?.online ? 'Laptop online' : 'Laptop offline'} · ${live.status}` : 'Connect backend'} busy={busy} onConnect={() => setSheet('connect')} onPair={() => setSheet('pair')} onSave={() => void save().catch(() => undefined)} onHistory={() => setSheet('history')} />
     <div className="studio-body">
       <WidgetPalette onDragStart={setPendingType} onDragEnd={() => setPendingType(null)} disabled={editor.mode === 'preview'} />
-      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
+      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
       <Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} />
     </div>
     <BottomBar key={editor.selectedId ?? 'none'} enabled={client !== null && !!editor.selectedWidget && isInputWidget(editor.selectedWidget) && !busy} target={live.session?.target ?? null} onGenerate={prepare} />
-    {(notice || live.error || live.document && live.document.revision !== revision) && <div className="studio-notice" role="status">{notice || live.error || 'The saved panel changed in another window.'}<button type="button" onClick={reload} disabled={!live.document}>Load saved panel</button><button type="button" onClick={() => setNotice('')}>Dismiss</button></div>}
+    {message && message !== dismissed && <div className="studio-notice" role="status">{message}<button type="button" onClick={reload} disabled={!live.document}>Load saved panel</button><button type="button" onClick={() => { setDismissed(message); setNotice('') }}>Dismiss</button></div>}
+    {sheet === 'project' && <ProjectDialog layout={editor.layout} onReplace={editor.replaceLayout} onClose={() => setSheet(null)} />}
     {sheet === 'connect' && <ConnectionDialog onClose={() => setSheet(null)} onConnect={async (next) => {
       const document = await next.layout()
       editor.loadLayout(normalizeLayout(document.layout)); setRevision(document.revision); setClient(next); setPending(null); setNotice('')

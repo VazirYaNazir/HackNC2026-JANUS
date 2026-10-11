@@ -72,6 +72,7 @@ export class DemoClient extends PanelClient {
   private jobs: JobView[] = [];
   private receive: ((message: ServerMessage) => void) | null = null;
   private timers = new Set<ReturnType<typeof setTimeout>>();
+  private cancelled = new Set<string>();
 
   constructor() {
     // Never fetched from: only here so the base class has a valid origin.
@@ -126,6 +127,7 @@ export class DemoClient extends PanelClient {
     const later = (ms: number, view: JobView) => {
       const timer = setTimeout(() => {
         this.timers.delete(timer);
+        if (this.cancelled.has(view.job_id)) return;
         this.jobs = [view, ...this.jobs.filter((j) => j.job_id !== view.job_id)];
         this.receive?.({ type: "job_update", job: view });
       }, ms);
@@ -137,6 +139,7 @@ export class DemoClient extends PanelClient {
   }
 
   override cancel(jobId: string): Promise<JobView> {
+    this.cancelled.add(jobId);
     return Promise.resolve({
       job_id: jobId, device_id: "demo", state: "CANCELLED", reason: "Cancelled", result: null,
       elapsed_ms: 0, cancellation_confirmed: true,
