@@ -7,8 +7,10 @@
  */
 
 /* ---------- Grid ---------- */
-.jw-cell { display: flex; min-width: 0; min-height: 0; }
+.jw-grid { position: relative; width: 100%; overflow: hidden; }
+.jw-cell { position: absolute; display: flex; min-width: 0; min-height: 0; }
 .jw-cell > .jw { flex: 1; }
+.jw-grid-error { padding: 14px; border: 1px solid var(--coral); border-radius: var(--radius-small); color: var(--coral-light); }
 
 /* ---------- Frame ---------- */
 .jw {

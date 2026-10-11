@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
-import type { IconName } from "@janus/design";
-import type { WidgetType } from "@janus/schema";
+import { gridSizeToLogical, type IconName, type Rect } from "@janus/design";
+import { isInput, type Widget, type WidgetType } from "@janus/schema";
 import BarWidget from "./BarWidget";
 import BigNumberWidget from "./BigNumberWidget";
 import ButtonWidget from "./ButtonWidget";
@@ -26,7 +26,7 @@ export interface WidgetDef {
   icon: IconName;
   component: ComponentType<WidgetProps>;
   defaultSize: WidgetSize;
-  /** Every size the widget is designed for. The builder should only offer these. */
+  /** Supported grid-snapping presets. Free positioning may use any valid size above the minimum. */
   sizes: readonly WidgetSize[];
 }
 
@@ -54,4 +54,32 @@ export function getWidgetDef(type: string): WidgetDef | undefined {
 /** Types we haven't built (or ones the backend invents) fall back to the Unsupported tile. */
 export function getWidgetComponent(type: string): ComponentType<WidgetProps> {
   return getWidgetDef(type)?.component ?? UnsupportedWidget;
+}
+
+export function getWidgetMinimumSize(type: string): Pick<Rect, "w" | "h"> {
+  const definition = getWidgetDef(type);
+  if (!definition) return gridSizeToLogical(1, 1);
+  const widths = definition.sizes.map(({ w, h }) => gridSizeToLogical(w, h).w);
+  const heights = definition.sizes.map(({ w, h }) => gridSizeToLogical(w, h).h);
+  return { w: Math.min(...widths), h: Math.min(...heights) };
+}
+
+export function snapWidgetSize(type: string, rect: Rect): Rect {
+  const definition = getWidgetDef(type);
+  if (!definition) return rect;
+  const closest = definition.sizes
+    .map(({ w, h }) => gridSizeToLogical(w, h))
+    .reduce((best, candidate) => {
+      const bestDistance = Math.hypot(rect.w - best.w, rect.h - best.h);
+      const candidateDistance = Math.hypot(rect.w - candidate.w, rect.h - candidate.h);
+      return candidateDistance < bestDistance ? candidate : best;
+    });
+  return { ...rect, ...closest };
+}
+
+export function createWidget(type: WidgetType, id: string, rect: Rect): Widget {
+  const definition = getWidgetDef(type);
+  if (!definition) throw new Error(`Unsupported widget type: ${type}.`);
+  const base = { id, type, label: definition.label, icon: definition.icon, ...rect };
+  return isInput(type) ? { ...base, type, action: "" } : { ...base, type, source: "" };
 }

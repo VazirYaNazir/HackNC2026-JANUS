@@ -2,10 +2,15 @@ import { useMemo, useState } from 'react'
 import { Icon } from '@janus/design'
 import { WIDGETS, WIDGET_TYPES } from '@janus/widgets'
 import { WidgetPaletteItem } from './WidgetPaletteItem'
+import type { WidgetType } from '@janus/schema'
 
 const categories = ['Controls', 'Displays'] as const
 
-export function WidgetPalette() {
+export function WidgetPalette({ onDragStart, onDragEnd, disabled = false }: {
+  onDragStart: (type: WidgetType) => void
+  onDragEnd: () => void
+  disabled?: boolean
+}) {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<string[]>([])
   const available = useMemo(() => WIDGET_TYPES.flatMap((type) => {
@@ -25,11 +30,11 @@ export function WidgetPalette() {
           <button className="category-heading" type="button" aria-expanded={open} aria-controls={`palette-${category}`} onClick={() => setCollapsed((current) => open ? [...current, category] : current.filter((item) => item !== category))}>
             <span className={`category-chevron ${open ? 'is-open' : ''}`}>›</span>{category}<span>{items.length}</span>
           </button>
-          <div id={`palette-${category}`} className="palette-items" role="list" hidden={!open}>{items.map(({ type, definition }) => <WidgetPaletteItem key={type} type={type} definition={definition} />)}</div>
+          <div id={`palette-${category}`} className="palette-items" role="list" hidden={!open}>{items.map(({ type, definition }) => <WidgetPaletteItem key={type} type={type} definition={definition} disabled={disabled} onDragStart={onDragStart} onDragEnd={onDragEnd} />)}</div>
         </section>
       })}
       {!available.length && <p className="palette-empty" role="status">No implemented components match “{query}”.</p>}
     </div>
-    <div className="palette-note"><Icon name="lock" size={14} /><span>Placement unlocks in Milestone 3</span></div>
+    <div className="palette-note"><Icon name="edit" size={14} /><span>{disabled ? 'Switch to Edit mode to place widgets' : 'Drag components onto the phone'}</span></div>
   </aside>
 }

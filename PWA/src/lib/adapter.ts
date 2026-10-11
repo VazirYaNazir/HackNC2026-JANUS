@@ -1,5 +1,5 @@
 import { GRID } from "@janus/design";
-import { INPUT_TYPES, SCHEMA_VERSION, type InputType, type Layout } from "@janus/schema";
+import { INPUT_TYPES, LEGACY_SCHEMA_VERSION, type InputType, type Layout } from "@janus/schema";
 
 /** Shape of GET /api/v1/panels/widgets. Backend field names stay in this file. */
 export interface BackendWidgetsResponse {
@@ -11,7 +11,7 @@ const isInputType = (t: string): t is InputType => (INPUT_TYPES as readonly stri
 /** The backend has no positions yet, so widgets flow two per row (2x2 each). */
 export function toLayout(res: BackendWidgetsResponse, name = "Panel"): Layout {
   return {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: LEGACY_SCHEMA_VERSION,
     name,
     columns: GRID.columns,
     widgets: res.widgets.map((item, i) => ({

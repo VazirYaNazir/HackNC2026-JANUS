@@ -1,8 +1,8 @@
 import type { ComponentType } from "react";
 import {
   Bell, Camera, CircleHelp, Cpu, Folder, Lock, MemoryStick, Mic, Monitor, Moon, Music,
-  Grid3X3, MousePointer2, Pause, Play, Power, RefreshCw, Save, Search, SkipBack, SkipForward,
-  SlidersHorizontal, Smartphone, Sparkles, Sun, Terminal,
+  Eye, Grid3X3, MousePointer2, Pause, Play, Power, Redo2, RefreshCw, Save, Search, SkipBack, SkipForward,
+  SlidersHorizontal, Smartphone, Sparkles, Sun, Terminal, Trash2, Undo2,
   Thermometer, Volume2, VolumeX, Wifi, Zap,
   type LucideProps,
 } from "lucide-react";
@@ -40,6 +40,10 @@ export const ICONS = {
   grid: Grid3X3,
   phone: Smartphone,
   edit: MousePointer2,
+  eye: Eye,
+  undo: Undo2,
+  redo: Redo2,
+  trash: Trash2,
 } satisfies Record<string, ComponentType<LucideProps>>;
 
 export type IconName = keyof typeof ICONS;

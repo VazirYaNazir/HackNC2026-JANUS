@@ -8,6 +8,7 @@
     "./tokens.css": "./tokens.css"
   },
   "dependencies": {
+    "@janus/schema": "*",
     "lucide-react": "^1.0.0"
   },
   "devDependencies": {

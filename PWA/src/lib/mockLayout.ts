@@ -1,8 +1,8 @@
-import { SCHEMA_VERSION, type Layout } from "@janus/schema";
+import { LEGACY_SCHEMA_VERSION, type Layout } from "@janus/schema";
 import { GRID } from "@janus/design";
 
 export const mockLayout: Layout = {
-  schemaVersion: SCHEMA_VERSION,
+  schemaVersion: LEGACY_SCHEMA_VERSION,
   name: "Desk Control",
   columns: GRID.columns,
   widgets: [
