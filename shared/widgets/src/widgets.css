@@ -501,7 +501,7 @@
 }
 
 /* Tiny: not enough room for text. Icon-only when there is an icon (the label stays in aria-label). */
-@container jw (max-width: 55px), (max-height: 39px) {
+@container jw (max-width: 55px) or (max-height: 39px) {
   .jw--icon .jw__label, .jw--icon .jw__side {
     position: absolute;
     width: 1px;
