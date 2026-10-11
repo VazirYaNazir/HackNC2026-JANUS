@@ -1,6 +1,6 @@
 .assistant-options { position: relative; color: var(--text); font-size: 12px; }
 .assistant-options summary { cursor: pointer; white-space: nowrap; }
-.assistant-options > div { position: absolute; right: 0; bottom: 38px; z-index: 10; width: 340px; max-height: 70vh; overflow: auto; padding: 20px; border-radius: 16px; background: var(--surface); box-shadow: var(--neu-raised); }
+.assistant-options > .assistant-settings { position: absolute; right: 0; bottom: 38px; z-index: 10; width: 340px; max-height: 70vh; overflow: auto; padding: 20px; border-radius: 16px; background: var(--surface); box-shadow: var(--neu-raised); }
 .assistant-options label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .assistant-options input, .assistant-options select { color: var(--text); background: var(--surface-raised); border: 1px solid var(--graphite); padding: 6px; border-radius: 8px; }
 .studio-notice { position: absolute; bottom: 88px; left: 50%; transform: translateX(-50%); z-index: 9; padding: 12px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--neu-raised); max-width: min(640px, calc(100vw - 32px)); font-size: 13px; }

@@ -43,6 +43,30 @@ describe('npm and PowerShell argument compatibility', () => {
     expect(normalizeLauncherArgs(['--only=agent', '--startup-approval-stdin'], { npm_config_agent: 'false' })).toEqual(['--only=agent', '--startup-approval-stdin']);
   });
 
+  it('recovers the messaging opt-out from both npm negative flag spellings', () => {
+    expect(normalizeLauncherArgs([], { npm_config_imessage: 'false' })).toEqual(['--no-imessage']);
+    expect(normalizeLauncherArgs([], { npm_config_imessage: '' })).toEqual(['--no-imessage']);
+    expect(normalizeLauncherArgs([], { npm_config_no_imessage: 'true' })).toEqual(['--no-imessage']);
+    expect(normalizeLauncherArgs([], { npm_config_no_imessage: 'false' })).toEqual([]);
+  });
+
+  it('explicit messaging opt-in overrides an inherited npm opt-out', () => {
+    expect(normalizeLauncherArgs(['--imessage'], { npm_config_no_imessage: 'true' })).toEqual(['--imessage']);
+    expect(normalizeLauncherArgs(['--imessage'], { npm_config_imessage: 'false' })).toEqual(['--imessage']);
+  });
+
+  it('explicit messaging opt-out overrides an inherited npm opt-in', () => {
+    expect(normalizeLauncherArgs(['--no-imessage'], { npm_config_imessage: 'true' })).toEqual(['--no-imessage']);
+  });
+
+  it('conflicting inherited messaging options resolve to one opt-out without changing inputs', () => {
+    const args = ['--local-only'];
+    const environment = { npm_config_imessage: 'true', npm_config_no_imessage: 'true' };
+    expect(normalizeLauncherArgs(args, environment)).toEqual(['--local-only', '--no-imessage']);
+    expect(args).toEqual(['--local-only']);
+    expect(environment).toEqual({ npm_config_imessage: 'true', npm_config_no_imessage: 'true' });
+  });
+
   it('retains unknown flags for Python to reject and ignores boolean-looking string values', () => {
     expect(normalizeLauncherArgs(['--unknown'], { npm_config_studio: 'true', npm_config_only: 'false' })).toEqual(['--unknown']);
   });

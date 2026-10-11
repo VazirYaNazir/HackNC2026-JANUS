@@ -8,7 +8,7 @@ import {
   liveAgent, makeFlags, otherOrchestrator, readRecords, recordProcess,
 } from './lib/common.mjs';
 
-const BOOLEAN_FLAGS = ['pwa', 'tunnel', 'screen', 'imessage', 'no-agent', 'local-only', 'no-browser', 'no-install', 'electron', 'no-screen', 'startup-approval-stdin'];
+const BOOLEAN_FLAGS = ['pwa', 'tunnel', 'screen', 'imessage', 'no-imessage', 'no-agent', 'local-only', 'no-browser', 'no-install', 'electron', 'no-screen', 'startup-approval-stdin'];
 const VALUE_FLAGS = ['only', 'studio', 'device-id', 'backend-port', 'studio-port', 'pwa-port', 'admin-port', 'cloudflared'];
 const PROCESS_NAMES = new Set(['backend', 'studio', 'pwa', 'agent', 'imessage', 'electron', 'tunnel-backend', 'tunnel-pwa']);
 const MARKER = '[janus-process] ';
@@ -23,7 +23,11 @@ export function normalizeLauncherArgs(argv = [], env = {}) {
     if (name === 'electron' && explicit('studio')) continue;
     if (name === 'local-only' && explicit('tunnel') || name === 'tunnel' && explicit('local-only')) continue;
     if (name === 'no-agent' && explicit('only')) continue;
-    if (!explicit(name) && !explicit(opposite(name)) && flags.has(name)) args.push(`--${name}`);
+    // npm can preserve --no-imessage either as imessage=false or no_imessage=true.
+    // An inherited opt-out wins over inherited opt-in; explicit CLI still wins above both.
+    if (name === 'imessage' && env.npm_config_no_imessage === 'true') continue;
+    const inherited = flags.has(name) || name === 'no-imessage' && env.npm_config_no_imessage === 'true';
+    if (!explicit(name) && !explicit(opposite(name)) && inherited) args.push(`--${name}`);
   }
   for (const name of VALUE_FLAGS) {
     if (explicit(name) || name === 'studio' && explicit('electron')) continue;

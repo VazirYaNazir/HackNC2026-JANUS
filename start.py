@@ -233,13 +233,20 @@ def mark_sidecar_down(host: str, token: str) -> None:
 
 
 def imessage_environment(env: dict[str, str], host: str) -> dict[str, str] | None:
-    required = ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET", "MESSAGING_SERVICE_TOKEN")
-    missing = [name for name in required if not env.get(name, "").strip()]
+    """Validate existing configuration without exposing credentials or enabling arbitrary senders."""
+    missing = []
+    for name in ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET"):
+        value = env.get(name, "").strip()
+        placeholder = re.fullmatch(r"\.+|<[^>]+>|(?:your|replace|example)[_-](?:project[_-]id|project[_-]secret|token|secret)", value, re.I)
+        if not value or placeholder:
+            missing.append(name)
+    if len(env.get("MESSAGING_SERVICE_TOKEN", "").strip()) < 32:
+        missing.append("MESSAGING_SERVICE_TOKEN (at least 32 characters)")
+    senders = [re.sub(r"[\s().-]", "", item.strip()) for item in env.get("IMESSAGE_ALLOWED_SENDERS", "").split(",")]
+    if not any(re.fullmatch(r"\+[1-9]\d{6,14}", sender) for sender in senders):
+        missing.append("IMESSAGE_ALLOWED_SENDERS (at least one E.164 number)")
     if missing:
-        print("iMessage sidecar not started: set " + ", ".join(missing) + " in backend/.env.", file=sys.stderr)
-        return None
-    if len(env["MESSAGING_SERVICE_TOKEN"]) < 32:
-        print("iMessage sidecar not started: MESSAGING_SERVICE_TOKEN must contain at least 32 characters.", file=sys.stderr)
+        print("iMessage: not configured; sidecar not started. Set " + ", ".join(missing) + " in backend/.env.", file=sys.stderr)
         return None
     return {"JANUS_BACKEND_URL": host, "NODE_OPTIONS": (env.get("NODE_OPTIONS", "") + " --dns-result-order=ipv4first").strip()}
 
@@ -662,7 +669,10 @@ def parse_args(argv=None):
     parser.add_argument("--studio", choices=("browser", "electron", "none"), default="electron", help="Studio interface (default: electron)")
     parser.add_argument("--only", choices=("agent",), help="Start the locally approved agent against an existing backend")
     parser.add_argument("--startup-approval-stdin", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--imessage", action="store_true", help="Start the configured Photon Spectrum messaging sidecar")
+    messaging = parser.add_mutually_exclusive_group()
+    messaging.add_argument("--imessage", dest="imessage", action="store_true", help="Check and start configured iMessage (automatic when configured)")
+    messaging.add_argument("--no-imessage", dest="imessage", action="store_false", help="Disable the configured iMessage sidecar for this run")
+    parser.set_defaults(imessage=None)
     parser.add_argument("--pwa", action="store_true", help="Phone PWA is included by default (compatibility option)")
     parser.add_argument("--tunnel", action="store_true", help="Public phone tunnels are included by default (compatibility option)")
     parser.add_argument("--screen", action="store_true", help="Screen sharing is included after approval (compatibility option)")
@@ -691,6 +701,7 @@ def main(argv=None) -> int:
     env["JANUS_STATE_DIR"] = str(state_dir)
     public_urls = state_dir / "public-urls.json"
     owns_public_urls = False
+    sidecar_attempted = False
     stopped = threading.Event()
     old_handlers = {}
     try:
@@ -719,6 +730,15 @@ def main(argv=None) -> int:
                     print("Laptop permissions declined. Starting web services with laptop controls disabled.")
         policy = ensure_policy(ROOT, platform.system()) if approved else None
         local_backend = f"http://127.0.0.1:{options.backend_port}"
+        sidecar_env = None
+        if not options.only:
+            env["JANUS_IMESSAGE_MODE"] = "off" if options.imessage is False else "on" if options.imessage is True else "auto"
+            if options.imessage is False:
+                print("iMessage: disabled (--no-imessage).")
+            else:
+                sidecar_env = imessage_environment(env, local_backend)
+                if sidecar_env and not env.get("IMESSAGE_DEVICE_ID", "").strip():
+                    env["IMESSAGE_DEVICE_ID"] = registration.device_id
         studio_origin = f"http://127.0.0.1:{options.studio_port}"
         logs_dir = state_dir / "logs"
         env.update(JANUS_TUNNEL_MODE="off", JANUS_PUBLIC_URLS_FILE=str(public_urls), ADMIN_HOST="127.0.0.1", ADMIN_PORT=str(options.admin_port))
@@ -776,19 +796,18 @@ def main(argv=None) -> int:
                 raise RuntimeError(f"{name} did not become ready; inspect {logs_dir}")
         if approved:
             start_agent()
-        if options.imessage:
-            sidecar_env = imessage_environment(env, local_backend)
-            if sidecar_env:
-                try:
-                    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
-                    if not npm:
-                        raise RuntimeError("npm was not found")
-                    command = ["cmd.exe", "/d", "/c", npm, "run", "build", "--workspace", "@janus/imessage"] if os.name == "nt" else [npm, "run", "build", "--workspace", "@janus/imessage"]
-                    subprocess.run(command, cwd=ROOT, env=env, check=True)
-                    launch("imessage", ["node", "dist/index.js"], ROOT / "imessage", sidecar_env)
-                    print("iMessage sidecar started; the backend enforces the sender allowlist.")
-                except (OSError, RuntimeError, subprocess.SubprocessError):
-                    print("iMessage build/start failed; local JANUS remains available.", file=sys.stderr)
+        if sidecar_env:
+            sidecar_attempted = True
+            try:
+                npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+                if not npm:
+                    raise RuntimeError("npm was not found")
+                command = ["cmd.exe", "/d", "/c", npm, "run", "build", "--workspace", "@janus/imessage"] if os.name == "nt" else [npm, "run", "build", "--workspace", "@janus/imessage"]
+                subprocess.run(command, cwd=ROOT, env=env, check=True)
+                launch("imessage", ["node", "dist/index.js"], ROOT / "imessage", sidecar_env)
+                print("iMessage sidecar started; waiting for a Photon connection and backend heartbeat.")
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                print("iMessage build/start failed; local JANUS remains available.", file=sys.stderr)
         print(f"\nLocal JANUS is ready. Studio: {studio_origin}")
         bootstrap = LocalBootstrap(studio_origin, local_backend, registration.controller_token).start() if studio else None
         if options.electron and not options.no_browser:
@@ -936,7 +955,7 @@ def main(argv=None) -> int:
             cleanup(lambda: atomic_json(public_urls, {"backend": None, "pwa": None}))
         if bootstrap:
             cleanup(bootstrap.stop)
-        if options.imessage and env.get("MESSAGING_SERVICE_TOKEN"):
+        if sidecar_attempted and env.get("MESSAGING_SERVICE_TOKEN"):
             cleanup(lambda: mark_sidecar_down(f"http://127.0.0.1:{options.backend_port}", env["MESSAGING_SERVICE_TOKEN"]))
         for tunnel in reversed(list(tunnels.values())):
             cleanup(tunnel.stop)

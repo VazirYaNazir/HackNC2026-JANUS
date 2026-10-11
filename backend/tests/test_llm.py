@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -37,8 +38,27 @@ class GeminiTests(unittest.IsolatedAsyncioTestCase):
         kwargs = sdk.aio.models.generate_content.call_args.kwargs
         self.assertEqual(kwargs["config"].response_mime_type, "application/json")
         self.assertIn("properties", kwargs["config"].response_json_schema)
+        language = kwargs["config"].response_json_schema["properties"]["language"]
+        self.assertEqual(language["enum"], ["c11"])
+        self.assertNotIn("const", language)
+        self.assertIn("language field to exactly the lowercase string c11", kwargs["config"].system_instruction)
         await provider.close()
         sdk.aio.aclose.assert_awaited_once()
+
+    async def test_unsupported_language_aliases_are_still_rejected_locally(self):
+        for language in ("C", "C11", "c99", "python"):
+            with self.subTest(language=language):
+                sdk = FakeSDK()
+                response = program().model_dump()
+                response["language"] = language
+                sdk.aio.models.generate_content.side_effect = None
+                sdk.aio.models.generate_content.return_value = SimpleNamespace(text=json.dumps(response))
+                provider = GeminiProvider(client=sdk)
+                try:
+                    with self.assertRaisesRegex(ProviderError, "MALFORMED_RESPONSE"):
+                        await provider.generate(request())
+                finally:
+                    await provider.close()
 
     async def test_generation_pool_is_bounded_and_concurrent(self):
         sdk = FakeSDK(delay=.02)

@@ -30,7 +30,7 @@ class LLMProvider(Protocol):
     async def close(self) -> None: ...
 
 
-SYSTEM_INSTRUCTION = """Return one JSON object matching the supplied schema. Generate a complete standalone C11 program with main(void) or main(int argc, char **argv). Preserve exactly the requested operation, platform, architecture, output_protocol, capabilities, and dependencies. Use only standard C11 headers and the declared platform dependencies. Do not add shell commands, package installation, paths, permissions, policy, or authorization fields. The laptop validates all source and controls permissions locally. Do not claim an unavailable capability. For json-v1, stdout must be one JSON object with integer version 1. For repairs, return the complete corrected source, keeping all metadata unchanged. Diagnostics are canonical categories and source locations; do not request user files or raw diagnostics."""
+SYSTEM_INSTRUCTION = """Return one JSON object matching the supplied schema. Set the language field to exactly the lowercase string c11. Generate a complete standalone C11 program with main(void) or main(int argc, char **argv). Preserve exactly the requested operation, platform, architecture, output_protocol, capabilities, and dependencies. Use only standard C11 headers and the declared platform dependencies. Do not add shell commands, package installation, paths, permissions, policy, or authorization fields. The laptop validates all source and controls permissions locally. Do not claim an unavailable capability. For json-v1, stdout must be one JSON object with integer version 1. For repairs, return the complete corrected source, keeping all metadata unchanged. Diagnostics are canonical categories and source locations; do not request user files or raw diagnostics."""
 
 
 class GeminiProvider:
@@ -57,7 +57,12 @@ class GeminiProvider:
         prompt = {"request": request.model_dump()}
         if source is not None:
             prompt.update(source=source, diagnostics=diagnostics)
-        text = await self._json(prompt, GeneratedProgram.model_json_schema(), SYSTEM_INSTRUCTION)
+        schema = GeneratedProgram.model_json_schema()
+        # Gemini's response_json_schema supports enum but not const. Keep the
+        # exact C11 contract while translating Pydantic's single-value literal.
+        language = schema["properties"]["language"]
+        language["enum"] = [language.pop("const")]
+        text = await self._json(prompt, schema, SYSTEM_INSTRUCTION)
         try:
             program = GeneratedProgram.model_validate_json(text)
             program.check_scope(request)

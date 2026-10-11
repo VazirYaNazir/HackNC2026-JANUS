@@ -27,7 +27,19 @@ describe('frontend forms and toolbars', () => {
     render(<BottomBar enabled target={{ platform: 'Windows', architecture: 'x86_64', build_boundary_available: false, execution_boundary_available: false }} onGenerate={generate} />);
     expect(screen.queryByLabelText('Platform')).toBeNull(); fireEvent.change(screen.getByLabelText('AI assistant prompt'), { target: { value: 'compute' } }); fireEvent.click(screen.getByRole('button', { name: 'Generate', exact: true }));
     expect(screen.getByRole('button', { name: 'Preparing…' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.submit(screen.getByRole('form', { name: 'AI assistant toolbar' })); expect(generate).toHaveBeenCalledTimes(1);
+    expect((screen.getByLabelText('audio.volume') as HTMLInputElement).matches(':disabled')).toBe(true);
     await act(async () => finish()); expect(generate.mock.calls[0][0]).toMatchObject({ platform: 'Windows', architecture: 'x86_64' });
+  });
+  it('ignores empty, disabled and invalid programmatic form submissions', async () => {
+    const generate = vi.fn().mockResolvedValue(undefined);
+    const view = render(<BottomBar enabled target={null} onGenerate={generate} />);
+    const form = screen.getByRole('form', { name: 'AI assistant toolbar' });
+    fireEvent.submit(form); fireEvent.change(screen.getByLabelText('AI assistant prompt'), { target: { value: '   ' } }); fireEvent.submit(form);
+    fireEvent.change(screen.getByLabelText('AI assistant prompt'), { target: { value: 'compute' } }); fireEvent.change(screen.getByLabelText('Operation'), { target: { value: 'INVALID OPERATION' } }); fireEvent.submit(form);
+    view.rerender(<BottomBar enabled={false} target={null} disabledReason="Missing Gemini key" onGenerate={generate} />);
+    fireEvent.change(screen.getByLabelText('Operation'), { target: { value: 'compute' } }); fireEvent.submit(form);
+    expect(screen.getByText('Missing Gemini key')).toBeTruthy(); expect(generate).not.toHaveBeenCalled();
   });
   it('authenticates a Studio connection before loading it and displays server errors without dropping inputs', async () => {
     const connect = vi.fn().mockResolvedValue(undefined), close = vi.fn(), request = vi.spyOn(PanelClient.prototype, 'request').mockRejectedValueOnce(new Error('UNAUTHORIZED')).mockResolvedValue({});

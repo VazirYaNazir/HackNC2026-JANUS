@@ -84,9 +84,17 @@ for pairing, persistence, permissions, deployment, and current limits.
 
 ## AI widgets (optional)
 
-Built-in controls (volume, mouse, metrics, processes, screen) need none of this. AI-generated widgets need two
-things, and Studio’s status line above the assistant says which one is missing before you generate anything.
-`npm run doctor` reports both as warnings.
+Built-in controls (volume, mouse, metrics, processes, screen) need none of this. A Gemini key enables C source
+generation and download. An isolation adapter is required separately to compile and execute generated programs
+on the laptop. Studio reports these two states independently; `npm run doctor` reports missing prerequisites.
+
+In Studio, enter a prompt in the assistant, even without selecting a control, to generate and review a C script.
+The source appears with its summary and a **Download C source** action. Without an execution worker, the
+assistant generates source while preserving your existing widget bindings. For a configured generated control,
+Studio and paired phones offer **Generate source** in its request dialog without submitting an execution job.
+With an execution worker, selecting an input control lets the assistant configure its requested behavior.
+Generated source is saved in SQLite for that laptop and owner; reusing it later still requires fresh local
+validation and approval.
 
 ### Gemini key
 
@@ -98,8 +106,11 @@ also set `GEMINI_API_KEY` in `backend/.env` yourself and restart the backend.
 
 Generated C is compiled and run only through a locally installed, audited isolation adapter, selected with
 `AGENT_ISOLATION_ADAPTER=my_local_app.worker:create_boundary` in the agent’s environment (or `--isolation-adapter`).
-No adapter ships with JANUS yet, so without one the laptop reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles
-generated source. Neither the backend nor a policy file can enable an adapter. Details:
+**JANUS does not ship an isolation adapter. There is currently no install command that enables generated-program
+execution on a fresh Mac or Windows setup.** The factory setting above is an integration contract for an
+implementation you have actually installed, rather than the name of an included package. Without one the laptop
+reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles generated source. Gemini can still generate source for
+review and download. Neither the backend nor a policy file supplies the missing worker. Details:
 [local agent initialization](backend/app/docs/backend-agent.md#local-agent-initialization).
 
 ### Local authorization
@@ -110,13 +121,18 @@ Running a generated program needs a local grant: either a fresh job grant minted
 
 Text JANUS from an allowlisted number and it answers from your laptop: *"status"*,
 *"volume 30"*, *"lock"*, *"help"*. It uses [Photon Spectrum](https://photon.codes/docs/spectrum-ts/getting-started)
-(cloud iMessage), so it works from any OS. It is off unless you ask for it:
+(cloud iMessage), so it works from any OS. `npm start` starts it automatically when configured:
 
 1. Create a Photon Spectrum project and put its `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` in `backend/.env`.
 2. Set `IMESSAGE_ALLOWED_SENDERS` there to your number(s) in E.164 form, comma-separated (`+15551234567`).
    Texts from anyone else are ignored without a reply. `npm run setup` generates `MESSAGING_SERVICE_TOKEN`.
-3. `npm run start:imessage` (same as `npm start -- --imessage`). Use `npm run start:demo` to add the tunnel.
-   `npm run doctor -- --imessage` checks the setup.
+3. Run `npm start`. `npm run start:imessage` explicitly checks and starts the same integration.
+   `npm start -- --no-imessage` disables it for one run. `npm run doctor -- --imessage` checks the setup.
+
+Studio reports connected after Photon connects and the backend receives its heartbeat. Missing configuration,
+connection failures, and a missing sender allowlist keep the channel off; startup reports the variable names to fix.
+The launcher targets the selected laptop unless `IMESSAGE_DEVICE_ID` explicitly selects another registered laptop.
+Laptop commands still need the native agent and local startup approval.
 
 On startup the sidecar texts each allowlisted number "JANUS is online. Text 'help' for commands." at most once per
 UTC day (the date is remembered, hashed, in `.janus/imessage-greeted.json`), because every first message to a new
@@ -140,7 +156,8 @@ allowlist, maps text to a fixed list of registered native actions (never code ge
 before `lock`, drops redelivered message IDs, and answers "Your laptop is offline." when no agent is
 connected. If a Gemini key is set, unrecognised text may be classified by Gemini, but only into that same action list
 with validated arguments (set `IMESSAGE_AI_FALLBACK=0` to turn it off). The endpoint refuses anything that is not a
-direct loopback request, including requests relayed through a tunnel. Studio shows "iMessage: connected / off".
+direct loopback request, including requests relayed through a tunnel. Studio distinguishes connected, setup required,
+disabled, and waiting for connection.
 
 The sidecar is built so one bad message cannot wedge it: each text is handled in its own task behind a per-sender
 queue (the message stream is never awaited on a send), every send has a 15 s deadline, and message IDs from

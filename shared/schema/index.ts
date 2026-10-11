@@ -100,7 +100,7 @@ export type ServerMessage =
   | { type: "layout_updated" }
   | { type: "pong" }
   | { type: "job_update"; job: JobView }
-  | { type: "agent_presence"; session: { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null } }
+  | { type: "agent_presence"; session: { device_id: string; online: boolean; generation_available?: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null } }
   | { type: "error"; message: string };
 
 /* ---------- Saved on the phone (localStorage) ---------- */
@@ -125,6 +125,18 @@ export interface GenerationRequest {
   capabilities: string[];
   dependencies: string[];
   output_protocol: "text" | "json-v1";
+}
+
+/** A C source draft. Generating it grants no permission to compile or execute it. */
+export interface GeneratedProgram extends Omit<GenerationRequest, 'description'> {
+  language: "c11";
+  source: string;
+  summary: string;
+}
+
+export interface GeneratedDraft {
+  program_id: string;
+  program: GeneratedProgram;
 }
 
 export interface JobView {

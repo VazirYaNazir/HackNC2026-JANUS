@@ -1,5 +1,5 @@
 import { normalizeLayout } from '@janus/design';
-import { parsePanelDocument, parseServerMessage, type GenerationRequest, type JobView, type Layout, type PairResponse, type PanelDocument, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
+import { parsePanelDocument, parseServerMessage, type GeneratedDraft, type GenerationRequest, type JobView, type Layout, type PairResponse, type PanelDocument, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
 
 export interface Connection { host: string; token: string }
 export type { PanelDocument };
@@ -79,6 +79,10 @@ export class PanelClient {
   activity(signal?: AbortSignal) { return this.request<Activity>('/api/activity', { signal }); }
   save(layout: Layout, revision: number) { return this.request<PanelDocument>('/api/v1/studio/layout', { method: 'PUT', body: JSON.stringify({ layout, revision }) }); }
   configure(action: string, request: GenerationRequest) { return this.request(`/api/v1/studio/actions/${encodeURIComponent(action)}`, { method: 'PUT', body: JSON.stringify(request) }); }
+  /** Generate a source draft only. No laptop commands, local validation, or execution are requested. */
+  generate(request: GenerationRequest, signal?: AbortSignal) {
+    return this.request<GeneratedDraft>('/api/v1/programs/generate', { method: 'POST', body: JSON.stringify(request), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) });
+  }
   pairing(signal?: AbortSignal) { return this.request<PairingCode>('/api/v1/studio/pairing', { method: 'POST', signal }); }
   prepare(payload: Dispatch, signal?: AbortSignal) { return this.request<Prepared>('/api/v1/panel-actions/prepare', { method: 'POST', body: JSON.stringify(payload), signal }); }
   dispatch(payload: Dispatch) { return this.request<JobView>('/api/v1/panel-actions/dispatch', { method: 'POST', body: JSON.stringify(payload) }); }
