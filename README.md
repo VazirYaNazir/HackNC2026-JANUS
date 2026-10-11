@@ -145,6 +145,7 @@ recipient counts against the line's 50-new-conversations-per-day quota. Set `IME
 | --- | --- |
 | `status` (also `cpu`, `stats`) | CPU and RAM on one line, plus the temperature when the machine reports one. Anything unavailable is left out |
 | `apps` (also `processes`) | The apps using the most CPU |
+| `history` (also `slow`, `spikes`, "why was my laptop slow?") | The worst CPU minute of the last hour and the busiest apps in it, e.g. "CPU peaked at 94% at 4:31 PM. Busiest: Chrome, Code, Teams." Needs [Tiger Data](#tiger-data-optional-history) |
 | `volume`, `volume 40` | Read / set the volume (0-100) |
 | `mute`, `unmute` | Mute sets the volume to 0 right away; unmute restores the previous level |
 | `lock` | Locks the PC. JANUS asks first: reply **YES** within 60 s |
@@ -165,6 +166,34 @@ queue (the message stream is never awaited on a send), every send has a 15 s dea
 the last 24 hours are saved (hashed) in `.janus/imessage-processed.json` and claimed *before* an action runs, so a
 redelivery after a restart is skipped instead of repeated. Every inbound message is logged first (masked number and
 type), then each stage (handling, backend reply, sending, sent or failed), never the text.
+
+## Tiger Data (optional history)
+
+An optional time-series store on [Tiger Cloud](https://www.tigerdata.com/) (TimescaleDB) that powers the last-hour
+sparklines, the Recent activity panel and the iMessage `history` command. **SQLite stays the app database**, and
+everything below is a no-op while `TIGER_DATABASE_URL` is empty.
+
+1. Create a Tiger Cloud service and put its connection string in `backend/.env` as `TIGER_DATABASE_URL`
+   (`postgres://tsdbadmin:…@HOST:PORT/tsdb?sslmode=require`).
+2. `npm run setup` creates the schema (idempotent; it can also be run alone with `uv run --locked python -m app.tiger.migrate`
+   in `backend/`). `npm run doctor` checks the connection and that the schema exists.
+
+What gets stored: `metrics` (CPU %, RAM %, RAM used, temperature, one sample per metric every 5 s),
+`process_samples` (the 10 busiest processes every 10 s) and `action_events` (every widget action, iMessage command and
+generated-program dispatch, with its source, outcome and request ID; joystick moves are not logged). The schema adds
+continuous aggregates `metrics_1m` and `metrics_1h` (avg/max/min) with refresh policies, compression after 1 day, and
+30-day retention on the raw tables.
+
+The backend never waits on Tiger: samples go through a bounded queue and are written in batches (every 5 s or 500 rows,
+on a worker thread), IPv4 is preferred when connecting, and if the database is unreachable the samples are dropped with
+one log line a minute. `GET /api/metrics/history?metric=cpu.percent&range=1h` reads `metrics_1m` and `GET /api/activity`
+returns the last 50 actions; both answer `available: false` when Tiger is off or down, which simply hides the sparkline
+and the panel in Studio and the phone app.
+
+The backend test suite never touches your database. One opt-in integration test (`tests/test_tiger.py`) applies the schema,
+writes rows under a throwaway `itest-…` device ID, reads them back through the aggregates and cleans up after itself. It runs
+only when you export **both** `TIGER_DATABASE_URL` and `JANUS_TIGER_INTEGRATION=1` in your shell; having the URL in
+`backend/.env` is deliberately not enough.
 
 ## Link a phone
 
