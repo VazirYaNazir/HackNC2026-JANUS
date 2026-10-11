@@ -4,15 +4,51 @@ JANUS connects the desktop panel builder (`frontend/`), phone PWA (`PWA/`),
 FastAPI backend, SQLite database, and a locally authorized laptop agent.
 Both frontends share the same authenticated panel and live job client.
 
-## Development
+## Quick start
 
-Use Node 20.19+ and Python 3.12+ with `uv`. Install JavaScript workspaces from
-the repository root:
+```sh
+npm run setup   # checks prerequisites, installs dependencies, creates backend/.env, builds native tools
+npm start       # backend + laptop agent + Studio
+```
+
+Prerequisites: Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Python 3.12+). In Studio, choose
+**Connect backend → Use this laptop’s local backend**; nothing needs pasting. To pair a phone, add `-- --tunnel`
+(`npm start -- --tunnel`) and use **Pair Device**.
+
+### What the scripts do
+
+- `npm run setup` runs the preflight checks first and stops on blocking problems before installing anything. It
+  is safe to re-run: it adds any keys that `backend/.env.example` gained since your `.env` was written, never
+  changes values you already set, generates `ADMIN_SECRET` and this laptop’s two credentials only when empty,
+  and restricts `backend/.env` to your user (`chmod 600` / an owner-only Windows ACL). Options:
+  `--skip-native`, `--reinstall`, `--pwa-url=https://…` (or `JANUS_PWA_URL`, or `scripts/defaults.json`) to set
+  `PWA_PUBLIC_URL` so the pairing QR opens the hosted PWA. If none is configured that value stays empty.
+- `npm start` starts the backend, waits for `/health`, then the agent (`--native-tools`) and Studio. Closing
+  Studio stops everything. Flags (pass after `--`):
+  - `--tunnel` exposes the backend through a Cloudflare tunnel for phone pairing. **Off by default**, because it
+    puts the backend on the public internet (behind its credentials) for as long as Janus runs. Without
+    `cloudflared`, a pinned, SHA-256-verified copy is downloaded to `.janus/bin`.
+  - `--pwa` also runs the PWA dev server on port 5174. Off by default: phones use the hosted PWA.
+  - `--studio=browser|none` runs Studio in a browser tab, or not at all. `--no-agent` skips the agent.
+  - `--only=agent` starts just the agent against a running backend (Studio’s **Start agent** button uses this).
+- Janus only stops processes it started itself (tracked in `.janus/pids.json`). If something else holds port 8000,
+  5173 or 5174, `npm start` names the process and exits.
+- `npm run doctor` runs the same checks on demand. Setup and start run them automatically and print failures only.
+
+### Studio and the laptop agent
+
+In the Electron Studio, the credential for this laptop is read by Electron’s main process from `backend/.env`
+and handed to the window over IPC; only the dev-server page can request it, and there is no HTTP endpoint that
+returns it. In a plain browser Studio, paste the controller credential instead. When no agent is connected,
+Electron shows a **Start agent** button; a browser shows the command to copy.
+
+## Manual setup
+
+The scripts above wrap these steps. Use them directly if you prefer.
 
 ```sh
 npm ci
-cd backend
-uv sync --locked
+cd backend && uv sync --locked
 ```
 
 Create `backend/.env` from `.env.example` only if it does not already exist.
@@ -24,6 +60,7 @@ backend from `backend/`:
 uv run --locked uvicorn app.main:app --host 127.0.0.1 --port 8000 --env-file .env --reload
 ```
 
+The backend starts its Cloudflare tunnel only when `JANUS_AUTO_TUNNEL=1` is set in its environment.
 In separate terminals, from the repository root:
 
 ```sh
@@ -45,20 +82,20 @@ for pairing, persistence, permissions, deployment, and current limits.
 
 ## Link a phone
 
-Studio runs at `http://127.0.0.1:5173`; the PWA dev server runs at
-`https://<laptop-LAN-IP>:5174`. Open the PWA on your phone first. Camera scanning
-requires an HTTPS certificate trusted by the phone; manual code entry does not
-need camera permission. Alternatively deploy the PWA to a trusted HTTPS host.
+Studio runs at `http://127.0.0.1:5173`. Phones normally use the hosted PWA; with
+`npm start -- --pwa` a dev server runs at `https://<laptop-LAN-IP>:5174` instead.
+Open the PWA on your phone first. Camera scanning requires an HTTPS certificate
+trusted by the phone; manual code entry does not need camera permission.
 
-In Studio, select **Pair Device**. The dialog uses the backend's automatic
-Cloudflare tunnel when Studio is connected locally, or its existing HTTPS
+Start Janus with `npm start -- --tunnel` so the phone can reach the backend.
+In Studio, select **Pair Device**. The dialog uses the backend's Cloudflare
+tunnel when one is running and Studio is connected locally, or its existing HTTPS
 backend address. Set `PUBLIC_BACKEND_URL` in `backend/.env` for a stable/custom
 HTTPS backend origin, or edit **Phone backend address** in the dialog to the
 URL printed by `cloudflared tunnel --url http://127.0.0.1:8000`.
 
-On the phone choose **Scan to add panel**, or **Enter code instead** and copy
-the displayed backend address and complete 12-character code. **Paste pairing
-link** is also available. Codes expire after 60 seconds and can be used once;
+On the phone choose **Scan to add panel**, or **Enter code instead** and paste
+the full pairing link shown in Studio's Pair Device dialog. Codes expire after 60 seconds and can be used once;
 choose **New code** in Studio to retry. The connection is saved as soon as
 pairing succeeds, before naming the panel.
 
