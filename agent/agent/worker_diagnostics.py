@@ -69,7 +69,7 @@ try:
             size += shm.f_blocks * shm.f_frsize
         return kind == "tmpfs" and "noexec" not in options and size <= limits["disk_bytes"] and os.access("/work", os.W_OK)
     check("scratch", scratch)
-    check("network", lambda: {path.name for path in Path("/sys/class/net").iterdir()} == {"lo"})
+    check("network", lambda: worker["_network_interfaces"]() == {"lo"})
     check("environment", lambda: not set(os.environ) - {"PATH", "HOSTNAME", "HOME", "LANG", "LC_ALL", "TERM"})
     try:
         worker["assert_runtime"](limits)
