@@ -7,6 +7,7 @@ import socket
 import sys
 import threading
 import time
+import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,7 +92,7 @@ class TrustedFixtureBoundary(IsolationBoundary):
     def __init__(self, *, compile_delay=0, run_delay=0):
         compiler = shutil.which("cc")
         if not compiler:
-            raise RuntimeError("Host cc is required for the trusted fixture test")
+            raise unittest.SkipTest("Host cc is required for the trusted fixture test")
         self.compiler = CCompiler("gcc", compiler, "Darwin")
         self.compile_delay, self.run_delay = compile_delay, run_delay
         self.binaries, self.directories = set(), []

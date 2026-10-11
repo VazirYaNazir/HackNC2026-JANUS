@@ -80,8 +80,16 @@ class ContractTests(unittest.TestCase):
             file.write_text("private-token")
             with patch.dict(os.environ, {"AGENT_DEVICES_FILE": str(file)}, clear=True), self.assertRaisesRegex(ValueError, "^Invalid agent registration configuration$"):
                 DeviceRegistry.from_env()
-        for raw in ("{}", "secret", json.dumps(data * 2), "x" * 65537):
+        # Windows cannot hold an environment variable over 32767 characters, so the oversize case there is
+        # exercised through the registration file instead (same 64 KiB limit, separate code path).
+        raws = ["{}", "secret", json.dumps(data * 2)] + ([] if os.name == "nt" else ["x" * 65537])
+        for raw in raws:
             with patch.dict(os.environ, {"AGENT_DEVICES_JSON": raw}, clear=True), self.assertRaisesRegex(ValueError, "^Invalid agent registration configuration$"):
+                DeviceRegistry.from_env()
+        with tempfile.TemporaryDirectory() as tmp:
+            oversize = Path(tmp) / "oversize.json"
+            oversize.write_text("x" * 65537)
+            with patch.dict(os.environ, {"AGENT_DEVICES_FILE": str(oversize)}, clear=True), self.assertRaisesRegex(ValueError, "^Invalid agent registration configuration$"):
                 DeviceRegistry.from_env()
         with self.assertRaises(ValueError):
             DeviceRegistry([Registration(**{**data[0], "controller_token": "a" * 32})])
