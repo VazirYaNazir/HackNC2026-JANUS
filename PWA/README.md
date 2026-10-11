@@ -61,4 +61,4 @@ database persistence, and current telemetry limits.
 
 The app is installable. `vite-plugin-pwa` (see `vite.config.ts`) generates the web manifest and a service worker that precaches the app shell; the theme and background colors come from `--surface` in `shared/design/tokens.css`. Icons live in `public/`.
 
-The home screen shows an install banner: a native "Install Janus" button on Android/Chrome, and "Tap Share, then Add to Home Screen" on iOS. It is hidden when the app is already running installed. On iOS the installed app has its own storage, so install before adding panels.
+The home screen shows an install banner: a native "Install JANUS" button on Android/Chrome, and "Tap Share, then Add to Home Screen" on iOS. It is hidden when the app is already running installed. On iOS the installed app has its own storage, so install before adding panels.

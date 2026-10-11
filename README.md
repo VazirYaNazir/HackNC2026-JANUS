@@ -1,6 +1,6 @@
-# Janus
+# JANUS
 
-Janus connects the desktop panel builder (`frontend/`), phone PWA (`PWA/`),
+JANUS connects the desktop panel builder (`frontend/`), phone PWA (`PWA/`),
 FastAPI backend, SQLite database, and a locally authorized laptop agent.
 Both frontends share the same authenticated panel and live job client.
 
@@ -83,6 +83,6 @@ In Studio choose **Project → Laptop controls starter**, then **Save & Push** a
 
 Native processes start concurrently, with separate readers and bounded queues; commands for a given tool remain ordered. These built-in operations use the laptop's explicit local startup permission. Generated programs still need a fresh local job grant and an audited isolation adapter. Gemini suggestions remain opt-in for each generated execution.
 
-Project names, icons, colors, toggle styles, ranges, steps, source bindings, and thresholds can be edited in Studio. Project import/export stores layout JSON without credentials or generated source. The supplied Janus logo is used in both apps, browser icons, PWA installation icons and Electron.
+Project names, icons, colors, toggle styles, ranges, steps, source bindings, and thresholds can be edited in Studio. Project import/export stores layout JSON without credentials or generated source. The supplied JANUS logo is used in both apps, browser icons, PWA installation icons and Electron.
 
 Run `npm test` from the repository root to check the complete application. See [detailed test commands and hardware verification](docs/testing.md).

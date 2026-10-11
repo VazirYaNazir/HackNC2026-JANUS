@@ -1,4 +1,4 @@
-# Janus laptop agent
+# JANUS laptop agent
 
 Five **standalone C11 programs** implement native laptop features on macOS and
 Windows. Each `.c` file can be compiled independently, uses OS libraries, accepts
