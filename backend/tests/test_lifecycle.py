@@ -15,13 +15,23 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         for path in ("/health", "/api/v1/panels/widgets", "/api/v1/panels/run/{script_id}", "/jobs", "/api/v1/agent-jobs/generate", "/api/v1/agent-jobs/source", "/api/v1/agent-jobs/{job_id}/cancel"):
             self.assertIn(path, paths)
 
+    async def test_tunnel_stays_off_unless_requested(self):
+        runtime = SimpleNamespace(close=AsyncMock())
+        async def stats():
+            await asyncio.Future()
+        target = SimpleNamespace(state=SimpleNamespace())
+        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": ""}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)), patch("app.main.uvicorn.Server", return_value=MagicMock()), patch("app.main.threading.Thread"), patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()), patch("app.main.broadcast_system_stats_loop", side_effect=stats):
+            async with lifespan(target):
+                pass
+        tunnel.assert_not_awaited()
+
     async def test_runtime_and_existing_services_close_even_on_lifespan_failure(self):
         runtime = SimpleNamespace(close=AsyncMock())
         server = MagicMock()
         async def stats():
             await asyncio.Future()
         target = SimpleNamespace(state=SimpleNamespace())
-        with patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)) as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats):
+        with patch.dict(os.environ, {"JANUS_AUTO_TUNNEL": "1"}), patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)) as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats):
             with self.assertRaisesRegex(RuntimeError, "fixture startup caller failure"):
                 async with lifespan(target):
                     self.assertIs(target.state.agent_runtime, runtime)

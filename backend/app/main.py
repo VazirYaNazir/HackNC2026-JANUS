@@ -67,11 +67,13 @@ async def lifespan(app: FastAPI):
     admin_thread = threading.Thread(target=admin_server.run, daemon=True)
     admin_thread.start()
 
-    # Launch Cloudflare Tunnel for public API (Port 8000)
-    try:
-        await start_tunnel(8000)
-    except Exception as exc:
-        logger.warning(f"Could not start Cloudflare tunnel: {exc}")
+    # Cloudflare Tunnel for the public API (port 8000) exposes the backend to the internet, so it only
+    # starts on request (JANUS_AUTO_TUNNEL=1, set by `npm start -- --tunnel`).
+    if os.getenv("JANUS_AUTO_TUNNEL", "").lower() in ("1", "true", "yes"):
+        try:
+            await start_tunnel(8000)
+        except Exception as exc:
+            logger.warning(f"Could not start Cloudflare tunnel: {exc}")
 
     # Launch background system stats broadcaster loop
     stats_task = asyncio.create_task(broadcast_system_stats_loop())
