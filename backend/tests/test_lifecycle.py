@@ -21,12 +21,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def stats():
             await asyncio.Future()
         target = SimpleNamespace(state=SimpleNamespace())
-        with patch("app.main.AgentRuntime.create", return_value=runtime), patch("app.main.init_db") as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats):
+        with patch("app.main.AgentRuntime.persisted", AsyncMock(return_value=runtime)) as database, patch("app.main.uvicorn.Server", return_value=server), patch("app.main.threading.Thread") as thread, patch("app.main.start_tunnel", AsyncMock()) as tunnel, patch("app.main.stop_tunnel", AsyncMock()) as stop, patch("app.main.broadcast_system_stats_loop", side_effect=stats):
             with self.assertRaisesRegex(RuntimeError, "fixture startup caller failure"):
                 async with lifespan(target):
                     self.assertIs(target.state.agent_runtime, runtime)
                     raise RuntimeError("fixture startup caller failure")
-            database.assert_called_once()
+            database.assert_awaited_once()
             thread.return_value.start.assert_called_once()
             tunnel.assert_awaited_once_with(8000)
             stop.assert_awaited_once()

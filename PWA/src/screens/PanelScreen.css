@@ -22,3 +22,8 @@
 }
 .panel__back:active { box-shadow: var(--neu-inset-sm); }
 .panel__back:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.panel__jobs { margin-top: 20px; }
+.panel__jobs h2 { font-size: 16px; }
+.panel__jobs article { padding: 12px 0; border-top: 1px solid var(--graphite); }
+.panel__jobs small { display: block; overflow-wrap: anywhere; color: var(--text-muted); }
+.panel__jobs p { white-space: pre-wrap; overflow-wrap: anywhere; }

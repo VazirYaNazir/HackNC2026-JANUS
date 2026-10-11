@@ -3,7 +3,6 @@ import type { SavedPanel } from "@janus/schema";
 import HomeScreen from "./screens/HomeScreen";
 import PanelScreen from "./screens/PanelScreen";
 import { touchPanel } from "./lib/panels";
-import { mockData, mockLayout, mockValues } from "./lib/mockLayout";
 import "./ui.css";
 
 // The widget gallery is a dev tool: reachable only by URL (/?gallery) on the local dev server, with no link
@@ -24,7 +23,6 @@ export default function App() {
 
   const home = () => setScreen({ name: "home" });
   const open = (panel: SavedPanel) => {
-    // Every saved panel shows the mock layout until the PC serves real ones.
     const updated = touchPanel(panel.id).find((p) => p.id === panel.id) ?? panel;
     setScreen({ name: "panel", panel: updated });
   };
@@ -37,7 +35,7 @@ export default function App() {
       ) : screen.name === "scan" ? (
         <ScanScreen onDone={home} />
       ) : screen.name === "panel" ? (
-        <PanelScreen panel={screen.panel} layout={mockLayout} data={mockData} initialValues={mockValues} onBack={home} />
+        <PanelScreen key={screen.panel.id} panel={screen.panel} onBack={home} />
       ) : (
         <HomeScreen onOpen={open} onScan={() => setScreen({ name: "scan" })} />
       )}

@@ -7,10 +7,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from app.db import init_db
 from app.routes.agent import router as agent_router
 from app.agent_runtime.runtime import AgentRuntime
 from app.routes.agent_jobs import router as agent_jobs_router
+from app.routes.studio import router as studio_router
 from app.routes.panels import router as panels_router
 from app.routes.scripts import router as scripts_router
 from app.routes.ws import broadcast_system_stats_loop, ws_router
@@ -51,10 +51,7 @@ async def lifespan(app: FastAPI):
 
     # This service stays on the public server's loop; the admin server has its
     # own thread/loop and does not share asyncio connection or job objects.
-    app.state.agent_runtime = AgentRuntime.create()
-
-    # Initialize SQLite database tables
-    init_db()
+    app.state.agent_runtime = await AgentRuntime.persisted()
 
     # Launch Admin API strictly bound to localhost:8001
     admin_host = os.getenv("ADMIN_HOST", "127.0.0.1")
@@ -108,6 +105,7 @@ app.add_middleware(
 app.include_router(panels_router)
 app.include_router(agent_router)
 app.include_router(agent_jobs_router)
+app.include_router(studio_router)
 app.include_router(ws_router)
 
 

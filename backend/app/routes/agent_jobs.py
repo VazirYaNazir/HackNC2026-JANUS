@@ -18,7 +18,7 @@ async def runtime(request: Request) -> AgentRuntime:
 async def controller(request: Request, service: Annotated[AgentRuntime, Depends(runtime)]) -> Identity:
     authorization = request.headers.get("authorization", "")
     token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
-    identity = service.registry.controller(token)
+    identity = await service.authenticate(token)
     if identity is None:
         raise HTTPException(401, "UNAUTHORIZED", headers={"WWW-Authenticate": "Bearer"})
     return identity
@@ -54,7 +54,7 @@ async def source_job(payload: SubmitSource, identity: CONTROLLER, service: SERVI
 @router.get("/api/v1/agent-jobs/{job_id}")
 async def get_job(job_id: str, identity: CONTROLLER, service: SERVICE) -> dict:
     try:
-        return service.jobs.get(identity, job_id).view()
+        return await service.jobs.status(identity, job_id)
     except PipelineError as error:
         raise HTTPException(error.status, error.reason) from None
 

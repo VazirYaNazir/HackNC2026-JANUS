@@ -257,8 +257,15 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         await attacker.recv()
         self.assertEqual((await self.backend.generate("victim")).status_code, 202)
         await attacker.send(json.dumps(packet("device-2", "execution_result", "victim", "COMPLETED", {"status": "COMPLETED", "reason": None})))
-        with self.assertRaises(ConnectionClosed):
-            await attacker.recv()
+        with self.assertRaises(ConnectionClosed) as closed:
+            async with asyncio.timeout(2):
+                while True:
+                    # A heartbeat can already be queued while the HTTP request runs.
+                    # Answer it so heartbeat expiry cannot satisfy this assertion.
+                    message = json.loads(await attacker.recv())
+                    self.assertEqual(message["type"], "ping")
+                    await attacker.send(json.dumps(packet("device-2", "pong", None, "CONNECTED", message["payload"])))
+        self.assertEqual(closed.exception.rcvd.code, 1008)
         self.assertEqual((await self.backend.result("victim"))["state"], "COMPLETED")
 
     async def test_application_heartbeat_detects_an_unresponsive_agent(self):

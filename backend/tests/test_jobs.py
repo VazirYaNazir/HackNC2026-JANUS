@@ -188,3 +188,52 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         self.websocket.send_json.side_effect = stalled
         with self.assertRaisesRegex(PipelineError, "AGENT_SEND_FAILED"):
             await self.connection.send("cancel_job", "job", "CANCELLED", {})
+
+    async def test_cancelled_database_admission_is_completed_without_dispatching(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        async def create(*args):
+            started.set(); await release.wait(); return True
+        self.manager.store = SimpleNamespace(create_job=AsyncMock(side_effect=create), save_job=AsyncMock())
+        submitting = asyncio.create_task(self.manager.submit(self.identity, "device-1", "admission", request()))
+        await started.wait(); submitting.cancel(); await asyncio.sleep(0); submitting.cancel(); await asyncio.sleep(0)
+        self.assertFalse(submitting.done())
+        release.set()
+        with self.assertRaises(asyncio.CancelledError): await submitting
+        self.assertNotIn("admission", self.manager.records)
+        self.assertEqual(self.manager.store.save_job.await_args.args[0]["reason"], "SUBMISSION_CANCELLED")
+        self.provider.generate.assert_not_awaited()
+
+    async def test_shutdown_waits_for_database_admission_and_persists_cancellation(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        async def create(*args):
+            started.set(); await release.wait(); return True
+        self.manager.store = SimpleNamespace(create_job=AsyncMock(side_effect=create), save_job=AsyncMock())
+        submitting = asyncio.create_task(self.manager.submit(self.identity, "device-1", "shutdown-admission", request()))
+        await started.wait()
+        closing = asyncio.create_task(self.manager.close()); await asyncio.sleep(0)
+        self.assertFalse(closing.done())
+        release.set(); await closing
+        self.assertTrue(submitting.cancelled())
+        self.assertFalse(self.manager.admissions)
+        self.provider.generate.assert_not_awaited()
+
+    async def test_terminal_database_publication_survives_repeated_cancellation(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        async def save(view, terminal):
+            if terminal:
+                started.set(); await release.wait()
+        self.manager.store = SimpleNamespace(create_job=AsyncMock(return_value=True), save_job=AsyncMock(side_effect=save))
+        record = await self.submitted()
+        await self.event("validation_result", "REJECTED", {"status": "REJECTED", "reason": "AUTHORIZATION_REQUIRED"})
+        await started.wait(); record.task.cancel(); await asyncio.sleep(0); record.task.cancel(); await asyncio.sleep(0)
+        self.assertFalse(record.task.done())
+        release.set(); await record.task
+        self.assertEqual(record.state, "REJECTED")
+
+    async def test_persistent_ledger_is_bounded_in_memory_and_late_events_use_scoped_database_lookup(self):
+        self.manager.seen = {str(n): self.identity for n in range(4096)}
+        self.manager.store = SimpleNamespace(create_job=AsyncMock(return_value=True), save_job=AsyncMock(), job=AsyncMock(return_value={"state": "COMPLETED"}))
+        await self.submitted()
+        self.assertEqual(len(self.manager.seen), 4096)
+        await self.event("job_ack", "ACCEPTED", {"accepted_type": "validate_job"}, "old-database-job")
+        self.manager.store.job.assert_awaited_once_with(self.identity, "old-database-job")

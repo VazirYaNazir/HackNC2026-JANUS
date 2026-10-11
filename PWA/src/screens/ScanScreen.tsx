@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Icon } from "@janus/design";
+import type { PairQR } from "@janus/schema";
 import { pair, parsePairingLink, type PairResult } from "../lib/connection";
 import { addPanel } from "../lib/panels";
 import "./ScanScreen.css";
@@ -19,17 +20,17 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
   const [error, setError] = useState("");
   const [link, setLink] = useState("");
   const [name, setName] = useState("");
-  const [paired, setPaired] = useState<PairResult | null>(null);
+  const [paired, setPaired] = useState<(PairResult & { host: string }) | null>(null);
   const busy = useRef(false); // a QR can decode many times a second; pair only once
 
-  const startPairing = async (target: { code: string; host?: string }) => {
+  const startPairing = async (target: PairQR) => {
     if (busy.current) return;
     busy.current = true;
     setError("");
     setPhase("pairing");
     try {
-      const result = await pair(target.code, target.host);
-      setPaired(result);
+      const result = await pair(target.host, target.code);
+      setPaired({ ...result, host: target.host });
       setName(result.pcName);
       setPhase("name");
     } catch {
@@ -91,7 +92,7 @@ export default function ScanScreen({ onDone }: ScanScreenProps) {
   const save = (e: FormEvent) => {
     e.preventDefault();
     if (!paired || !name.trim()) return;
-    addPanel({ name: name.trim(), pcName: paired.pcName, host: paired.host, token: paired.token });
+    addPanel({ name: name.trim(), pcName: paired.pcName, host: paired.host, token: paired.token, agentDeviceId: paired.agentDeviceId });
     onDone();
   };
 

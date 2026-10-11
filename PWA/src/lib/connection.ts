@@ -1,4 +1,5 @@
 import type { PairQR, SavedConnection } from "@janus/schema";
+import { pairBackend, PanelClient } from "@janus/client";
 
 const KEY = "janus.connection";
 
@@ -40,8 +41,7 @@ export async function apiFetch<T>(conn: SavedConnection, path: string, init: Req
 export interface PairResult {
   token: string;
   pcName: string;
-  /** The PC's address: echoes the QR's host, or is resolved from a typed code. */
-  host: string;
+  agentDeviceId: string;
 }
 
 /**
@@ -62,24 +62,17 @@ export function parsePairingLink(text: string): PairQR | null {
   }
 }
 
-export const MOCK_HOST = "https://mock.janus.local";
-
 /**
- * Pairs with a PC using its pairing code. `host` comes from a scanned QR; a typed 6-character code has no
- * host, so the real version must find the PC from the code alone. Mock for now: resolves after 500ms with a
- * fake token. The real POST /api/pair replaces the body of this one function.
+ * Exchange a single-use laptop-bound code for a scoped phone credential.
  */
-export async function pair(code: string, host?: string): Promise<PairResult> {
-  void code;
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  return { token: `mock-${crypto.randomUUID()}`, pcName: "my-pc", host: host ?? MOCK_HOST };
+export async function pair(host: string, code: string): Promise<PairResult> {
+  return pairBackend(host, code);
 }
 
-/** True if the host answers at all within `timeoutMs` (opaque response is enough; no CORS needed). */
-export async function checkHost(host: string, timeoutMs = 3000): Promise<boolean> {
+/** True when this phone's authenticated laptop session is online. */
+export async function checkHost(host: string, token: string, timeoutMs = 3000): Promise<boolean> {
   try {
-    await fetch(host, { mode: "no-cors", signal: AbortSignal.timeout(timeoutMs) });
-    return true;
+    return (await new PanelClient({ host, token }).session(AbortSignal.timeout(timeoutMs))).online;
   } catch {
     return false;
   }
