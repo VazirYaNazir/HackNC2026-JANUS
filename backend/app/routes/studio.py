@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.agent_runtime.connections import PipelineError
 from app.agent_runtime.config import Identity
 from app.agent_runtime.models import GenerationRequest, source_hash
+from app.agent_runtime.runtime import generation_available
 from app.agent_runtime.similarity import suggestions
 from app.panels import DispatchRequest, PairRequest, SaveLayout, action_request, dispatch
 from app.routes.agent_jobs import CONTROLLER, SERVICE
@@ -35,7 +36,8 @@ async def session(identity: DESKTOP, service: SERVICE):
     connection = service.hub.connections.get(identity.device_id)
     return {"device_id": identity.device_id, "owner_id": identity.owner_id,
             "online": bool(connection and not connection.closed),
-            "target": connection.hello.model_dump() if connection and not connection.closed else None}
+            "target": connection.hello.model_dump() if connection and not connection.closed else None,
+            "generation_available": generation_available(service.provider)}
 
 
 @router.get("/api/layout")

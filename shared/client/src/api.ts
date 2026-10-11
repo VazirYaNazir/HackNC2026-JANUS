@@ -3,7 +3,8 @@ import { parsePanelDocument, parseServerMessage, type GenerationRequest, type Jo
 
 export interface Connection { host: string; token: string }
 export type { PanelDocument };
-export interface Session { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
+/** `generation_available` is false when the backend has no Gemini credential; absent on older backends. */
+export interface Session { device_id: string; online: boolean; generation_available?: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
 export interface PairingCode { code: string; expires_in_seconds: number; host?: string; pwa_url?: string | null }

@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 from app.agent_runtime.models import StrictModel
+from app.agent_runtime.runtime import generation_available
 from app.panels import PairRequest, DispatchRequest
 from app.routes.agent_jobs import CONTROLLER, SERVICE
 from app.routes.studio import pair, submit
@@ -13,7 +14,8 @@ router = APIRouter(prefix="/api/v1/panels", tags=["Panels Mobile"])
 async def session(identity: CONTROLLER, service: SERVICE):
     connection = service.hub.connections.get(identity.device_id)
     return {"device_id": identity.device_id, "online": bool(connection and not connection.closed),
-            "target": connection.hello.model_dump() if connection and not connection.closed else None}
+            "target": connection.hello.model_dump() if connection and not connection.closed else None,
+            "generation_available": generation_available(service.provider)}
 
 
 class PairExchangeRequest(StrictModel):

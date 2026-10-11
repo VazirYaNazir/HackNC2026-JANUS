@@ -1,5 +1,5 @@
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,6 +7,8 @@ const path = require('node:path');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const DEV_ORIGIN = 'http://127.0.0.1:5173';
+// Studio links to setup docs; only those open (in the system browser). Everything else is denied.
+const DOCS_PREFIX = 'https://github.com/VazirYaNazir/HackNC2026-Janus/';
 const BACKEND_ORIGIN = 'http://127.0.0.1:8000';
 let agentProcess = null;
 
@@ -73,6 +75,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith(DOCS_PREFIX)) void shell.openExternal(url);
+    return { action: 'deny' };
   });
 
   win.once('ready-to-show', () => {

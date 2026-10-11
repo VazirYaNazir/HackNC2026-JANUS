@@ -11,6 +11,11 @@ from .store import SQLiteStore
 from .native import NativeManager
 
 
+def generation_available(provider) -> bool:
+    """False only for a provider that reports no credentials (Gemini without a key); others are assumed ready."""
+    return getattr(provider, "client", True) is not None
+
+
 @dataclass
 class AgentRuntime:
     registry: DeviceRegistry
@@ -33,7 +38,8 @@ class AgentRuntime:
         events = PanelEvents()
         hub.on_presence = lambda connection, online: events.publish(connection.identity, {
             "type": "agent_presence", "session": {"device_id": connection.identity.device_id,
-                "online": online, "target": connection.hello.model_dump() if online else None}})
+                "online": online, "target": connection.hello.model_dump() if online else None,
+                "generation_available": generation_available(provider)}})
         jobs = JobManager(hub, provider, settings, store=store, notify=events.publish)
         native = NativeManager(hub, events)
         async def receive(connection, frame):

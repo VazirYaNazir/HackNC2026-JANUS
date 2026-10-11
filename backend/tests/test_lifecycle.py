@@ -15,6 +15,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         for path in ("/health", "/api/v1/panels/widgets", "/api/v1/panels/run/{script_id}", "/jobs", "/api/v1/agent-jobs/generate", "/api/v1/agent-jobs/source", "/api/v1/agent-jobs/{job_id}/cancel"):
             self.assertIn(path, paths)
 
+    def test_generation_availability_reflects_provider_credentials(self):
+        from app.agent_runtime.runtime import generation_available
+        self.assertFalse(generation_available(SimpleNamespace(client=None)))
+        self.assertTrue(generation_available(SimpleNamespace(client=object())))
+        self.assertTrue(generation_available(SimpleNamespace()))  # custom providers without a client attribute
+
     async def test_tunnel_stays_off_unless_requested(self):
         runtime = SimpleNamespace(close=AsyncMock())
         async def stats():

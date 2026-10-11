@@ -291,6 +291,26 @@ class ConnectedPanelsTests(unittest.IsolatedAsyncioTestCase):
         await self.message(socket, "pong")
 
 
+class GenerationAvailabilityTests(unittest.IsolatedAsyncioTestCase):
+    """Needs no C compiler: no agent connects, so only the session endpoints are exercised."""
+
+    async def test_sessions_report_whether_the_backend_has_a_gemini_key(self):
+        with tempfile.TemporaryDirectory(prefix="janus-session-db-") as folder, patch.object(db, "DB_PATH", Path(folder) / "app.db"):
+            store = SQLiteStore()
+            await store.initialize(registry())
+            backend = await RunningServer().start(store=store)
+            try:
+                for path in ("/api/v1/studio/session", "/api/v1/panels/session"):
+                    body = (await backend.http.get(path, headers=headers())).json()
+                    self.assertIs(body["generation_available"], True, path)
+                    self.assertFalse(body["online"])
+                backend.runtime.provider.client = None  # what GeminiProvider holds without a credential
+                for path in ("/api/v1/studio/session", "/api/v1/panels/session"):
+                    self.assertIs((await backend.http.get(path, headers=headers())).json()["generation_available"], False, path)
+            finally:
+                await backend.close()
+
+
 class PanelContracts(unittest.TestCase):
     def test_server_validates_geometry_ids_binding_ranges_and_overlap(self):
         self.assertEqual(PanelLayout.model_validate(layout()).widgets[0].id, "control")

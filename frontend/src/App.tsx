@@ -11,6 +11,7 @@ import { EditorCanvas } from './components/EditorCanvas'
 import { Inspector } from './components/Inspector'
 import { BottomBar } from './components/BottomBar'
 import { AgentHelp } from './components/AgentHelp'
+import { GenerationStatus } from './components/GenerationStatus'
 import { ConnectionDialog } from './components/ConnectionDialog'
 import { PairingDialog } from './components/PairingDialog'
 import { ProjectDialog } from './components/ProjectDialog'
@@ -95,6 +96,7 @@ function App() {
       <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
       <Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} />
     </div>
+    <GenerationStatus session={client ? live.session : null} />
     <BottomBar key={editor.selectedId ?? 'none'} enabled={client !== null && !!editor.selectedWidget && isInputWidget(editor.selectedWidget) && !busy} target={live.session?.target ?? null} onGenerate={prepare} />
     {message && message !== dismissed && <div className="studio-notice" role="status">{message}<button type="button" onClick={reload} disabled={!live.document}>Load saved panel</button><button type="button" onClick={() => { setDismissed(message); setNotice('') }}>Dismiss</button></div>}
     {client && live.status === 'connected' && live.session?.online === false && !message && <AgentHelp />}

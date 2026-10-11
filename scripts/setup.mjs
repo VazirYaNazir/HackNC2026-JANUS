@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { doctor, report } from './doctor.mjs';
+import { aiChecks, doctor, report } from './doctor.mjs';
 import { ENV_EXAMPLE, ENV_FILE, ROOT, parseEnv, restrictToOwner, run } from './lib/common.mjs';
 
 const args = process.argv.slice(2);
@@ -23,6 +23,34 @@ export function mergeEnv(existing, example) {
   if (!missing.length) return { text: existing, added: [] };
   const separator = existing.length && !existing.endsWith('\n') ? '\n' : '';
   return { text: `${existing}${separator}\n# Added by npm run setup\n${missing.join('\n')}\n`, added: missing.map((line) => line.split('=')[0]) };
+}
+
+/** Sets KEY=value on its existing line (the key must already be present). */
+export function setEnvValue(text, key, value) {
+  return text.replace(new RegExp(`^${key}=.*$`, 'm'), () => `${key}=${value}`);
+}
+
+export const looksLikeApiKey = (value) => /^\S{16,200}$/.test(value);
+
+/** Reads a line without echoing it (the key is a credential). Enter alone skips. */
+function promptSecret(question) {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    const { stdin } = process;
+    let typed = '';
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const onData = (chunk) => {
+      for (const char of chunk) {
+        if (char === '\r' || char === '\n') { stdin.setRawMode(false); stdin.pause(); stdin.off('data', onData); process.stdout.write('\n'); return resolve(typed.trim()); }
+        if (char === '\u0003') { stdin.setRawMode(false); process.stdout.write('\n'); process.exit(130); }
+        if (char === '\u007f' || char === '\b') typed = typed.slice(0, -1);
+        else typed += char;
+      }
+    };
+    stdin.on('data', onData);
+  });
 }
 
 /** Fills generated values only where the file has none. */
@@ -59,6 +87,14 @@ async function main() {
   const created = !existsSync(ENV_FILE);
   const merged = mergeEnv(created ? '' : readFileSync(ENV_FILE, 'utf8'), example);
   const filled = fillGenerated(created ? example : merged.text, { pwaUrl });
+  // Optional: a Gemini key enables AI-generated widgets. Never taken from argv, so it stays out of shell history.
+  const hasKey = ['GEMINI_API_KEY', 'GOOGLE_API_KEY'].some((key) => parseEnv(filled.text).get(key));
+  if (!hasKey) {
+    const interactive = process.stdin.isTTY && process.stdout.isTTY && !process.env.CI && !args.includes('--no-prompt');
+    const key = process.env.JANUS_GEMINI_KEY || (interactive ? await promptSecret('Gemini API key for AI-generated widgets (optional; press Enter to skip): ') : '');
+    if (looksLikeApiKey(key)) { filled.text = setEnvValue(filled.text, 'GEMINI_API_KEY', key); filled.filled.push('GEMINI_API_KEY'); }
+    else if (key) console.warn('! That does not look like an API key; skipped. Add GEMINI_API_KEY to backend/.env later.');
+  }
   writeFileSync(ENV_FILE, filled.text, { mode: 0o600 });
   if (!restrictToOwner(ENV_FILE)) console.warn('! Could not restrict backend/.env to your user; check its permissions — it holds credentials.');
   console.log(created ? 'Created backend/.env.' : `Updated backend/.env (added: ${merged.added.join(', ') || 'nothing'}).`);
@@ -72,6 +108,7 @@ async function main() {
 If Janus or its agent is running, stop it first (Windows locks the running native tools), then re-run \`npm run setup\`.`);
     });
   }
+  report(aiChecks());
   console.log('\nSetup complete. Start everything with:  npm start');
 }
 

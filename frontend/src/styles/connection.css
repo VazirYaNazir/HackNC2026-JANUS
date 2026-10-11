@@ -7,3 +7,8 @@
 .studio-notice button { margin-left: 8px; border: 0; background: transparent; color: var(--amber); cursor: pointer; }
 .janus-request article { border-top: 1px solid var(--graphite); padding: 12px 0; }
 .janus-request pre, .janus-request article p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.generation-status { margin: 0; padding: 6px 18px; font-size: 12px; color: var(--text-muted); }
+.generation-status.is-ready { color: var(--green); }
+.generation-status.is-warning { color: var(--amber-light); }
+.generation-status a { margin-left: 8px; color: var(--cyan); }

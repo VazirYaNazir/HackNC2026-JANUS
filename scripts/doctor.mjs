@@ -45,7 +45,24 @@ async function portCheck(port, label) {
   return { level: 'error', name: `port ${port}`, message: `${label} port ${port} is already in use by ${who}.`, fix: 'Close that program, or stop it yourself if you recognise it. Janus never kills processes it did not start.' };
 }
 
-/** @param {{ tunnel?: boolean, pwa?: boolean, ports?: boolean, beforeSetup?: boolean }} needs */
+/**
+ * AI widgets need a Gemini key (backend) and a local isolation adapter (agent). Neither is required for the
+ * built-in native controls, so both are warnings, never blockers.
+ */
+export function aiChecks() {
+  const env = readEnvFile();
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || env?.get('GEMINI_API_KEY') || env?.get('GOOGLE_API_KEY');
+  const results = [];
+  if (!key) {
+    results.push({ level: 'warn', name: 'AI widgets · Gemini key', message: 'No Gemini key found, so AI-generated widgets are off. Built-in controls (volume, mouse, metrics, processes, screen) work without it.', fix: 'Run `npm run setup` to enter one, or set GEMINI_API_KEY in backend/.env.' });
+  }
+  if (!process.env.AGENT_ISOLATION_ADAPTER) {
+    results.push({ level: 'warn', name: 'AI widgets · isolation adapter', message: 'No isolation adapter is configured (AGENT_ISOLATION_ADAPTER), so this laptop cannot run AI-generated programs. Janus does not ship one yet. Built-in controls are unaffected.', fix: 'See README → AI widgets → Isolation adapter.' });
+  }
+  return results;
+}
+
+/** @param {{ tunnel?: boolean, pwa?: boolean, ports?: boolean, beforeSetup?: boolean, ai?: boolean }} needs */
 export async function doctor(needs = {}) {
   const results = [nodeCheck(), uvCheck(), compilerCheck()];
   if (!needs.beforeSetup) results.push(envCheck());
@@ -56,6 +73,7 @@ export async function doctor(needs = {}) {
     results.push(await portCheck(8000, 'Backend'), await portCheck(5173, 'Studio'));
     if (needs.pwa) results.push(await portCheck(5174, 'PWA dev'));
   }
+  if (needs.ai) results.push(...aiChecks());
   return results.filter(Boolean);
 }
 
@@ -69,7 +87,7 @@ export function report(results) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const flags = new Set(process.argv.slice(2));
-  const results = await doctor({ tunnel: flags.has('--tunnel'), pwa: flags.has('--pwa'), ports: true });
+  const results = await doctor({ tunnel: flags.has('--tunnel'), pwa: flags.has('--pwa'), ports: true, ai: true });
   const ok = report(results);
   if (ok && results.length === 0) console.log('All checks passed.');
   process.exit(ok ? 0 : 1);

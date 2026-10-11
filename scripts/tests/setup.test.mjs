@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fillGenerated, mergeEnv } from '../setup.mjs';
+import { fillGenerated, looksLikeApiKey, mergeEnv, setEnvValue } from '../setup.mjs';
 import { parseEnv } from '../lib/common.mjs';
 
 const example = ['# comment', 'ADMIN_SECRET=', 'APP_ENV=development', 'AGENT_DEVICES_JSON=[]', 'PWA_PUBLIC_URL=', 'NEW_KEY=fresh', '# COMMENTED=1'].join('\n');
@@ -45,5 +45,20 @@ describe('fillGenerated', () => {
 
   it('leaves the PWA URL empty when no default is known', () => {
     expect(parseEnv(fillGenerated(example, { pwaUrl: '' }).text).get('PWA_PUBLIC_URL')).toBe('');
+  });
+});
+
+describe('Gemini key helpers', () => {
+  it('sets the key on its existing line and leaves the rest alone', () => {
+    const text = 'A=1\nGEMINI_API_KEY=\nB=2';
+    expect(setEnvValue(text, 'GEMINI_API_KEY', 'AIza-example-key-1234')).toBe('A=1\nGEMINI_API_KEY=AIza-example-key-1234\nB=2');
+  });
+  it('does not treat $ sequences in a key as replacement patterns', () => {
+    expect(setEnvValue('GEMINI_API_KEY=', 'GEMINI_API_KEY', 'ab$&cd$1efghijklmnop')).toBe('GEMINI_API_KEY=ab$&cd$1efghijklmnop');
+  });
+  it('accepts plausible keys and rejects whitespace or short input', () => {
+    expect(looksLikeApiKey('AIzaSyExampleExampleExample1234')).toBe(true);
+    expect(looksLikeApiKey('short')).toBe(false);
+    expect(looksLikeApiKey('has a space in it 1234567890')).toBe(false);
   });
 });
