@@ -5,8 +5,26 @@ requires-python = ">=3.12"
 dependencies = [
     "cloudflare>=5.9.0",
     "fastapi>=0.143.0",
+    "google-genai>=1.0,<3",
+    "httpx>=0.28,<1",
     "psutil>=7.2.2",
     "pydantic>=2.14.0",
     "pytest>=9.1.1",
+    "python-dotenv>=1.0,<2",
     "uvicorn[standard]>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.6,<8",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app.agent_runtime", "app.routes.agent_jobs"]
+concurrency = ["thread"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+fail_under = 95

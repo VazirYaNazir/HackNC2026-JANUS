@@ -38,6 +38,7 @@ class ValidationService:
         self.boundary = boundary or IsolationBoundary()
         self.revision_timeout = revision_timeout
         self.local_platform = local_platform
+        self.max_parallel = max_parallel
         self.seen_jobs = set()
         self.workers = WorkerPoolBoundary(self.boundary, asyncio.Semaphore(max_parallel))
 

@@ -6,6 +6,9 @@ manifest or policy JSON cannot install or enable an isolation implementation.
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import importlib
+import inspect
+import re
 
 from .compiler import CCompiler, CompileResult
 from .process import ProcessResult
@@ -68,3 +71,23 @@ class IsolationBoundary:
     async def run(self, executable: Path, stdin: str, limits: ResourceLimits,
                   capabilities: frozenset[str]) -> ProcessResult:
         raise BoundaryUnavailable("No verified execution boundary installed")
+
+
+def load_boundary(spec: str | None) -> IsolationBoundary:
+    """Load an explicitly configured LOCAL, audited adapter, never a cloud value.
+
+    Interface/guarantee checks establish conformance, not an OS security audit.
+    Deployment remains responsible for verifying the selected implementation.
+    """
+    if not spec:
+        return IsolationBoundary()
+    if not isinstance(spec, str) or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", spec):
+        raise ValueError("Local isolation adapter must be module:factory")
+    module, name = spec.split(":")
+    try:
+        boundary = getattr(importlib.import_module(module), name)()
+        if not isinstance(boundary, IsolationBoundary) or not boundary.can_build() or not boundary.can_run() or not all(inspect.iscoroutinefunction(method) for method in (boundary.compile, boundary.run)):
+            raise ValueError("Invalid adapter interface or missing guarantees")
+    except Exception:
+        raise ValueError("Cannot load a conforming local isolation adapter") from None
+    return boundary
