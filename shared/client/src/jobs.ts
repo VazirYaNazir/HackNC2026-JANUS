@@ -10,6 +10,18 @@ export function widgetStates(jobs: JobView[]): Record<string, string> {
   return states;
 }
 
+/** Detailed failures stay separate from run state, so every control keeps its failure indicator. */
+export function widgetErrors(jobs: JobView[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (const job of jobs) {
+    if (!job.widget_id || seen.has(job.widget_id)) continue;
+    seen.add(job.widget_id);
+    if (!activeJob(job) && job.state !== 'COMPLETED') errors[job.widget_id] = job.reason || job.result?.reason || jobText(job);
+  }
+  return errors;
+}
+
 // HTTP responses, history snapshots and socket updates can arrive out of order.
 export function newerJob(current: JobView | undefined, incoming: JobView): JobView {
   if (!current) return incoming;

@@ -56,7 +56,7 @@ persisted registration. Existing connections and jobs terminate on shutdown.
 | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Credential for live generation; Gemini-specific key takes precedence. Never included in requests to agents. |
 | `GEMINI_MODEL` | `gemini-3.8-flash`; choose another supported model through configuration. Google's [current model guidance](https://ai.google.dev/gemini-api/docs/deprecations) recommends current models for new projects and limits 2.5 access to existing users. |
 | `GEMINI_MAX_CONCURRENT` | 8; local range 1–32 simultaneous provider calls. |
-| `GEMINI_TIMEOUT` | 20 seconds total per generation/repair, including queue wait and API retries; maximum 25. |
+| `GEMINI_TIMEOUT` | 20 seconds total per planning/generation/repair call, including queue wait and API retries; maximum 25. |
 | `GEMINI_API_ATTEMPTS` | 2; range 1–3 attempts, only rate limits and server errors retry. SDK automatic retries are disabled. |
 | `AGENT_MAX_ACTIVE_JOBS` | 16 active jobs globally. |
 | `AGENT_MAX_JOBS_PER_DEVICE` | 4 outstanding jobs, local range 1–4; distinct from native worker count. |
@@ -125,10 +125,23 @@ Its blocking OS operations must use bounded workers and it must kill/reap its
 worker tree before returning from cancellation/timeout. Interface checks do
 not audit or prove OS containment. This option is trusted local configuration;
 there is no network message or remote policy field that can select an adapter.
-No macOS/Windows isolation implementation is supplied by this change. Without
-one, generation/communication work and local validation reports
-`VALIDATION_BLOCKED / BUILD_BOUNDARY_UNAVAILABLE`; generated source is never
-passed to a compiler. An absent local grant reports `AUTHORIZATION_REQUIRED`.
+The shipped portable worker runs Linux C11 inside Docker Desktop's Linux VM on
+macOS or Windows. Its target is separate from the physical laptop: `agent_hello`
+retains the physical Darwin/Windows platform (or Linux for headless compute)
+and includes `execution_target`
+with Linux, the worker architecture, profile `portable-c`, its available
+capabilities and empty dependencies. Session endpoints and presence updates
+carry both targets and an optional safe `boundary_reason` code. When the worker
+is unavailable, generation/review remains available and generated execution
+stays blocked. An absent local grant reports `AUTHORIZATION_REQUIRED`.
+
+Portable generated programs use standard C11 headers, not Apple frameworks,
+Win32 or Linux/POSIX headers. Host operations go through the trusted native
+broker; broad capability names do not expose host files, credentials, network,
+shells or arbitrary host processes. `files.read`/`files.write` concern only the
+worker's scratch files, and `process.spawn` concerns only contained processes.
+The five native tools continue using the laptop's own SDK and desktop session.
+Linux hosts support headless portable jobs and advertise no native streams.
 
 ## Control endpoints
 
@@ -142,6 +155,7 @@ described in [connected panels](connected-panels.md).
 | Method / path | Behavior |
 | --- | --- |
 | `WS /ws/agents/{device_id}` | Outbound laptop connection, authenticated with that device's agent token. |
+| `POST /api/v1/programs/plan` | Infer an operation and minimal capabilities within the connected worker's advertised scope; returns a `GenerationRequest`, never a grant, saved program or job. |
 | `POST /api/v1/programs/generate` | Generate and save a source draft for review; HTTP 201 `{program_id, program}`. No connected agent or isolation adapter is needed, and no laptop command is sent. |
 | `POST /api/v1/agent-jobs/generate` | Structured request -> Gemini -> local validation/repair -> execution request. |
 | `POST /api/v1/agent-jobs/source` | Already generated source through the same local pipeline; no initial provider call. Compile repair can still invoke Gemini. |
@@ -159,7 +173,7 @@ Execution generation body:
   "request": {
     "description": "Print a JSON object with version 1 and value 42",
     "operation": "compute",
-    "platform": "Darwin",
+    "platform": "Linux",
     "architecture": "arm64",
     "capabilities": [],
     "dependencies": [],
@@ -180,14 +194,49 @@ A saved draft is not a validated executable. Explicitly approved reuse still
 requires a fresh job ID, matching scope, local authorization, compilation,
 preflight, and the installed isolation adapter before execution.
 
-Targets are `Darwin` or `Windows`; architectures are `arm64`, `x86_64`, or `x86`.
-For execution, the connected laptop's advertised target must match. Capabilities/dependencies
-use the existing agent vocabulary and declared dependencies must support the
-target. Gemini returns strictly validated `language: c11`, source (at most
+Native targets are `Darwin` or `Windows`; architectures are `arm64`, `x86_64`, or
+`x86`. Portable targets are `Linux` with `arm64` or `x86_64`, no native
+dependencies, and only worker/broker capabilities. For execution, requests must
+match the connected `execution_target` and its supported capabilities;
+older native adapters without that field retain the physical-target gate.
+Native broker capabilities require `json-v1`; capability-free portable programs
+can still use text output. Gemini returns strictly validated `language: c11`, source (at most
 128 KiB UTF-8), identical operation/target/declarations/output protocol, and a
 bounded summary. The `/source` body additionally supplies that `program` object.
 Metadata cannot broaden the original request. Only the source manifest is sent
 to the agent; output-protocol authorization still comes from local policy.
+
+For automatic access selection, send a planning proposal such as:
+
+```json
+{
+  "description": "Set volume to 35 percent",
+  "platform": "Linux",
+  "architecture": "arm64",
+  "allowed_capabilities": ["audio.volume", "desktop.mouse", "process.inspect"]
+}
+```
+
+The backend authenticates the caller's laptop, requires its connected execution
+target, and rejects a mismatched target or capabilities outside its advertised
+scope before contacting Gemini. Gemini proposes the smallest required subset;
+description/target must stay exact, dependencies remain empty, and output is
+`json-v1`. Unsupported behavior returns `403 CAPABILITY_UNAVAILABLE` rather than
+substituting a different task. A disconnected laptop returns `503 AGENT_OFFLINE`;
+an older agent without an execution target returns
+`503 EXECUTION_TARGET_UNAVAILABLE`. A changed connection/scope during planning
+returns `409 EXECUTION_TARGET_CHANGED`. The existing bounded provider pool and
+deadlines apply. Planning does not store source, create a job, automatically
+reuse a candidate or grant local access. Offline/manual source requests continue
+using `/programs/generate` directly.
+
+Portable broker output is a single object such as
+`{"version":1,"value":null,"janus":[{"tool":"volume","action":"set","args":{"value":35}}]}`.
+At most eight typed commands may request volume, mouse, metrics/process
+snapshots or screen metadata, each covered by its declared capability. A screen
+metadata snapshot does not export pixels; those remain in the opted-in mirror
+stream. The local broker validates the complete command list before applying
+side effects, after the existing fresh-job authorization and worker checks.
 
 Status views contain `job_id`, `device_id`, `state`, `reason`, `repairs`,
 `acknowledgments`, `source_sha256`, `result`, `cancellation_confirmed`, and

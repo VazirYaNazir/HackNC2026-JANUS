@@ -19,6 +19,9 @@ class WorkerPoolBoundary(IsolationBoundary):
     def can_run(self, capabilities=frozenset()):
         return self.boundary.can_run(capabilities)
 
+    def operation_timeout(self, limits, phase):
+        return self.boundary.operation_timeout(limits, phase)
+
     async def compile(self, *args):
         async with self.slots:
             return await self.boundary.compile(*args)
@@ -30,7 +33,7 @@ class WorkerPoolBoundary(IsolationBoundary):
 
 class ValidationService:
     """Local app configuration and replay ledger survive backend reconnects."""
-    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None, max_parallel=4, session_authorization=None):
+    def __init__(self, compiler, policies=None, boundary=None, *, revision_timeout=30, local_platform=None, host_platform=None, max_parallel=4, session_authorization=None):
         if type(max_parallel) is not int or not 1 <= max_parallel <= 4:
             raise ValueError("Parallel job workers must be between 1 and 4")
         self.compiler = compiler
@@ -43,6 +46,7 @@ class ValidationService:
         self.boundary = boundary or IsolationBoundary()
         self.revision_timeout = revision_timeout
         self.local_platform = local_platform
+        self.host_platform = host_platform
         self.max_parallel = max_parallel
         self.seen_jobs = set()
         self.workers = WorkerPoolBoundary(self.boundary, asyncio.Semaphore(max_parallel))

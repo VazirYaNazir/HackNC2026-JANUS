@@ -57,7 +57,7 @@ async def execute_artifact(validation, boundary, policy, stdin_data=""):
         return ExecutionResult("EXECUTION_BLOCKED", "ARTIFACT_INVALID_OR_CONSUMED")
     artifact.consumed = True
     try:
-        result = await asyncio.wait_for(boundary.run(artifact.executable, stdin_data, policy.limits, artifact.job.capabilities), policy.limits.run_seconds)
+        result = await asyncio.wait_for(boundary.run(artifact.executable, stdin_data, policy.limits, artifact.job.capabilities), boundary.operation_timeout(policy.limits, "run"))
         if not valid_output(result, policy):
             return ExecutionResult("EXECUTION_FAILED", "RESOURCE_OR_OUTPUT_LIMIT")
         return ExecutionResult("COMPLETED" if result.returncode == 0 else "EXECUTION_FAILED", None if result.returncode == 0 else "NONZERO_EXIT", result.returncode, result.stdout, result.stderr)

@@ -1,8 +1,8 @@
-import type { Session } from '@janus/client'
+import { executionUnavailable, type Session } from '@janus/client'
 
 const DOCS = 'https://github.com/VazirYaNazir/HackNC2026-Janus/blob/main/README.md'
 const GEMINI = { label: 'Add a Gemini key', href: `${DOCS}#gemini-key` }
-const ISOLATION = { label: 'About isolation adapters', href: `${DOCS}#isolation-adapter` }
+const DOCKER = { label: 'Download Docker Desktop', href: 'https://www.docker.com/products/docker-desktop/' }
 
 export interface GenerationStatus {
   tone: 'ready' | 'warning' | 'idle'
@@ -16,12 +16,12 @@ export function generationStatus(session: Session | null): GenerationStatus {
   const noKey = session.generation_available === false
   const noIsolation = session.target != null && (!session.target.build_boundary_available || !session.target.execution_boundary_available)
   if (noKey && noIsolation) {
-    return { tone: 'warning', text: 'Generation unavailable (no Gemini key), and this laptop can’t run generated programs yet (no isolation adapter). Built-in controls still work.', links: [GEMINI, ISOLATION] }
+    return { tone: 'warning', text: 'Generation unavailable (no Gemini key), and this laptop’s isolated worker is unavailable. Start Docker Desktop, then restart JANUS. Built-in controls still work.', links: [GEMINI, DOCKER] }
   }
   if (noKey) return { tone: 'warning', text: 'Generation unavailable: the backend has no Gemini key. Built-in controls still work.', links: [GEMINI] }
   if (!session.online || !session.target) return { tone: 'warning', text: 'C source generation is available while your laptop agent is offline. Review and download source; connect the agent to request execution.', links: [] }
-  if (noIsolation) return { tone: 'warning', text: 'C source generation is available. Review and download source; running generated programs requires an isolation adapter. Built-in controls still work.', links: [ISOLATION] }
-  return { tone: 'ready', text: 'C source generation is ready. Select a control to configure an execution request.', links: [] }
+  if (noIsolation) return { tone: 'warning', text: `C source generation is available. Review and download source. ${executionUnavailable(session)} Built-in controls still work.`, links: [DOCKER] }
+  return { tone: 'ready', text: 'C source generation and isolated execution are ready. Generate a program to review and run, or select a control to save a reusable action.', links: [] }
 }
 
 export interface MessagingStatus {

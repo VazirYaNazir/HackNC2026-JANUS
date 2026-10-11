@@ -53,9 +53,11 @@ revoke a phone.
 
 The laptop runs the existing `python -m agent.main connect` command with its
 own agent credential and local policy. A compiler, local job grant, and trusted
-installed isolation adapter are necessary for generated execution. No native
-macOS/Windows isolation adapter is included. Without one the agent returns
-`VALIDATION_BLOCKED / BUILD_BOUNDARY_UNAVAILABLE`; without a grant it returns
+installed isolation adapter are necessary for generated execution. The shipped
+portable worker runs Linux C11 inside Docker Desktop's Linux VM on either
+macOS or Windows. Its execution target and available capabilities are advertised
+separately from the physical laptop; native operations use the trusted broker.
+An unavailable worker keeps generated execution blocked; without a grant the agent returns
 `AUTHORIZATION_REQUIRED`. See [local authorization](backend-agent.md#local-agent-initialization).
 Source review can generate and save a C draft while the laptop is offline or
 has no isolation adapter. Draft generation sends no agent commands and does
@@ -63,9 +65,12 @@ not authorize compilation or execution.
 
 ## Publish, pair, and run
 
-1. Add/select a Studio control. Describe its behavior in the assistant and
-   choose its operation, requested capabilities, and platform libraries. The
-   connected agent supplies the target platform/architecture. Preparing an
+1. Add/select a Studio control. Describe its behavior in the assistant. Automatic
+   access selection asks Gemini to propose a minimal operation/capability scope
+   within the connected worker's advertised permissions; advanced settings can
+   narrow access explicitly. The connected agent supplies the execution
+   platform/architecture. Portable requests use standard C11 and no platform
+   libraries. Review the requested access and source before execution. Preparing an
    action publishes the layout and stores its structured action template.
 2. Use **Save & Push** for layout edits. The server validates the logical
    360×780 canvas, IDs, bindings, finite bounds, and non-overlap. Saves include
@@ -187,12 +192,24 @@ exchange. Only controller credentials can use Studio mutation/pairing paths.
 | `POST /api/v1/studio/pairing` | `{code, expires_in_seconds, host, pwa_url}`; public backend address and optional deployed PWA origin. |
 | `POST /api/pair` | `{code, name?}` → `{deviceId, agentDeviceId, token, pcName}`. |
 | `GET /api/v1/agent-jobs` | Up to 50 recent scoped persisted job views. |
+| `POST /api/v1/programs/plan` | `{description, platform, architecture, allowed_capabilities}` → minimal scoped `GenerationRequest`; connected worker required, no job or local grant. |
 | `POST /api/v1/programs/generate` | `GenerationRequest` → HTTP 201 `{program_id, program}` source draft, without a connected agent or execution. |
 | `POST /api/v1/programs/similar` | `GenerationRequest` → `{matches, checked}`. |
 | `POST /api/v1/panel-actions/prepare` | Dispatch payload → effective request, request SHA-256, suggestions. No job is admitted. |
 | `POST /api/v1/panel-actions/dispatch` | `{widget_id, job_id, value?, program_id?, request_sha256?}` → HTTP 202 job view. |
 | `GET /api/v1/agent-jobs/{id}` | Current or persisted scoped job view. |
 | `POST /api/v1/agent-jobs/{id}/cancel` | Cancel; cleanup confirmation requires a local agent reply. |
+
+Session `target` retains physical Darwin/Windows metadata (or Linux for headless
+compute with no native streams) and includes optional
+`execution_target: {platform: "Linux", architecture, profile: "portable-c", capabilities, dependencies: []}`
+and a safe `boundary_reason` code when containment is unavailable. Execution
+admission requires the actual worker target and supported capability subset.
+`files.read`, `files.write` and `process.spawn` apply inside the isolated worker;
+they do not grant host filesystem or host process access. Broker requests for
+volume, mouse, metrics/process inspection and screen metadata require
+`json-v1` output. Offline source review still uses explicit manual scope and
+never dispatches commands. Neither planning nor generation authorizes a run.
 
 `WS /ws` authenticates its first JSON message as
 `{"type":"auth","token":"<phone or controller credential>"}`. It then sends

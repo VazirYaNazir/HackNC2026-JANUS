@@ -181,10 +181,14 @@ describe('Electron session permission approval', () => {
     expect(desktop.spawn).not.toHaveBeenCalled();
     expect(desktop.dialog.showMessageBox).toHaveBeenCalledWith(desktop.win, expect.objectContaining({ defaultId: 1, cancelId: 1 }));
     const disclosure = String(desktop.dialog.showMessageBox.mock.calls[0][1].detail);
-    for (const permission of ['mouse', 'volume', 'screen', 'locking the desktop', 'process inspection', 'read and write files', 'network',
-      'send data externally', 'spawn processes', 'administrator', 'persistent', 'outputs', 'paired phones', 'isolation adapter', 'Approval ends']) {
+    for (const permission of ['mouse', 'volume', 'screen', 'locking the desktop', 'process inspection', 'Docker Desktop',
+      'start an existing installation', 'prepare its image', 'read and write only temporary worker files', 'spawn bounded worker processes',
+      'locally granted native controls through checked commands', 'Job outputs', 'paired phones', 'Approval ends']) {
       expect(disclosure).toContain(permission);
     }
+    expect(disclosure).toContain('The included worker cannot access laptop files, use the network, send data externally, request administrator access, or make persistent changes.');
+    expect(disclosure).toContain('A custom adapter must independently enforce any additional locally granted permissions.');
+    expect(disclosure).not.toContain('require an installed isolation adapter');
   });
 
   it('starts the wrapper only after approval and sends one private stdin marker', async () => {
@@ -241,5 +245,47 @@ describe('Electron session permission approval', () => {
     desktop.child.stdin.emit('error', new Error('approval pipe closed'));
     expect(desktop.child.kill).toHaveBeenCalledTimes(1);
     await expect(desktop.invoke('janus:agent-status')).resolves.toEqual({ running: false });
+  });
+});
+
+describe('Electron external setup links', () => {
+  const docker = 'https://www.docker.com/products/docker-desktop/';
+  const docs = 'https://github.com/VazirYaNazir/HackNC2026-Janus/blob/main/README.md#isolation-adapter';
+
+  it.each([docker, docs])('opens the approved setup link in the system browser: %s', url => {
+    const desktop = boot();
+    const open = desktop.win.webContents.setWindowOpenHandler.mock.calls[0][0] as (input: { url: string }) => unknown;
+    expect(open({ url })).toEqual({ action: 'deny' });
+    expect(desktop.shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
+  });
+
+  it.each([
+    'http://www.docker.com/products/docker-desktop/',
+    'https://docker.com/products/docker-desktop/',
+    'https://www.docker.com.evil.test/products/docker-desktop/',
+    'https://evil-www.docker.com/products/docker-desktop/',
+    'https://user:secret@www.docker.com/products/docker-desktop/',
+    'https://www.docker.com@evil.test/products/docker-desktop/',
+    'https://www.docker.com:8443/products/docker-desktop/',
+    'https://www.docker.com:443/products/docker-desktop/',
+    'https://www.docker.com/products/docker-desktop',
+    'https://www.docker.com/products/docker-desktop/evil',
+    'https://www.docker.com/products/docker-desktop-evil/',
+    `${docker}?redirect=https://evil.test`, `${docker}#token=secret`,
+    'https://www.docker.com/other/../products/docker-desktop/',
+    'https://www.docker.com/products/docker-desktop/%2f..%2f..%2fevil',
+    ` ${docker}`, `${docker}\n`, 'https://www.docker.com\\products\\docker-desktop\\',
+    'file:///tmp/install-docker', 'javascript:alert(1)', '//evil.test', 'not a URL',
+    'https://github.com.evil.test/VazirYaNazir/HackNC2026-Janus/README.md',
+    'https://user:secret@github.com/VazirYaNazir/HackNC2026-Janus/README.md',
+    'https://github.com/VazirYaNazir/HackNC2026-Janus/../../attacker/project',
+    'https://github.com/VazirYaNazir/HackNC2026-Janus/%2e%2e/%2e%2e/attacker/project',
+    'https://github.com/VazirYaNazir/HackNC2026-Janus/README.md?redirect=https://evil.test',
+    'https://github.com/VazirYaNazir/HackNC2026-Janus-evil/README.md',
+  ])('denies unapproved or malformed external links: %s', url => {
+    const desktop = boot();
+    const open = desktop.win.webContents.setWindowOpenHandler.mock.calls[0][0] as (input: { url: string }) => unknown;
+    expect(open({ url })).toEqual({ action: 'deny' });
+    expect(desktop.shell.openExternal).not.toHaveBeenCalled();
   });
 });

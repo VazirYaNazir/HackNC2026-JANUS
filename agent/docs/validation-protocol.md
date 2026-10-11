@@ -1,16 +1,57 @@
 # Generated C validation and backend repair
 
 The agent implements the job contract, bounded repair state machine, synthetic
-preflight interface, and separate execution authorization gate. All changes are
-inside `agent/`. Generation and LLM repair belong to the backend; no cloud LLM
+preflight interface, and separate execution authorization gate. Generation and LLM repair belong to the backend; no cloud LLM
 API key is stored or used by the laptop agent.
 
-**Generated native code is blocked by default.** This implementation does not
-supply a verified macOS or Windows isolation worker. The CLI uses an unavailable
-`IsolationBoundary`, so an otherwise valid, locally granted job returns
-`VALIDATION_BLOCKED` / `BUILD_BOUNDARY_UNAVAILABLE` before compilation. Neither
-a policy file nor a backend message can enable an isolation worker. The five
-repository-owned native tools retain their existing build/run/stream workflow.
+JANUS ships `agent.container:create_boundary`, automatically selected by the
+registered `connect` CLI unless a custom local adapter is configured. On macOS
+and Windows it uses Docker Desktop's local Linux engine to compile and run
+portable C. The physical OS still runs the five repository-owned native tools;
+generated C targets the separate worker's Linux platform and architecture.
+An unavailable or unverified worker blocks generated compilation and execution.
+Neither a policy file nor a backend message can bypass that check.
+
+## Prepare the included worker
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and use
+its local Linux engine. `npm start` starts an existing installation if needed and
+prepares the image after local startup consent. `npm run setup` also prepares it,
+without authorizing or running generated programs. From the repository root:
+
+```sh
+uv run --locked --directory agent python -m agent.main worker status
+uv run --locked --directory agent python -m agent.main worker prepare
+```
+
+`status` returns JSON with `available`, `reason` and `execution_target`.
+`prepare` builds the repository's trusted image, then probes its actual kernel
+restrictions; the first build may take two minutes. It does not install Docker
+Desktop or grant execution consent. Missing Docker, a stopped daemon, a missing
+image, a remote or Windows engine, unsupported architecture, or failed enforcement
+checks keep the worker unavailable. Native controls remain usable with local and
+OS approval. Fix the reported prerequisite and restart JANUS or prepare the worker
+and reconnect the agent. There is no direct host-execution fallback.
+
+A ready target advertises `platform: Linux`, `architecture: arm64` or `x86_64`,
+`profile: portable-c`, supported capabilities and an empty dependency list. Standard
+C uses the image's Linux compiler; macOS frameworks and Windows SDK libraries are
+not supplied to generated programs.
+
+| Included worker scope | Enforced behavior |
+| --- | --- |
+| `files.read`, `files.write` | Per-job temporary scratch files; no laptop directory or home/credential mount. Writes require the write grant and disappear when the job container is removed |
+| `process.spawn` | Child processes inside the worker, within process, CPU and memory limits |
+| `audio.volume`, `desktop.mouse` | Locally granted volume and mouse actions through checked native commands |
+| `process.inspect` | Bounded native metrics and relevant-process snapshots |
+| `desktop.screen` | Screen metadata when locally enabled; image frames remain on the opted-in native mirror stream |
+
+The typed native broker supplies granted snapshots and checks a generated job's
+JSON command list before applying any native effects. It exposes no arbitrary
+shell, host path, credential or direct native API handle. Network access,
+`external.send`, `admin`, `persistent.write` and arbitrary laptop file access are
+unsupported. Advertising a capability or including it in a policy cannot add it
+to the worker's enforced scope.
 
 ## Local policy
 
@@ -41,14 +82,19 @@ runtime inputs. A minimal deterministic computation grant is:
 }
 ```
 
+Run from the repository root with this laptop's own `AGENT_TOKEN` in its local
+environment:
+
 ```sh
-uv run --no-sync python -m agent.main stream \
-  --url wss://your-backend/ws/agent \
+uv run --locked --directory agent python -m agent.main connect \
+  --url wss://your-backend/ws/agents/my-laptop --device-id my-laptop \
   --validation-policy .validation-policy.json
 ```
 
-This registers grants; generated builds remain blocked until the local app
-provides a verified boundary. Unknown policy fields are rejected, including
+This registers grants and selects the included worker. The example permits
+validation and synthetic preflight, but sets `execute_authorized` and output
+sharing to false. Generated builds remain blocked when the worker is unavailable.
+Unknown policy fields are rejected, including
 worker commands and purported sandbox-verification flags. The policy file is
 limited to 256 KiB and 256 explicit grants. Resource limits can be reduced by a
 local Python application through `ExecutionPolicy(limits=ResourceLimits(...))`.
@@ -75,7 +121,7 @@ request ID after parsing its full manifest. It preserves the operation, requeste
 capability/dependency subset, and `output_protocol`; names outside the local scope
 are denied. Explicit per-job grants take precedence. Grant consumption, artifact
 integrity, reconnection replay protection and the four-worker limit still apply.
-Neither session consent nor broad capability names supply an isolation adapter.
+Session consent cannot bypass missing worker prerequisites or unsupported scopes.
 The session `limits` object can reduce the documented worker budgets but cannot
 exceed their supported maxima. A narrowed scope may list specific `operations`
 instead of `"*"`, and restrict `output_protocols` to `text` or `json-v1`.
@@ -91,11 +137,15 @@ messages. Fixtures must be harmless synthetic data, not private runtime data.
 Supported capability names are `files.read`, `files.write`, `network`,
 `external.send`, `desktop.mouse`, `desktop.screen`, `audio.volume`,
 `process.inspect`, `process.spawn`, `admin`, and `persistent.write`. Grant only
-those required by the requested operation. A declaration is not an OS permission
-or proof that a program follows the request. The worker must enforce access to
-specific locally granted paths, handles, and APIs.
+those required by the requested operation and advertised by the ready worker.
+A declaration is not an OS permission or proof that a program follows the request.
+The included worker supports only the scratch and broker scopes above. Custom
+workers must enforce access to their specific locally granted paths, handles and APIs.
 
-Available dependency declarations map to fixed local compiler arguments:
+The following native dependency declarations remain part of the protocol for
+explicit custom adapters targeting `Darwin` or `Windows`. They map to fixed local
+compiler arguments and require the matching physical SDK/frameworks. They are
+not dependencies available inside the included portable Linux worker:
 
 | Dependency | Target | Libraries/frameworks |
 | --- | --- | --- |
@@ -108,11 +158,14 @@ Available dependency declarations map to fixed local compiler arguments:
 
 ## Backend messages
 
-Use the existing authenticated agent WebSocket. Its `agent_hello.validation`
-field advertises protocol version 1, source/attempt limits, and whether the local
-build and execution boundaries are available. The registered backend connection
-wraps these messages in its version 2 authenticated device envelope and forwards
-job events to connected Studio/PWA clients.
+Use the existing authenticated agent WebSocket. The registered protocol version 2
+`agent_hello` payload advertises the physical host platform and architecture,
+attempt/worker limits, and build/run availability. A ready included worker adds
+its separate `execution_target`; an unavailable worker reports `boundary_reason`.
+Backend planning and generated-job validation use that execution target, while
+built-in controls use the physical OS. Legacy validation messages retain their
+version 1 contract inside the version 2 authenticated device envelope. Job events
+are forwarded to connected Studio/PWA clients.
 
 An initial job has exactly these fields:
 
@@ -124,18 +177,21 @@ An initial job has exactly these fields:
   "language": "c11",
   "source": "#include <stdio.h>\nint main(void) { int x; if (scanf(\"%d\", &x) != 1) return 1; printf(\"%d\\n\", x * 2); return 0; }",
   "operation": "compute",
-  "platform": "Darwin",
+  "platform": "Linux",
   "architecture": "arm64",
   "capabilities": [],
   "dependencies": [],
-  "output_protocol": "json-v1"
+  "output_protocol": "text"
 }
 ```
 
 Job IDs use 1–128 ASCII letters, digits, underscores, or hyphens. Operation names
 use lowercase ASCII letters, digits, dots, underscores, or hyphens, begin with a
-letter, and are at most 64 characters. Platforms are `Darwin` or `Windows` and
-must match the machine. Architecture aliases normalize `AMD64` to `x86_64` and
+letter, and are at most 64 characters. Platforms are `Darwin`, `Windows` or `Linux`
+and must match the locally configured execution target. The example targets an
+arm64 Linux worker; use its advertised architecture. A `Darwin` or `Windows`
+generated request requires an explicitly installed custom adapter for that target,
+rather than inheriting access from the laptop's physical OS. Architecture aliases normalize `AMD64` to `x86_64` and
 `aarch64` to `arm64`.
 `output_protocol` is `text` or `json-v1`. Legacy messages may omit it, defaulting
 to `text`; newly generated backend jobs retain their requested protocol.
@@ -157,9 +213,9 @@ For a genuine compilation error, the agent sends:
   "job_id": "job-123",
   "attempt": 1,
   "reason": "COMPILE_ERROR",
-  "platform": "Darwin",
+  "platform": "Linux",
   "architecture": "arm64",
-  "compiler": "clang",
+  "compiler": "worker-gcc",
   "language_standard": "c11",
   "source_sha256": "<hash of failing source>",
   "diagnostics": "program.c:9:5: error: undeclared identifier"
@@ -202,7 +258,7 @@ The final validation event contains no binary, path, fixture, or runtime data:
   "status": "READY_FOR_EXECUTION",
   "reason": null,
   "attempts": 2,
-  "compiler": "clang",
+  "compiler": "worker-gcc",
   "source_sha256": "<hash of final source>",
   "diagnostics": "",
   "preflight": "PREFLIGHT_PASSED"
@@ -266,13 +322,16 @@ The WebSocket receiver keeps handling telemetry, existing controls, and ping/add
 jobs while validation waits. Inbound frames are capped at 1 MiB to accommodate
 JSON escaping; decoded source remains capped at 128 KiB.
 
-## Implementing the local worker
+## Custom local workers
 
 `IsolationBoundary` in `agent/isolation.py` defines async `compile` and `run`
 methods returning `CompileResult` and `ProcessResult`. A trusted local app passes
 its audited adapter to `ValidationService(compiler, policies, boundary=worker)`.
-The default CLI supplies no worker. The tests use a simulated adapter that never
-executes generated code; it must not be used as a production implementation.
+The registered CLI selects the included Docker worker automatically. Setting
+`AGENT_ISOLATION_ADAPTER=your_local_module:create_boundary` or `--isolation-adapter`
+replaces it with an explicitly installed local factory. A module setting alone
+is not an installation or an enforcement audit. Protocol unit tests use a simulated
+adapter that never executes generated code; it must not be used in production.
 
 An adapter may advertise build/run guarantees only after verifying OS enforcement
 of filesystem, credentials, network, CPU, memory, subprocess, disk, deadline, and
@@ -294,6 +353,10 @@ descendants; Python deadlines and output checks provide additional guards. On
 timeout, cancellation, or disconnect the adapter must kill and reap its entire
 worker tree before returning. It must protect the artifact against replacement
 between hash verification and execution.
+Trusted container creation has a separate 20-second watchdog allowance before
+the guest starts. It does not extend the guest's 30-second compile or 3-second
+run deadlines, CPU budget or other resource caps. Cancellation waits for a pending
+create transaction to finish before removing its container, preventing late orphans.
 These are per-worker budgets: four concurrent workers can require up to 2 GiB of
 memory and 64 worker processes. Choose a smaller local parallel limit or smaller
 resource budgets for machines that cannot provide that capacity.
@@ -315,7 +378,22 @@ missing boundaries, fixtures, artifact tampering, single-use execution, local
 output opt-in, timeout/resource handling, and disconnect cleanup. A real local
 WebSocket test handles ping while awaiting a repair. A trusted author-written
 C fixture tests structured compiler results without executing generated code.
-Native SDK builds run only on macOS/Windows and are skipped on Linux. Real worker
-containment and native permissions still require verification on both targets.
+Native SDK builds run only on macOS/Windows and are skipped on Linux. Normal
+discovery skips the real Docker tests unless explicitly enabled. Prepare the image,
+then run from the repository root:
+
+```sh
+JANUS_TEST_CONTAINER=1 uv run --locked --directory agent python -m unittest tests.test_container_integration -v
+```
+
+These 17 tests exercise real compilation/execution, host path/header and credential
+isolation, scratch write grants and freshness, network denial, process grants and
+limits, detached-child cleanup, independent output caps, memory/disk/CPU budgets,
+wall deadlines, cancellation during execution and container creation, and parallel job separation. Opting in with an
+unavailable boundary fails instead of reporting containment as skipped. Native
+permissions and Docker Desktop installation/startup still need verification on
+the intended macOS/Windows laptop; Linux engine results do not establish those.
+For actual Gemini generation and separately enabled repair checks, see
+[complete application testing](../../docs/testing.md#real-gemini-and-worker-integration).
 See [the detailed test matrix](testing.md) for per-module coverage and concurrency
 regressions.

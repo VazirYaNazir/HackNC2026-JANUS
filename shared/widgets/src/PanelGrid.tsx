@@ -17,6 +17,7 @@ export interface PanelGridProps {
   history?: Record<string, number[]>;
   /** Run state (or the agent's reply) of inputs, keyed by widget id. */
   states?: Record<string, WidgetState>;
+  errors?: Record<string, string>;
   selectedId?: string | null;
   onSelect?: WidgetProps["onSelect"];
   onTrigger?: WidgetProps["onTrigger"];
@@ -41,6 +42,7 @@ export default function PanelGrid({
   data = {},
   history = {},
   states = {},
+  errors = {},
   selectedId = null,
   onSelect,
   onTrigger,
@@ -75,6 +77,7 @@ export default function PanelGrid({
                 value={isInputWidget(widget) ? (widget.action === 'native_volume' ? data['volume.percent'] ?? values[widget.id] : values[widget.id]) : data[widget.source] ?? undefined}
                 history={isInputWidget(widget) ? undefined : history[widget.source]}
                 state={states[widget.id]}
+                error={errors[widget.id]}
                 telemetryStatus={telemetryStatus(widget, data)}
                 selected={selectedId === widget.id}
                 onSelect={onSelect}

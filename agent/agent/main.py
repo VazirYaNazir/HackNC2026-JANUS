@@ -1,7 +1,10 @@
 """Local native-tool commands and an authenticated live backend connection."""
 import argparse
 import asyncio
+from contextlib import redirect_stdout
+import json
 import os
+import platform
 import subprocess
 import sys
 
@@ -13,6 +16,9 @@ def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(description="JANUS laptop tools (macOS / Windows)")
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("build", help="Compile all five standalone tools")
+    worker = commands.add_parser("worker", help="Prepare or inspect the shipped portable-C execution worker")
+    worker.add_argument("action", choices=("status", "prepare"))
+    worker.add_argument("--isolation-adapter", default=(os.getenv("AGENT_ISOLATION_ADAPTER") or "").strip() or None, help="Preserve an explicitly configured local adapter")
     run = commands.add_parser("run", help="Build and run one tool; JSON Lines on stdout")
     run.add_argument("tool", choices=TOOLS)
     run.add_argument("args", nargs=argparse.REMAINDER)
@@ -32,7 +38,7 @@ def parser() -> argparse.ArgumentParser:
     approval.add_argument("--approve-session", action="store_true", help="Ask this laptop's terminal to approve the local session policy for fresh jobs")
     approval.add_argument("--session-approval-stdin", action="store_true", help="Read one local startup approval from the already-consented launcher's stdin pipe")
     connection.add_argument("--workers", type=int, default=4, help="Local concurrent worker limit, 1–4")
-    connection.add_argument("--isolation-adapter", default=os.getenv("AGENT_ISOLATION_ADAPTER"), help="Audited local worker module:factory; never provided by the backend")
+    connection.add_argument("--isolation-adapter", default=(os.getenv("AGENT_ISOLATION_ADAPTER") or "").strip() or None, help="Local worker module:factory; defaults to the shipped Docker worker")
     connection.add_argument("--native-tools", action="store_true", help="Enable trusted built-in telemetry, volume and mouse control")
     connection.add_argument("--screen", action="store_true", help="Also share primary-screen frames; requires --native-tools")
     connection.add_argument("--screen-interval", type=int, default=1000)
@@ -46,6 +52,23 @@ def main(argv=None) -> int:
     cli = parser()
     options = cli.parse_args(argv)
     try:
+        if options.command == "worker":
+            from .isolation import load_boundary
+            # Installer progress belongs on stderr; stdout is a machine-readable report.
+            with redirect_stdout(sys.stderr):
+                if options.action == "prepare" and not options.isolation_adapter:
+                    from .container import prepare_worker
+                    report = asyncio.run(prepare_worker())
+                else:
+                    boundary = load_boundary(options.isolation_adapter)
+                    describe = getattr(boundary, "describe", None)
+                    report = describe() if callable(describe) else {
+                        "available": boundary.can_build() and boundary.can_run(),
+                        "reason": None if boundary.can_build() and boundary.can_run() else "WORKER_UNAVAILABLE",
+                        "execution_target": None,
+                    }
+            print(json.dumps(report, allow_nan=False))
+            return 0 if options.action == "status" or report.get("available") else 1
         if options.command == "build":
             for name, path in build_tools().items():
                 print(f"{name}: {path}")
@@ -74,11 +97,21 @@ def main(argv=None) -> int:
             if options.approve_session or options.session_approval_stdin:
                 from .authorization import approve_session, load_session_scope
                 session_authorization = approve_session(load_session_scope(options.validation_policy), launcher_pipe=options.session_approval_stdin)
-            compiler = detect_compiler()
-            validation = ValidationService(compiler, policies, boundary=load_boundary(options.isolation_adapter), max_parallel=options.workers, session_authorization=session_authorization)
+            boundary = load_boundary(options.isolation_adapter)
+            worker_compiler = getattr(boundary, "compiler", None)
+            target = getattr(boundary, "execution_target", None)
+            if isinstance(target, dict) and boundary.can_build() and boundary.can_run():
+                local_platform = (target["platform"], target["architecture"])
+            else:
+                local_platform = None
+            host_compiler = detect_compiler() if options.native_tools or worker_compiler is None else None
+            compiler = worker_compiler or host_compiler
+            validation = ValidationService(compiler, policies, boundary=boundary, max_parallel=options.workers,
+                                           session_authorization=session_authorization, local_platform=local_platform,
+                                           host_platform=(platform.system(), platform.machine()))
             if options.native_tools:
                 names = TOOLS if options.screen else tuple(name for name in TOOLS if name != "screen")
-                binaries = build_tools(names, compiler=compiler)
+                binaries = build_tools(names, compiler=host_compiler)
                 asyncio.run(run_connection(options, token, validation, binaries))
             else:
                 asyncio.run(run_connection(options, token, validation))
@@ -98,7 +131,11 @@ def main(argv=None) -> int:
         return 0
     except KeyboardInterrupt:
         return 130
-    except (CompilerError, OSError, ValueError) as error:
+    except (CompilerError, OSError, ValueError, RuntimeError) as error:
+        if options.command == "worker":
+            print(json.dumps({"available": False, "reason": "WORKER_PREPARATION_FAILED", "execution_target": None}))
+            print("Local worker check failed. Check Docker Desktop or the configured local adapter and retry.", file=sys.stderr)
+            return 1
         print(f"Agent error: {error}", file=sys.stderr)
         return 1
 

@@ -149,10 +149,10 @@ class TrustedFixtureBoundary(IsolationBoundary):
 
 
 class RunningServer:
-    async def start(self, *, sdk=None, settings=None, store=None, port=0):
-        self.sdk = sdk or FakeSDK()
+    async def start(self, *, sdk=None, provider=None, settings=None, store=None, port=0):
+        self.sdk = (sdk or FakeSDK()) if provider is None else None
         settings = settings or RuntimeSettings(require_tls=False, heartbeat_interval=.04, heartbeat_timeout=.5, send_timeout=.5)
-        self.runtime = AgentRuntime.create(registry(), GeminiProvider(client=self.sdk, timeout=2), settings, store=store)
+        self.runtime = AgentRuntime.create(registry(), provider or GeminiProvider(client=self.sdk, timeout=2), settings, store=store)
         @asynccontextmanager
         async def lifespan(app):
             yield

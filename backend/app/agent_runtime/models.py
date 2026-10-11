@@ -11,6 +11,21 @@ MAX_SOURCE_BYTES = 128 * 1024
 IDENTIFIER = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
 CAPABILITIES = frozenset({"files.read", "files.write", "network", "external.send", "desktop.mouse", "desktop.screen", "audio.volume", "process.inspect", "process.spawn", "admin", "persistent.write"})
 DEPENDENCIES = {"coreaudio": "Darwin", "applicationservices": "Darwin", "iokit": "Darwin", "imageio": "Darwin", "mac-system": "Darwin", "win32": "Windows"}
+PORTABLE_CAPABILITIES = frozenset({"files.read", "files.write", "process.spawn", "audio.volume", "desktop.mouse", "desktop.screen", "process.inspect"})
+BROKER_CAPABILITIES = frozenset({"audio.volume", "desktop.mouse", "desktop.screen", "process.inspect"})
+
+
+def declarations(platform, architecture, capabilities, dependencies, output_protocol=None):
+    for values, allowed in ((capabilities, CAPABILITIES), (dependencies, DEPENDENCIES)):
+        if len(set(values)) != len(values) or not set(values) <= set(allowed):
+            raise ValueError("Invalid capability or dependency declaration")
+    if any(DEPENDENCIES[name] != platform for name in dependencies):
+        raise ValueError("Dependency does not support the requested platform")
+    if platform == "Linux":
+        if architecture not in ("arm64", "x86_64") or not set(capabilities) <= PORTABLE_CAPABILITIES:
+            raise ValueError("Unsupported portable worker target or capability")
+        if set(capabilities) & BROKER_CAPABILITIES and output_protocol != "json-v1":
+            raise ValueError("Native broker requests require json-v1 output")
 
 
 class StrictModel(BaseModel):
@@ -20,7 +35,7 @@ class StrictModel(BaseModel):
 class GenerationRequest(StrictModel):
     description: str = Field(min_length=1, max_length=8192)
     operation: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
-    platform: Literal["Darwin", "Windows"]
+    platform: Literal["Darwin", "Windows", "Linux"]
     architecture: Literal["arm64", "x86_64", "x86"]
     capabilities: list[str] = Field(default_factory=list, max_length=11)
     dependencies: list[str] = Field(default_factory=list, max_length=7)
@@ -28,11 +43,7 @@ class GenerationRequest(StrictModel):
 
     @model_validator(mode="after")
     def declarations(self) -> "GenerationRequest":
-        for values, allowed in ((self.capabilities, CAPABILITIES), (self.dependencies, DEPENDENCIES)):
-            if len(set(values)) != len(values) or not set(values) <= set(allowed):
-                raise ValueError("Invalid capability or dependency declaration")
-        if any(DEPENDENCIES[name] != self.platform for name in self.dependencies):
-            raise ValueError("Dependency does not support the requested platform")
+        declarations(self.platform, self.architecture, self.capabilities, self.dependencies, self.output_protocol)
         return self
 
 
@@ -40,12 +51,17 @@ class GeneratedProgram(StrictModel):
     language: Literal["c11"]
     source: str = Field(min_length=1, max_length=MAX_SOURCE_BYTES)
     operation: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
-    platform: Literal["Darwin", "Windows"]
+    platform: Literal["Darwin", "Windows", "Linux"]
     architecture: Literal["arm64", "x86_64", "x86"]
     capabilities: list[str] = Field(max_length=11)
     dependencies: list[str] = Field(max_length=7)
     output_protocol: Literal["text", "json-v1"]
     summary: str = Field(min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def declarations(self) -> "GeneratedProgram":
+        declarations(self.platform, self.architecture, self.capabilities, self.dependencies, self.output_protocol)
+        return self
 
     @field_validator("source")
     @classmethod
@@ -113,14 +129,64 @@ def safe_diagnostics(value: Any) -> str:
     return value
 
 
+class ExecutionTarget(StrictModel):
+    platform: Literal["Linux"]
+    architecture: Literal["arm64", "x86_64"]
+    profile: Literal["portable-c"]
+    capabilities: list[str] = Field(max_length=7)
+    dependencies: list[str] = Field(default_factory=list, max_length=0)
+
+    @field_validator("capabilities")
+    @classmethod
+    def supported_capabilities(cls, capabilities):
+        if len(set(capabilities)) != len(capabilities) or not set(capabilities) <= PORTABLE_CAPABILITIES:
+            raise ValueError("Unsupported portable worker capabilities")
+        return capabilities
+
+
+class PlanRequest(StrictModel):
+    description: str = Field(min_length=1, max_length=8192)
+    platform: Literal["Darwin", "Windows", "Linux"]
+    architecture: Literal["arm64", "x86_64", "x86"]
+    allowed_capabilities: list[str] = Field(max_length=11)
+
+    @field_validator("description")
+    @classmethod
+    def nonblank_description(cls, description):
+        if not description.strip():
+            raise ValueError("Description must not be blank")
+        return description
+
+    @field_validator("allowed_capabilities")
+    @classmethod
+    def valid_capabilities(cls, capabilities):
+        if len(set(capabilities)) != len(capabilities) or not set(capabilities) <= CAPABILITIES:
+            raise ValueError("Invalid allowed capabilities")
+        return capabilities
+
+    def check_scope(self, request: GenerationRequest):
+        if (request.description, request.platform, request.architecture) != (self.description, self.platform, self.architecture):
+            raise ValueError("Provider changed the requested plan scope")
+        if not set(request.capabilities) <= set(self.allowed_capabilities) or request.dependencies or request.output_protocol != "json-v1":
+            raise ValueError("Provider expanded the requested plan scope")
+
+
 class Hello(StrictModel):
-    platform: Literal["Darwin", "Windows"]
+    platform: Literal["Darwin", "Windows", "Linux"]
     architecture: Literal["arm64", "x86_64", "x86"]
     max_workers: int = Field(ge=1, le=4)
     max_attempts: Literal[3]
     build_boundary_available: bool
     execution_boundary_available: bool
+    execution_target: ExecutionTarget | None = None
+    boundary_reason: Annotated[str, Field(pattern=r"^[A-Z_]{1,64}$")] | None = None
     native_streams: list[Literal["volume", "mouse", "metrics", "processes", "screen"]] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def native_host(self) -> "Hello":
+        if self.platform == "Linux" and self.native_streams:
+            raise ValueError("Linux hosts support only headless portable execution")
+        return self
 
 
 HASH = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
@@ -129,7 +195,7 @@ HASH = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 class RepairPayload(StrictModel):
     attempt: int = Field(ge=1, le=2)
     reason: Literal["COMPILE_ERROR"]
-    platform: Literal["Darwin", "Windows"]
+    platform: Literal["Darwin", "Windows", "Linux"]
     architecture: Literal["arm64", "x86_64", "x86"]
     compiler: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
     language_standard: Literal["c11"]

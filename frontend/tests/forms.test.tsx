@@ -20,7 +20,7 @@ describe('frontend forms and toolbars', () => {
     fireEvent.click(screen.getByLabelText('coreaudio')); fireEvent.click(screen.getByLabelText('audio.volume'));
     fireEvent.change(screen.getByLabelText('Platform'), { target: { value: 'Windows' } }); fireEvent.click(screen.getByLabelText('win32'));
     fireEvent.submit(screen.getByRole('form', { name: 'AI assistant toolbar' }));
-    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({ description: 'set volume', platform: 'Windows', dependencies: ['win32'], capabilities: ['audio.volume'] })));
+    await waitFor(() => expect(generate).toHaveBeenCalledWith(expect.objectContaining({ description: 'set volume', platform: 'Windows', dependencies: ['win32'], capabilities: ['audio.volume'] }), false, expect.any(Array)));
   });
   it('uses the connected agent target and disables Generate while an operation is in progress', async () => {
     let finish!: () => void; const generate = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));

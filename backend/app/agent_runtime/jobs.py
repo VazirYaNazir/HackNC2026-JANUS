@@ -70,8 +70,12 @@ class JobManager:
         if identity.device_id != device_id:
             raise PipelineError("DEVICE_FORBIDDEN", 403)
         connection = self.hub.get(device_id)
-        if (request.platform, request.architecture) != (connection.hello.platform, connection.hello.architecture):
+        target = connection.hello.execution_target
+        requested_target = (target.platform, target.architecture) if target is not None else (connection.hello.platform, connection.hello.architecture)
+        if (request.platform, request.architecture) != requested_target:
             raise PipelineError("TARGET_MISMATCH", 422)
+        if target is not None and (not set(request.capabilities) <= set(target.capabilities) or not set(request.dependencies) <= set(target.dependencies)):
+            raise PipelineError("CAPABILITY_UNAVAILABLE", 403)
         if self.closing or (self.store is None and len(self.seen) >= 4096):
             raise PipelineError("SERVICE_CAPACITY", 503)
         if job_id in self.seen:

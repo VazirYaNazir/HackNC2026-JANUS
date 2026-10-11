@@ -324,7 +324,7 @@ async def validate_job(job, compiler, request_revision, *, policy=None, boundary
             result.reason = "CAPABILITY_DENIED"
             return result
         target, arch = local_platform or (platform.system(), platform.machine())
-        if target not in ("Darwin", "Windows") or job.platform != target or architecture(job.architecture) != architecture(arch) or any(DEPENDENCIES[dep][0] != target for dep in job.dependencies):
+        if target not in ("Darwin", "Windows", "Linux") or job.platform != target or architecture(job.architecture) != architecture(arch) or any(DEPENDENCIES[dep][0] != target for dep in job.dependencies):
             result.reason = "PLATFORM_UNSUPPORTED"
             return result
         result.source_sha256 = digest(check_source(job.source, job, policy))
@@ -361,7 +361,7 @@ async def validate_job(job, compiler, request_revision, *, policy=None, boundary
             src.write_bytes(raw)
             result.attempts = attempt
             try:
-                compiled = await asyncio.wait_for(boundary.compile(compiler, src, exe, policy.limits, dependency_args(job, compiler)), policy.limits.compile_seconds)
+                compiled = await asyncio.wait_for(boundary.compile(compiler, src, exe, policy.limits, dependency_args(job, compiler)), boundary.operation_timeout(policy.limits, "compile"))
             except TimeoutError:
                 result.status, result.reason = "VALIDATION_FAILED", "COMPILE_TIMEOUT"
                 return result
@@ -465,7 +465,7 @@ async def preflight(result, boundary):
         for fixture in fixtures:
             if not await finish_thread(artifact.verify) or not artifact.valid:
                 raise BoundaryUnavailable("Artifact invalidated")
-            outcome = await asyncio.wait_for(boundary.run(artifact.executable, fixture.stdin, policy.limits, frozenset()), policy.limits.run_seconds)
+            outcome = await asyncio.wait_for(boundary.run(artifact.executable, fixture.stdin, policy.limits, frozenset()), boundary.operation_timeout(policy.limits, "run"))
             if not valid_output(outcome, policy) or outcome.returncode != fixture.returncode or (policy.fixtures and outcome.stdout != fixture.stdout):
                 result.status, result.reason, result.preflight = "VALIDATION_FAILED", "PREFLIGHT_FAILED", "PREFLIGHT_FAILED"
                 result.close()

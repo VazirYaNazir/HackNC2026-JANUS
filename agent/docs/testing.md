@@ -32,7 +32,9 @@ Linux needs a host C compiler (`cc`) for author-written native test harnesses.
 macOS needs Xcode Command Line Tools and its SDK/frameworks. Windows needs MSVC
 and the Windows SDK, MinGW-w64, or the agent's verified Zig fallback. Native
 harnesses compile with C11 and the same target libraries as production tools.
-No generated native source is compiled or executed by validation tests.
+Ordinary protocol validation tests use a simulated boundary. Opt-in container
+integration tests compile and execute their trusted fixtures only inside the
+included worker; they never execute those artifacts on the host.
 
 ## Python module matrix
 
@@ -44,6 +46,9 @@ No generated native source is compiled or executed by validation tests.
 | `native.py` | `test_native_builder.py`, `test_agent.py` | Framework/library selection, all-five concurrent builds, deterministic output order, duplicate names, worker bounds, empty/invalid requests, shared cache locks, source/compiler invalidation, corrupt metadata, missing output, staged publication, failed/interrupted rebuild cleanup. |
 | `process.py` | `test_process.py`, `test_validation.py` | Real simultaneous pipe output, UTF-8 replacement, nonzero exits, exact/exceeded byte limits, unavailable command, wall deadline, inherited child pipes, KeyboardInterrupt, thread cancellation before/during launch, process groups, mocked Windows taskkill success/failure/exit races, reaping, owned file-read completion before cancellation cleanup. |
 | `isolation.py` | `test_contracts.py`, `test_adapter_loading.py` | Every resource budget's type/range, finite deadlines, required guarantee sets, capability support, unavailable build/run implementation, explicit local adapter factory loading/conformance, rejected paths/expressions/blocking methods, sanitized errors. |
+| `container.py` | `test_container.py`, `test_container_integration.py` | Automatic shipped worker selection, local Docker endpoint and engine restrictions, image identity, actual-enforcement probe requirements, bounded prepare/startup, clean client environment, target/compiler validation, container limits, cancellation/cleanup including pending creation, capability rejection and broker routing. The 17 opt-in integration tests exercise the real engine instead of mocks. |
+| `broker.py` | `test_broker.py`, `test_live_native.py` | Enabled native scopes, bounded copied snapshots, screen metadata without image bytes, strict JSON command framing and arguments, whole-list validation before effects, output reservation, failed/cancelled-job rejection, ordered native acknowledgements and per-tool concurrency. |
+| `worker/runner.py` | `test_worker_runner.py`, `test_container_integration.py` | Exact request/limit schema, ELF and source bounds, container/cgroup evidence, seccomp capability rules, clean child environment, process-tree supervision, independent output caps, deadlines, CPU/memory/process budgets and cleanup. Runner unit branches require Linux; real containment uses the opt-in Docker suite. |
 | `validation.py` | `test_contracts.py`, `test_validation.py`, `test_validation_failures.py` | All manifest/local-policy fields, typed immutable jobs, C11 entrypoints, UTF-8 byte bounds, comments/literals/includes/dependencies, path/capability rejection, platform/architecture matching, compile failure classes, repair correlation and cap, repeated source/diagnostics, sanitizer privacy, fixture smoke/functional checks, framing, blocked/limited preflight, artifact size/symlink/integrity/cleanup. |
 | `executor.py` | `test_executor.py`, `test_validation.py` | Every authorization/validation/capability/boundary gate, private stdin validation, runtime failures and limits, local output opt-in, single-use execution, binary tampering/disappearance/growth, concurrent claims, slow threaded hashes, cancellation/deadline behavior. |
 | `jobs.py` | `test_jobs.py`, `test_validation.py` | Every message route, stable/duplicate/stale IDs, replay/retention limits, shared worker capacity, repair waits releasing slots, active/queued/ready cancellation, disconnects, grant revocation, result backpressure/publication failure, sanitized internal errors, new work after failure, blocked/busy/single-use execution. |
@@ -97,6 +102,13 @@ simultaneously on available cores. Per-device acknowledgements, job revisions,
 and artifact claims retain ordering because their later steps depend on prior
 results.
 
-Generated-code processing remains blocked until a verified native isolation
-adapter is installed. Concurrency, subprocess deadlines, and temporary files do
-not provide that boundary. See [the validation protocol](validation-protocol.md).
+Generated-code processing uses the automatically selected, probed Docker worker
+when ready, or an explicitly configured audited local adapter. The included
+worker targets portable Linux C even on macOS/Windows. Concurrency, subprocess
+deadlines and temporary files alone do not provide isolation. Ordinary unit
+discovery skips real containment unless `JANUS_TEST_CONTAINER=1`; the 17 opted-in
+tests require a prepared image and fail when the worker is unavailable. See
+[the validation protocol](validation-protocol.md) for preparation commands and
+[application testing](../../docs/testing.md) for actual Gemini opt-ins. Native
+permissions and Docker Desktop installation/startup still need target-laptop
+verification.

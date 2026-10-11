@@ -1,10 +1,10 @@
 import { normalizeLayout } from '@janus/design';
-import { parsePanelDocument, parseServerMessage, type GeneratedDraft, type GenerationRequest, type JobView, type Layout, type PairResponse, type PanelDocument, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
+import { parsePanelDocument, parseServerMessage, type AgentTarget, type GeneratedProgram, type GeneratedDraft, type GenerationRequest, type JobView, type Layout, type PairResponse, type PanelDocument, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
 
 export interface Connection { host: string; token: string }
 export type { PanelDocument };
 /** `generation_available` is false when the backend has no Gemini credential; absent on older backends. */
-export interface Session { device_id: string; online: boolean; generation_available?: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
+export interface Session { device_id: string; online: boolean; generation_available?: boolean; target: AgentTarget | null }
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
 export interface PairingCode { code: string; expires_in_seconds: number; host?: string; pwa_url?: string | null }
@@ -83,6 +83,14 @@ export class PanelClient {
   generate(request: GenerationRequest, signal?: AbortSignal) {
     return this.request<GeneratedDraft>('/api/v1/programs/generate', { method: 'POST', body: JSON.stringify(request), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) });
   }
+  /** Infer minimum access within the connected worker's supported capabilities. Does not execute. */
+  plan(description: string, target: Pick<GenerationRequest, 'platform' | 'architecture'>, allowed_capabilities: string[], signal?: AbortSignal) {
+    return this.request<GenerationRequest>('/api/v1/programs/plan', { method: 'POST', body: JSON.stringify({ description, platform: target.platform, architecture: target.architecture, allowed_capabilities }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) });
+  }
+  /** Submit exactly the reviewed source with a fresh, locally authorized job ID. */
+  submitSource(device_id: string, job_id: string, request: GenerationRequest, program: GeneratedProgram, signal?: AbortSignal) {
+    return this.request<JobView>('/api/v1/agent-jobs/source', { method: 'POST', body: JSON.stringify({ device_id, job_id, request, program }), signal });
+  }
   pairing(signal?: AbortSignal) { return this.request<PairingCode>('/api/v1/studio/pairing', { method: 'POST', signal }); }
   prepare(payload: Dispatch, signal?: AbortSignal) { return this.request<Prepared>('/api/v1/panel-actions/prepare', { method: 'POST', body: JSON.stringify(payload), signal }); }
   dispatch(payload: Dispatch) { return this.request<JobView>('/api/v1/panel-actions/dispatch', { method: 'POST', body: JSON.stringify(payload) }); }
@@ -157,4 +165,16 @@ export async function pairBackend(host: string, code: string, name = 'Mobile pho
 
 const ACTIVE = new Set(['QUEUED', 'GENERATING', 'VALIDATING', 'REPAIRING', 'EXECUTING']);
 export function activeJob(job: JobView) { return ACTIVE.has(job.state); }
-export function jobText(job: JobView) { return job.result?.stdout?.trim() || job.reason || job.state; }
+export function jobText(job: JobView) {
+  const output = job.result?.stdout?.trim();
+  if (output) {
+    try {
+      const parsed: unknown = JSON.parse(output);
+      if (parsed && typeof parsed === 'object' && 'version' in parsed && parsed.version === 1 && 'value' in parsed) {
+        return typeof parsed.value === 'string' ? parsed.value : JSON.stringify(parsed.value);
+      }
+    } catch { /* Plain text programs remain readable. */ }
+    return output;
+  }
+  return job.reason || job.result?.reason || job.state;
+}

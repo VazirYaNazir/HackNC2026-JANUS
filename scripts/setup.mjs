@@ -1,10 +1,10 @@
-// First-time (and re-runnable) setup: preflight, dependencies, backend/.env, native tools.
+// First-time (and re-runnable) setup: dependencies, backend/.env, native tools and the shipped execution worker.
 //   npm run setup [-- --skip-native] [-- --pwa-url=https://your-pwa.vercel.app]
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aiChecks, doctor, report } from './doctor.mjs';
+import { aiChecks, doctor, report, workerStatus } from './doctor.mjs';
 import { ENV_EXAMPLE, ENV_FILE, ROOT, makeFlags, parseEnv, restrictToOwner, run } from './lib/common.mjs';
 
 const flags = makeFlags();
@@ -35,6 +35,15 @@ export function setEnvValue(text, key, value) {
 }
 
 export const looksLikeApiKey = (value) => /^\S{16,200}$/.test(value);
+
+/** Provision trusted worker files; this never authorizes or executes a generated program. */
+export function prepareSetupWorker(env, { probe = workerStatus, log = console.log, warn = report } = {}) {
+  log('Preparing the shipped portable C worker (first image build may take two minutes)…');
+  const worker = probe(env, { action: 'prepare' });
+  if (worker.available) log('Portable C worker is ready; running generated programs still needs local startup approval.');
+  warn(aiChecks(env, { probe: () => worker }));
+  return worker;
+}
 
 /** Reads a line without echoing it (the key is a credential). Enter alone skips. */
 function promptSecret(question) {
@@ -126,7 +135,7 @@ If JANUS or its agent is running, stop it first (Windows locks the running nativ
     await run('uv', ['run', '--locked', 'python', '-m', 'app.tiger.migrate'], { cwd: path.join(ROOT, 'backend'), env: { ...process.env, TIGER_DATABASE_URL: tiger } })
       .catch(() => console.warn('! The Tiger Data schema was not applied (see above). JANUS works without it; fix the URL and re-run `npm run setup`.'));
   }
-  report(aiChecks());
+  prepareSetupWorker();
   console.log('\nSetup complete. Start everything with:  npm start');
 }
 

@@ -6,14 +6,31 @@ from pathlib import Path
 import runpy
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from agent.compiler import CCompiler, CompilerError
 from agent.main import main, parser
+from agent.isolation import IsolationBoundary, REQUIRED_GUARANTEES
+
+
+class ReadyWorker(IsolationBoundary):
+    build_guarantees = run_guarantees = REQUIRED_GUARANTEES
+    compiler = CCompiler("worker-gcc", "docker", "Linux")
+    execution_target = {"platform": "Linux", "architecture": "x86_64", "profile": "portable-c", "capabilities": [], "dependencies": []}
+
+    def describe(self):
+        return {"available": True, "reason": None, "execution_target": self.execution_target}
 
 
 class MainTests(unittest.TestCase):
+    def setUp(self):
+        self.boundary = IsolationBoundary()
+        loader = patch("agent.isolation.load_boundary", return_value=self.boundary)
+        self.loader = loader.start()
+        self.addCleanup(loader.stop)
+
     def call(self, arguments):
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -82,6 +99,92 @@ class MainTests(unittest.TestCase):
             main(["connect", "--url", "wss://fixture/ws/agents/laptop", "--device-id", "laptop"])
         self.assertEqual(caught.exception.code, 2)
         detect.assert_not_called()
+
+    def test_ready_portable_worker_keeps_host_compiler_for_native_builds(self):
+        self.loader.return_value = ReadyWorker()
+        host = CCompiler("clang", "host-compiler", "Darwin")
+        connection = AsyncMock()
+        with patch.dict("os.environ", {"AGENT_TOKEN": "fixture"}, clear=True), patch("agent.main.detect_compiler", return_value=host) as detect, \
+                patch("agent.main.platform.system", return_value="Darwin"), patch("agent.main.platform.machine", return_value="arm64"), \
+                patch("agent.main.build_tools", return_value={"volume": "fixture"}) as build, patch("agent.transport.run_connection", connection):
+            code, _, _ = self.call(["connect", "--device-id", "laptop", "--url", "ws://127.0.0.1/ws/agents/laptop", "--native-tools"])
+        self.assertEqual(code, 0)
+        detect.assert_called_once()
+        self.assertIs(build.call_args.kwargs["compiler"], host)
+        service = connection.call_args.args[2]
+        self.assertIs(service.compiler, ReadyWorker.compiler)
+        self.assertEqual(service.local_platform, ("Linux", "x86_64"))
+        self.assertEqual(service.host_platform, ("Darwin", "arm64"))
+
+    def test_ready_non_native_linux_worker_needs_no_unsupported_host_compiler(self):
+        self.loader.return_value = ReadyWorker()
+        connection = AsyncMock()
+        with patch.dict("os.environ", {"AGENT_TOKEN": "fixture"}, clear=True), patch("agent.main.detect_compiler") as detect, \
+                patch("agent.main.platform.system", return_value="Linux"), patch("agent.main.build_tools") as build, \
+                patch("agent.transport.run_connection", connection):
+            code, _, _ = self.call(["connect", "--device-id", "laptop", "--url", "ws://127.0.0.1/ws/agents/laptop"])
+        self.assertEqual(code, 0)
+        detect.assert_not_called()
+        build.assert_not_called()
+        self.assertIs(connection.call_args.args[2].compiler, ReadyWorker.compiler)
+
+    def test_worker_status_reports_actual_boundary_without_a_compiler_or_approval(self):
+        self.loader.return_value = ReadyWorker()
+        with patch("agent.main.detect_compiler") as compiler, patch("agent.authorization.approve_session") as approval:
+            code, stdout, stderr = self.call(["worker", "status"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), ReadyWorker().describe())
+        self.assertEqual(stderr, "")
+        compiler.assert_not_called()
+        approval.assert_not_called()
+
+    def test_worker_prepare_outputs_one_json_report_and_routes_progress_to_stderr(self):
+        expected = ReadyWorker().describe()
+
+        async def prepare():
+            print("trusted image build progress")
+            return expected
+
+        with patch.dict(sys.modules, {"agent.container": SimpleNamespace(prepare_worker=prepare)}), \
+                patch.dict("os.environ", {}, clear=True):
+            code, stdout, stderr = self.call(["worker", "prepare"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), expected)
+        self.assertIn("trusted image build progress", stderr)
+        self.loader.assert_not_called()
+
+    def test_worker_prepare_preserves_custom_adapter_without_provisioning_default_image(self):
+        self.loader.return_value = ReadyWorker()
+        prepare = AsyncMock()
+        with patch.dict(sys.modules, {"agent.container": SimpleNamespace(prepare_worker=prepare)}), \
+                patch.dict("os.environ", {"AGENT_ISOLATION_ADAPTER": "my_local_app.worker:create_boundary"}, clear=True):
+            code, stdout, _ = self.call(["worker", "prepare"])
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(stdout)["available"])
+        self.loader.assert_called_once_with("my_local_app.worker:create_boundary")
+        prepare.assert_not_awaited()
+
+    def test_worker_prepare_reports_missing_prerequisites_without_native_build_or_approval(self):
+        expected = {"available": False, "reason": "DOCKER_NOT_INSTALLED", "execution_target": None}
+        prepare = AsyncMock(return_value=expected)
+        with patch.dict(sys.modules, {"agent.container": SimpleNamespace(prepare_worker=prepare)}), \
+                patch.dict("os.environ", {}, clear=True), patch("agent.main.detect_compiler") as detect, \
+                patch("agent.main.build_tools") as build, patch("agent.authorization.approve_session") as approval:
+            code, stdout, stderr = self.call(["worker", "prepare"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout), expected)
+        self.assertEqual(stderr, "")
+        prepare.assert_awaited_once()
+        detect.assert_not_called()
+        build.assert_not_called()
+        approval.assert_not_called()
+
+    def test_failed_worker_prepare_is_structured_and_never_echoes_exception_secrets(self):
+        self.loader.side_effect = ValueError("private-credential")
+        code, stdout, stderr = self.call(["worker", "status"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout), {"available": False, "reason": "WORKER_PREPARATION_FAILED", "execution_target": None})
+        self.assertNotIn("private-credential", stdout + stderr)
 
     def test_session_approval_pipe_creates_scoped_service_without_second_prompt(self):
         from agent.authorization import APPROVAL_LINE, default_session_policy

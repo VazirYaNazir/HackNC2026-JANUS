@@ -24,6 +24,21 @@ jobs:
         with:
           name: browser-traces
           path: frontend/test-results
+  isolated-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --directory agent
+      - name: Prepare and probe the shipped worker
+        run: uv run --locked --directory agent python -m agent.main worker prepare
+      - name: Check actual kernel containment and complete worker cleanup
+        env:
+          JANUS_TEST_CONTAINER: '1'
+        run: uv run --locked --directory agent python -m unittest tests.test_container_integration -v
   native-sdk:
     strategy:
       fail-fast: false

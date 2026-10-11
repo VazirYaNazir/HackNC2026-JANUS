@@ -12,7 +12,9 @@ Install Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Python 3.
 npm start
 ```
 
-The launcher installs locked dependencies, preserves existing registrations and environment settings, starts the backend, SQLite, Electron Studio and phone PWA, and creates HTTPS Cloudflare connections for phone pairing. Studio connects automatically through a single-use local credential handoff. On macOS or Windows, the terminal asks whether JANUS may control this laptop for the session. Type `yes` to enable the native tools and screen mirror; declining keeps the web services running. macOS also requires Accessibility and Screen Recording permission, and Windows native compilation requires the Visual Studio C tools and Windows SDK.
+The launcher installs locked dependencies, preserves existing registrations and environment settings, starts the backend, SQLite, Electron Studio and phone PWA, and creates HTTPS Cloudflare connections for phone pairing. Studio connects automatically through a single-use local credential handoff. On macOS or Windows, the terminal asks whether JANUS may control this laptop for the session. Type `yes` to enable the native tools and screen mirror; declining keeps the web services running. macOS also requires Accessibility and Screen Recording permission. Native tools use the laptop's C toolchain; JANUS probes it and can provision a verified Zig compiler if needed.
+
+To run AI-generated C programs, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and use its local Linux engine. After local startup approval, JANUS starts an existing Docker Desktop installation when needed, prepares the included worker image and checks that its resource limits are enforced. The first image build may take two minutes and needs network access to fetch its verified dependencies. Missing worker prerequisites leave the built-in controls available and show an actionable status in Studio. Generated programs use portable Linux C inside this worker on both macOS and Windows; native controls continue using your physical laptop OS.
 
 Choose **Project → Laptop controls starter**, then **Save & Push → Pair Device**. Open the HTTPS phone app address printed in the terminal and scan the QR, paste the pairing link, or enter its backend address and code. A connected tunnel can take longer to become publicly reachable: the launcher keeps it running, retries its HTTPS check, and publishes each ready address independently. While the backend address is pending, pairing reports `PUBLIC_BACKEND_UNAVAILABLE`; click **New code** once the terminal prints **Phone backend address ready**. A tunnel restart changes its address: generate a new pairing code.
 
@@ -34,13 +36,13 @@ npm run doctor                              # diagnose optional integrations and
 
 ### Startup permissions and private state
 
-Startup creates `agent/.validation-policy.json` with all supported capabilities and the maximum supported validation budgets if no policy exists. It preserves custom scopes and explicit job grants. The file alone grants no approval: interactive terminal consent or Electron's local permission dialog activates the session, and approval ends when the agent exits. An unattended launch never approves itself. Generated jobs remain scoped, bounded, replay protected, and require an audited isolation adapter; see **AI widgets** below.
+Startup creates `agent/.validation-policy.json` with the validation protocol's capabilities and maximum supported budgets if no policy exists. It preserves custom scopes and explicit job grants. The file alone grants no approval: interactive terminal consent or Electron's local permission dialog activates the session, and approval ends when the agent exits. An unattended launch never approves itself. Each generated job must also fit the ready worker's supported capabilities and pass local validation. Broad policy entries do not enable network, administrator, persistent-write or external-send access in the included worker; see **AI widgets** below.
 
 The launcher uses private local files in `.janus/`: registrations, the manual controller credential, SQLite, process records, tunnel origins and redacted service logs. POSIX permissions and Windows owner ACLs protect sensitive launcher files. Existing `backend/.env` and its credentials are preserved. On first startup the previous `backend/app/app.db` is copied using SQLite backup, including committed WAL data, into writable `.janus/janus.sqlite`; the original is preserved. Set `JANUS_DB_PATH` to use a different writable database. `JANUS_STATE_DIR` can select another private state directory.
 
 Ctrl+C stops the owned process trees and clears published phone origins. Verified PID records prevent a second launcher from replacing an active session and let the next startup clean up its own leftovers after a crash. A stopped agent or messaging sidecar leaves the web services running. Studio receives its credential once through an origin-restricted loopback handoff, keeps it only in memory, and removes the handoff fragment immediately. Electron is the default interface and also supports local IPC and a permission dialog for **Start agent**. Use `--studio=browser` for browser development; the default launcher installs the Electron runtime when needed.
 
-`npm run setup` remains available for manual prerequisite checks, environment initialization, native builds and optional Tiger Data schema setup. It preserves configured values. Standalone backend startup uses `JANUS_AUTO_TUNNEL=1` or `JANUS_TUNNEL_MODE=auto` for its own tunnel; the full launcher owns its tunnels and disables duplicate backend tunneling.
+`npm run setup` remains available for manual prerequisite checks, environment initialization, native builds, worker image preparation and optional Tiger Data schema setup. It preserves configured values. Preparing an image grants no permission to run generated code. Standalone backend startup uses `JANUS_AUTO_TUNNEL=1` or `JANUS_TUNNEL_MODE=auto` for its own tunnel; the full launcher owns its tunnels and disables duplicate backend tunneling.
 
 See the [widget integration audit](frontend/docs/widget-integration.md) for every widget family, live telemetry sources, generated/custom actions and hardware requirements.
 
@@ -77,19 +79,20 @@ single-use QR/code for the PWA. Both applications show live request progress
 and results; similar validated programs are offered for explicit reuse.
 
 The laptop must run `agent.main connect` with its own credential, local grants,
-and an installed isolation adapter before generated programs can execute.
+and a ready execution worker before generated programs can execute. The included Docker worker is selected automatically;
+you do not need to configure a Python module name.
 Remote connections require HTTPS/WSS. See the complete
 [connected-panel workflow and verification commands](backend/app/docs/connected-panels.md)
 for pairing, persistence, permissions, deployment, and current limits.
 
 ## AI widgets (optional)
 
-Built-in controls (volume, mouse, metrics, processes, screen) need none of this. A Gemini key enables C source
-generation and download. An isolation adapter is required separately to compile and execute generated programs
-on the laptop. Studio reports these two states independently; `npm run doctor` reports missing prerequisites.
+Built-in controls (volume, mouse, metrics, processes, screen) need neither Gemini nor Docker. A Gemini key enables C source
+generation and download. The included Docker worker enables local compilation and execution when its prerequisites
+and local authorization are ready. Studio reports generation and execution separately; `npm run doctor` probes the actual worker and reports missing prerequisites.
 
 In Studio, enter a prompt in the assistant, even without selecting a control, to generate and review a C script.
-The source appears with its summary and a **Download C source** action. Without an execution worker, the
+The source appears with its summary, target, requested access and a **Download C source** action. Review it before requesting execution. Without a ready execution worker, the
 assistant generates source while preserving your existing widget bindings. For a configured generated control,
 Studio and paired phones offer **Generate source** in its request dialog without submitting an execution job.
 With an execution worker, selecting an input control lets the assistant configure its requested behavior.
@@ -104,18 +107,53 @@ also set `GEMINI_API_KEY` in `backend/.env` yourself and restart the backend.
 
 ### Isolation adapter
 
-Generated C is compiled and run only through a locally installed, audited isolation adapter, selected with
-`AGENT_ISOLATION_ADAPTER=my_local_app.worker:create_boundary` in the agent’s environment (or `--isolation-adapter`).
-**JANUS does not ship an isolation adapter. There is currently no install command that enables generated-program
-execution on a fresh Mac or Windows setup.** The factory setting above is an integration contract for an
-implementation you have actually installed, rather than the name of an included package. Without one the laptop
-reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles generated source. Gemini can still generate source for
-review and download. Neither the backend nor a policy file supplies the missing worker. Details:
+JANUS ships `agent.container:create_boundary`, a portable C worker using Docker Desktop's Linux VM on macOS and Windows.
+Install [Docker Desktop from its official site](https://www.docker.com/products/docker-desktop/), select the local Linux
+engine, then run `npm start`. The launcher starts an existing Docker Desktop installation if its daemon is stopped,
+builds the repository's worker image and probes its enforcement before advertising execution as available.
+`npm run setup` also prepares the worker. These commands inspect or prepare it directly from the repository root:
+
+```sh
+uv run --locked --directory agent python -m agent.main worker status
+uv run --locked --directory agent python -m agent.main worker prepare
+```
+
+`status` returns a JSON readiness report; `prepare` builds only the trusted worker image and does not execute a generated
+program or grant consent. Missing Docker, a stopped daemon, a missing image, an unsupported engine or failed limit checks
+leave generated execution unavailable. Gemini can still generate source for review and download, and native controls remain
+usable after local approval. Install Docker Desktop when missing, then restart JANUS or use `worker prepare` and reconnect
+the agent. JANUS never falls back to running generated C directly on the laptop.
+
+The physical laptop remains `Darwin` or `Windows` for native controls. Generated requests instead target the worker's
+`Linux` platform, `arm64` or `x86_64` architecture, and `portable-c` profile. They use standard C and the worker's Linux
+toolchain; macOS frameworks, Windows SDK calls and additional dependency libraries are not supplied.
+
+The included worker accepts only these granted scopes:
+
+| Capability | Available behavior |
+| --- | --- |
+| `files.read`, `files.write` | Read and write temporary files in the worker's per-job scratch space. Laptop files and home directories are never mounted; scratch data is discarded after the job |
+| `process.spawn` | Start child processes inside the worker, within its process and resource limits |
+| `audio.volume` | Read or set volume through checked native commands |
+| `desktop.mouse` | Move, click or scroll through checked native commands |
+| `process.inspect` | Read bounded metrics and relevant-process snapshots from the native agent |
+| `desktop.screen` | Read screen metadata when screen sharing is enabled. Images use the separate native mirror stream |
+
+Generated code receives approved snapshots and can return typed JSON commands. The local broker checks the complete
+command list before applying permitted native actions; it exposes no arbitrary shell, host path, credential or native API
+handle. Each job has compile/run deadlines and limits on CPU, memory, processes, scratch disk and output. Trusted
+container creation has a separate 20-second watchdog allowance; guest compile/run budgets remain 30/3 seconds.
+Cancellation waits for pending creation and removes its worker container. Network access, external sending, administrator privileges, persistent host changes and
+arbitrary laptop file access are unsupported, even if listed in a local policy.
+
+An explicitly configured local `AGENT_ISOLATION_ADAPTER=my_local_app.worker:create_boundary` (or `--isolation-adapter`)
+replaces the included worker. Such an adapter must be installed and independently audited to enforce its advertised
+scopes and resource guarantees; a module setting alone establishes neither installation nor readiness. See
 [local agent initialization](backend/app/docs/backend-agent.md#local-agent-initialization).
 
 ### Local authorization
 
-Running a generated program needs a local grant: either a fresh job grant minted within the session you approved at startup, or an explicit request-ID entry in the agent’s local policy file. Confirming in Studio or the phone never grants OS permissions. Startup approval does not supply the required isolation adapter. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
+Running a generated program needs a local grant: either a fresh job grant minted within the session you approved at startup, or an explicit request-ID entry in the agent's local policy file. Confirming in Studio or the phone never grants OS permissions. Startup approval permits the locally configured session; every request still needs a fresh ID, supported scopes and successful validation in a ready worker. It does not install Docker Desktop or grant access the worker cannot enforce. Screen and mouse access also need the laptop's OS permissions. Job outputs may be shared with the backend and paired phones within that local grant. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
 
 ## Text your laptop (iMessage)
 
@@ -227,7 +265,7 @@ Use the device ID from `AGENT_DEVICES_JSON`. Omit `--screen` to keep screen shar
 
 In Studio choose **Project → Laptop controls starter**, then **Save & Push** and pair the phone. The volume slider, mouse joystick and click buttons send fixed native commands; RAM, CPU temperature, relevant process trees and screen frames arrive live in both apps. CPU utilization is also available as `cpu.percent`. Process relevance defaults to at least 1% CPU or 100 MiB RAM, including parent context; adjust `--min-cpu` and `--min-ram-mb` when starting the agent. Joystick movement stops on release, lost focus, and the native mouse timeout.
 
-Native processes start concurrently, with separate readers and bounded queues; commands for a given tool remain ordered. These built-in operations use the laptop's explicit local startup permission. Generated programs still need a fresh scoped job grant, obtained from your approved startup session or explicit local policy, and an audited isolation adapter. Gemini suggestions remain opt-in for each generated execution.
+Native processes start concurrently, with separate readers and bounded queues; commands for a given tool remain ordered. These built-in operations use the laptop's explicit local startup permission. Generated programs still need a fresh scoped job grant, obtained from your approved startup session or explicit local policy, and a ready worker. The included worker runs portable C and uses the checked native broker for supported laptop controls. Gemini suggestions remain opt-in for each generated execution.
 
 Project names, icons, colors, toggle styles, ranges, steps, source bindings, and thresholds can be edited in Studio. Project import/export stores layout JSON without credentials or generated source. The supplied JANUS logo is used in both apps, browser icons, PWA installation icons and Electron.
 

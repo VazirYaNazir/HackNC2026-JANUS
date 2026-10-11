@@ -100,7 +100,7 @@ export type ServerMessage =
   | { type: "layout_updated" }
   | { type: "pong" }
   | { type: "job_update"; job: JobView }
-  | { type: "agent_presence"; session: { device_id: string; online: boolean; generation_available?: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null } }
+  | { type: "agent_presence"; session: { device_id: string; online: boolean; generation_available?: boolean; target: AgentTarget | null } }
   | { type: "error"; message: string };
 
 /* ---------- Saved on the phone (localStorage) ---------- */
@@ -120,11 +120,28 @@ export interface SavedPanel {
 export interface GenerationRequest {
   description: string;
   operation: string;
-  platform: "Darwin" | "Windows";
+  platform: "Darwin" | "Windows" | "Linux";
   architecture: "arm64" | "x86_64" | "x86";
   capabilities: string[];
   dependencies: string[];
   output_protocol: "text" | "json-v1";
+}
+
+/** The physical laptop and the separately isolated compilation/execution target. */
+export interface ExecutionTarget {
+  platform: "Linux";
+  architecture: "arm64" | "x86_64";
+  profile: "portable-c";
+  capabilities: string[];
+  dependencies: string[];
+}
+export interface AgentTarget {
+  platform: "Darwin" | "Windows" | "Linux";
+  architecture: GenerationRequest['architecture'];
+  build_boundary_available: boolean;
+  execution_boundary_available: boolean;
+  boundary_reason?: string | null;
+  execution_target?: ExecutionTarget | null;
 }
 
 /** A C source draft. Generating it grants no permission to compile or execute it. */
@@ -199,7 +216,14 @@ function validServerMessage(msg: unknown): msg is ServerMessage {
     }
     case 'agent_presence': {
       const session = msg.session;
-      return record(session) && typeof session.device_id === 'string' && typeof session.online === 'boolean' && (session.target === null || record(session.target) && ['Darwin', 'Windows'].includes(String(session.target.platform)) && ['arm64', 'x86_64', 'x86'].includes(String(session.target.architecture)) && typeof session.target.build_boundary_available === 'boolean' && typeof session.target.execution_boundary_available === 'boolean');
+      if (!record(session) || typeof session.device_id !== 'string' || typeof session.online !== 'boolean' || !optional(session.generation_available, (value) => typeof value === 'boolean')) return false;
+      const target = session.target;
+      if (target === null) return true;
+      if (!record(target) || !['Darwin', 'Windows', 'Linux'].includes(String(target.platform)) || !['arm64', 'x86_64', 'x86'].includes(String(target.architecture)) || typeof target.build_boundary_available !== 'boolean' || typeof target.execution_boundary_available !== 'boolean' || !optional(target.boundary_reason, (value) => value === null || typeof value === 'string')) return false;
+      return optional(target.execution_target, (worker) => worker === null || record(worker)
+        && worker.platform === 'Linux' && ['arm64', 'x86_64'].includes(String(worker.architecture)) && worker.profile === 'portable-c'
+        && Array.isArray(worker.capabilities) && worker.capabilities.every((cap) => typeof cap === 'string')
+        && Array.isArray(worker.dependencies) && worker.dependencies.every((dep) => typeof dep === 'string'));
     }
     default: return false;
   }

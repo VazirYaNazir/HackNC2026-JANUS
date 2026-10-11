@@ -37,7 +37,7 @@ test('Studio generates, stores and downloads source offline and without an adapt
   const review = page.getByRole('dialog', { name: 'Generation complete' })
   await expect(review.getByLabel('C source')).toHaveText(draft.program.source)
   await expect(review.getByText('This source has not been validated or executed.')).toBeVisible()
-  await expect(review.getByText(/Connect a laptop with a build and execution isolation adapter/)).toBeVisible()
+  await expect(review.getByText(/Connect your laptop agent to request execution/)).toBeVisible()
   const downloading = page.waitForEvent('download')
   await review.getByRole('button', { name: 'Download C source' }).click()
   const download = await downloading
@@ -55,7 +55,7 @@ test('Studio generates, stores and downloads source offline and without an adapt
   try {
     expect((await request.post(`${BACKEND}/test/source-agent/connect`)).ok()).toBe(true)
     await expect(page.getByRole('button', { name: 'Laptop online · connected' })).toBeVisible()
-    await expect(page.getByRole('status').filter({ hasText: 'running generated programs requires an isolation adapter' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Start Docker Desktop and restart JANUS' })).toBeVisible()
     // Selecting a native control must still produce a source draft rather than
     // replacing its working native binding when either boundary is unavailable.
     await page.getByRole('button', { name: 'Left click', exact: true }).click()
