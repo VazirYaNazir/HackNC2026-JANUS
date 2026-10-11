@@ -15,6 +15,17 @@ Prerequisites: Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Py
 **Connect backend → Use this laptop’s local backend**; nothing needs pasting. To pair a phone, add `-- --tunnel`
 (`npm start -- --tunnel`) and use **Pair Device**.
 
+**On Windows, use the shortcut scripts.** PowerShell drops the `--` that separates npm's options from the script's,
+so `npm start -- --imessage` reaches npm as its own (unknown) option. The scripts below have their flags built in:
+
+```sh
+npm run start:demo       # backend + agent + Studio + iMessage + screen sharing + tunnel  (--imessage --screen --tunnel)
+npm run start:imessage   # the same without screen sharing or the tunnel                (--imessage)
+```
+
+The scripts also read flags that npm swallowed (`npm_config_<flag>`), so `npm start --imessage` works too, with an
+"Unknown env config" warning from npm that you can ignore.
+
 ### What the scripts do
 
 - `npm run setup` runs the preflight checks first and stops on blocking problems before installing anything. It
@@ -26,13 +37,21 @@ Prerequisites: Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Py
 - `npm start` starts the backend, waits for `/health`, then the agent (`--native-tools`) and Studio. Closing
   Studio stops everything. Flags (pass after `--`):
   - `--tunnel` exposes the backend through a Cloudflare tunnel for phone pairing. **Off by default**, because it
-    puts the backend on the public internet (behind its credentials) for as long as Janus runs. Without
+    puts the backend on the public internet (behind its credentials) for as long as JANUS runs. Without
     `cloudflared`, a pinned, SHA-256-verified copy is downloaded to `.janus/bin`.
   - `--pwa` also runs the PWA dev server on port 5174. Off by default: phones use the hosted PWA.
   - `--studio=browser|none` runs Studio in a browser tab, or not at all. `--no-agent` skips the agent.
   - `--only=agent` starts just the agent against a running backend (Studio’s **Start agent** button uses this).
-- Janus only stops processes it started itself (tracked in `.janus/pids.json`). If something else holds port 8000,
-  5173 or 5174, `npm start` names the process and exits.
+- JANUS only stops processes it started itself, recorded in `.janus/pids.json` with each process's start time (so a
+  recycled PID is never mistaken for one of ours). Ctrl+C, a closed console, or a crash kills every child's whole
+  process tree (`taskkill /T /F` on Windows): backend, agent, iMessage sidecar, Vite and Electron. If the
+  orchestrator itself is hard-killed and leaves children behind, the next `npm start` stops exactly those recorded
+  leftovers. A second `npm start` while one is healthy refuses ("JANUS is already running") instead of killing it,
+  and if something else holds port 8000, 5173 or 5174 it names the process and exits.
+- One agent per laptop. Studio's **Start agent** button only appears while no agent is connected, never while one
+  is running or starting, and `npm start -- --only=agent` refuses when a recorded agent is alive. The backend also
+  refuses a second connection for the same device (close code 4409), and an agent that receives that stops instead
+  of retrying forever.
 - `npm run doctor` runs the same checks on demand. Setup and start run them automatically and print failures only.
 
 ### Studio and the laptop agent
@@ -96,7 +115,7 @@ also set `GEMINI_API_KEY` in `backend/.env` yourself and restart the backend.
 
 Generated C is compiled and run only through a locally installed, audited isolation adapter, selected with
 `AGENT_ISOLATION_ADAPTER=my_local_app.worker:create_boundary` in the agent’s environment (or `--isolation-adapter`).
-No adapter ships with Janus yet, so without one the laptop reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles
+No adapter ships with JANUS yet, so without one the laptop reports `BUILD_BOUNDARY_UNAVAILABLE` and never compiles
 generated source. Neither the backend nor a policy file can enable an adapter. Details:
 [local agent initialization](backend/app/docs/backend-agent.md#local-agent-initialization).
 
@@ -106,6 +125,47 @@ Running a generated program also needs a grant that only the laptop can create: 
 agent’s local policy file (`--validation-policy`, read when the agent starts). Confirming in Studio or the phone
 never grants OS permissions. See the [validation protocol](agent/docs/validation-protocol.md#local-policy).
 
+## Text your laptop (iMessage)
+
+Text JANUS from an allowlisted number and it answers from your laptop: *"status"*,
+*"volume 30"*, *"lock"*, *"help"*. It uses [Photon Spectrum](https://photon.codes/docs/spectrum-ts/getting-started)
+(cloud iMessage), so it works from any OS. It is off unless you ask for it:
+
+1. Create a Photon Spectrum project and put its `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` in `backend/.env`.
+2. Set `IMESSAGE_ALLOWED_SENDERS` there to your number(s) in E.164 form, comma-separated (`+15551234567`).
+   Texts from anyone else are ignored without a reply. `npm run setup` generates `MESSAGING_SERVICE_TOKEN`.
+3. `npm run start:imessage` (same as `npm start -- --imessage`). Use `npm run start:demo` to add the tunnel.
+   `npm run doctor -- --imessage` checks the setup.
+
+On startup the sidecar texts each allowlisted number "JANUS is online. Text 'help' for commands." at most once per
+UTC day (the date is remembered, hashed, in `.janus/imessage-greeted.json`), because every first message to a new
+recipient counts against the line's 50-new-conversations-per-day quota. Set `IMESSAGE_GREETING=0` to turn it off.
+
+| Text | What happens |
+| --- | --- |
+| `status` (also `cpu`, `stats`) | CPU and RAM on one line, plus the temperature when the machine reports one. Anything unavailable is left out |
+| `apps` (also `processes`) | The apps using the most CPU |
+| `volume`, `volume 40` | Read / set the volume (0-100) |
+| `mute`, `unmute` | Mute sets the volume to 0 right away; unmute restores the previous level |
+| `lock` | Locks the PC. JANUS asks first: reply **YES** within 60 s |
+| `help` | Lists the commands |
+
+Anything else gets "Not sure what that means. Text help to see what I can do."
+
+How it stays safe: the `imessage/` sidecar only forwards `{ sender, text, messageId }` to the backend over loopback with
+a service token and sends back whatever the backend replies. The backend (`backend/app/messaging`) enforces the
+allowlist, maps text to a fixed list of registered native actions (never code generation), asks for confirmation
+before `lock`, drops redelivered message IDs, and answers "Your laptop is offline." when no agent is
+connected. If a Gemini key is set, unrecognised text may be classified by Gemini, but only into that same action list
+with validated arguments (set `IMESSAGE_AI_FALLBACK=0` to turn it off). The endpoint refuses anything that is not a
+direct loopback request, including requests relayed through a tunnel. Studio shows "iMessage: connected / off".
+
+The sidecar is built so one bad message cannot wedge it: each text is handled in its own task behind a per-sender
+queue (the message stream is never awaited on a send), every send has a 15 s deadline, and message IDs from
+the last 24 hours are saved (hashed) in `.janus/imessage-processed.json` and claimed *before* an action runs, so a
+redelivery after a restart is skipped instead of repeated. Every inbound message is logged first (masked number and
+type), then each stage (handling, backend reply, sending, sent or failed), never the text.
+
 ## Link a phone
 
 Studio runs at `http://127.0.0.1:5173`. Phones normally use the hosted PWA; with
@@ -113,7 +173,7 @@ Studio runs at `http://127.0.0.1:5173`. Phones normally use the hosted PWA; with
 Open the PWA on your phone first. Camera scanning requires an HTTPS certificate
 trusted by the phone; manual code entry does not need camera permission.
 
-Start Janus with `npm start -- --tunnel` so the phone can reach the backend.
+Start JANUS with `npm start -- --tunnel` so the phone can reach the backend.
 In Studio, select **Pair Device**. The dialog uses the backend's Cloudflare
 tunnel when one is running and Studio is connected locally, or its existing HTTPS
 backend address. Set `PUBLIC_BACKEND_URL` in `backend/.env` for a stable/custom
