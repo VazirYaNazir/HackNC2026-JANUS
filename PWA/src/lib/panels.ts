@@ -1,5 +1,6 @@
 import type { SavedPanel } from "@janus/schema";
 import { DEMO_HOST } from "./demo";
+import { clearCachedDocument } from "./layoutCache";
 
 const KEY = "janus.panels";
 const DEMO_SEEDED_KEY = "janus.demoSeeded";
@@ -37,7 +38,10 @@ export const renamePanel = (id: string, name: string): SavedPanel[] =>
 export const repairPanel = (id: string, connection: Pick<SavedPanel, "host" | "token" | "pcName" | "agentDeviceId">): SavedPanel[] =>
   write(listPanels().map((p) => (p.id === id ? { ...p, ...connection } : p)));
 
-export const removePanel = (id: string): SavedPanel[] => write(listPanels().filter((p) => p.id !== id));
+export function removePanel(id: string): SavedPanel[] {
+  clearCachedDocument(id); // its saved layout goes with it
+  return write(listPanels().filter((p) => p.id !== id));
+}
 
 export const touchPanel = (id: string): SavedPanel[] =>
   write(listPanels().map((p) => (p.id === id ? { ...p, lastOpenedAt: Date.now() } : p)));

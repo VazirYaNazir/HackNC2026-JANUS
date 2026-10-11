@@ -1,6 +1,6 @@
-import type { CSSProperties } from "react";
+import { Fragment, type CSSProperties } from "react";
 import { logicalRectStyle, normalizeLayout } from "@janus/design";
-import type { Layout } from "@janus/schema";
+import type { Layout, Widget } from "@janus/schema";
 import WidgetView from "./WidgetView";
 import { isInputWidget, type WidgetProps, type WidgetState, type WidgetValue } from "./types";
 import "./widgets.css";
@@ -17,6 +17,12 @@ export interface PanelGridProps {
   selectedId?: string | null;
   onSelect?: WidgetProps["onSelect"];
   onTrigger?: WidgetProps["onTrigger"];
+  /**
+   * View-only: inputs are dimmed and inert, and tapping one calls `onBlocked` instead of triggering anything.
+   * Dials are unaffected. Ignored in edit mode.
+   */
+  readOnly?: boolean;
+  onBlocked?: (widget: Widget) => void;
 }
 
 /** Renders both legacy grid layouts and version 2 logical layouts through one normalized canvas. */
@@ -29,6 +35,8 @@ export default function PanelGrid({
   selectedId = null,
   onSelect,
   onTrigger,
+  readOnly = false,
+  onBlocked,
 }: PanelGridProps) {
   let normalized;
   try {
@@ -44,23 +52,35 @@ export default function PanelGrid({
 
   return (
     <div className="jw-grid" style={canvasStyle}>
-      {normalized.widgets.map((widget) => (
-        <div
-          key={widget.id}
-          className="jw-cell"
-          style={logicalRectStyle(widget) as CSSProperties}
-        >
-          <WidgetView
-            widget={widget}
-            mode={mode}
-            value={isInputWidget(widget) ? values[widget.id] : data[widget.source]}
-            state={states[widget.id]}
-            selected={selectedId === widget.id}
-            onSelect={onSelect}
-            onTrigger={onTrigger}
-          />
-        </div>
-      ))}
+      {normalized.widgets.map((widget) => {
+        const rect = logicalRectStyle(widget) as CSSProperties;
+        const blocked = readOnly && mode === "live" && isInputWidget(widget);
+        return (
+          <Fragment key={widget.id}>
+            {/* inert removes the control from taps, focus and the accessibility tree; the button below takes over */}
+            <div className={`jw-cell${blocked ? " jw-cell--blocked" : ""}`} style={rect} inert={blocked || undefined}>
+              <WidgetView
+                widget={widget}
+                mode={mode}
+                value={isInputWidget(widget) ? values[widget.id] : data[widget.source]}
+                state={states[widget.id]}
+                selected={selectedId === widget.id}
+                onSelect={onSelect}
+                onTrigger={blocked ? undefined : onTrigger}
+              />
+            </div>
+            {blocked && (
+              <button
+                type="button"
+                className="jw-blocked"
+                style={rect}
+                aria-label={`${widget.label} is unavailable right now`}
+                onClick={() => onBlocked?.(widget)}
+              />
+            )}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

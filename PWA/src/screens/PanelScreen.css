@@ -8,6 +8,23 @@
 .panel__title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 600; color: var(--text); }
 .panel__auth { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin: 0 0 12px; padding: 14px 16px; border-radius: var(--radius-widget); box-shadow: var(--neu-inset-sm); }
 .panel__auth p { margin: 0; color: var(--coral); }
+.panel__cached { margin: 0 0 8px; font-size: 13px; color: var(--text-muted); }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 30;
+  max-width: calc(100% - 36px);
+  margin: 0;
+  padding: 12px 20px;
+  transform: translateX(-50%);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  box-shadow: var(--neu-raised);
+  color: var(--text);
+  font-weight: 600;
+  text-align: center;
+}
 .panel__demo { margin: 0 0 8px; font-size: 13px; color: var(--cyan); }
 .panel__back {
   flex: none;
