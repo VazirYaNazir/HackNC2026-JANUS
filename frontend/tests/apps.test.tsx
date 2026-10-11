@@ -37,11 +37,19 @@ describe('both app roots and panel workflows', () => {
   it('Studio consumes launcher bootstrap only once in StrictMode and keeps credentials out of URL and storage', async () => {
     backend(); localStorage.clear();
     window.history.replaceState(null, '', '/#janus-start=http%3A%2F%2F127.0.0.1%3A12345&nonce=fixture_nonce_1234567890');
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ host: 'http://localhost:8000', token: 'startup-controller-secret' }) });
+    const response = { ok: true, json: async () => ({ host: 'http://localhost:8000', token: 'startup-controller-secret' }) };
+    let resolveBootstrap!: (value: typeof response) => void;
+    const bootstrap = new Promise<typeof response>(resolve => { resolveBootstrap = resolve; });
+    const fetch = vi.fn().mockReturnValue(bootstrap);
     vi.stubGlobal('fetch', fetch);
     render(<StrictMode><Studio /></StrictMode>);
-    await waitFor(() => expect(screen.getByRole('button', { name: /Laptop online · connected/ })).toBeTruthy());
     expect(fetch).toHaveBeenCalledTimes(1); expect(window.location.hash).toBe('');
+    expect(PanelClient.prototype.subscribe).not.toHaveBeenCalled();
+    // Resolve the controlled network boundary in act so React commits the client and its subscription effects
+    // before we inspect the resulting UI. A polling deadline must not race these intermediate commits.
+    await act(async () => { resolveBootstrap(response); });
+    expect(screen.getByRole('button', { name: /Laptop online · connected/ })).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(1); expect(PanelClient.prototype.subscribe).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).not.toContain('startup-controller-secret'); expect(localStorage.length).toBe(0);
   });
 
