@@ -74,7 +74,7 @@ class StartupConsentTests(unittest.TestCase):
         with patch("agent.authorization.sys.stdin", Terminal("APPROVE\n")), redirect_stderr(output):
             approved = approve_session(scope)
         self.assertEqual(approved.scope, scope)
-        for disclosure in ("desktop.screen", "files.write", "share outputs: True", "until this agent stops", "isolation adapter"):
+        for disclosure in ("desktop.screen", "files.write", "share outputs: True", "until this agent stops", "verified local Docker worker"):
             self.assertIn(disclosure, output.getvalue())
         for answer in ("", "yes\n", "approve\n", "DENY\n"):
             with self.subTest(answer=answer), patch("agent.authorization.sys.stdin", Terminal(answer)), redirect_stderr(io.StringIO()), self.assertRaises(ValueError):
