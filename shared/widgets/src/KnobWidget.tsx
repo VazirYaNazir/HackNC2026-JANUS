@@ -91,6 +91,7 @@ export default function KnobWidget(props: WidgetProps) {
       {/* The whole tile is the drag surface, so even a 1x1 knob has a comfortable touch target. */}
       <div
         className="jw__surface"
+        data-active={draft !== null || undefined}
         role="slider"
         tabIndex={0}
         aria-label={widget.label}

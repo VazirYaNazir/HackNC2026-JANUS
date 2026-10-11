@@ -6,6 +6,7 @@ import { activate, isInputWidget, type WidgetProps } from "./types";
 export default function SliderWidget(props: WidgetProps) {
   const { widget, mode, value } = props;
   const [draft, setDraft] = useState<number | null>(null);
+  const [held, setHeld] = useState(false);
   const min = isInputWidget(widget) ? (widget.min ?? 0) : 0;
   const max = isInputWidget(widget) ? (widget.max ?? 100) : 100;
   const step = isInputWidget(widget) ? (widget.step ?? 1) : 1;
@@ -33,7 +34,13 @@ export default function SliderWidget(props: WidgetProps) {
         value={current}
         disabled={mode === "edit"}
         onChange={(e) => setDraft(Number(e.target.value))}
-        onPointerUp={commit}
+        data-active={held || undefined}
+        onPointerDown={() => setHeld(true)}
+        onPointerUp={() => {
+          setHeld(false);
+          commit();
+        }}
+        onPointerCancel={() => setHeld(false)}
         onKeyUp={commit}
         onBlur={commit}
       />

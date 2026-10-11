@@ -3,7 +3,7 @@ export const SCHEMA_VERSION = 1;
 /* ---------- Layout (GET /api/layout) ---------- */
 
 export type InputType = "button" | "toggle" | "slider" | "joystick" | "dpad" | "knob" | "command" | "agent";
-export type DialType = "gauge" | "bar" | "line" | "ring" | "temperature" | "number" | "log";
+export type DialType = "gauge" | "bar" | "line" | "ring" | "temperature" | "number" | "log" | "stream";
 export type WidgetType = InputType | DialType;
 
 export const INPUT_TYPES: readonly InputType[] = ["button", "toggle", "slider", "joystick", "dpad", "knob", "command", "agent"];
@@ -24,6 +24,7 @@ export interface InputWidget extends WidgetBase {
   action: string;        // action ID only; the phone never sees what it runs
   confirm?: boolean;     // PC must approve before running
   min?: number; max?: number; step?: number; // slider / knob
+  variant?: "switch" | "push"; // toggle: sliding switch (default) or a button that stays pushed in while on
 }
 
 export interface DialWidget extends WidgetBase {

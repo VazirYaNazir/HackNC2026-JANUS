@@ -1,10 +1,12 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import type { WidgetProps } from "./types";
 import "./widgets.css";
 
 interface FrameProps {
   props: WidgetProps;
   className?: string;
+  /** Overrides the `jw--<type>` class, for a variant that borrows another type's layout. */
+  typeClass?: string;
   /** Non-button widgets get a select overlay in edit mode so they stay keyboard/touch selectable. */
   selectable?: boolean;
   children: ReactNode;
@@ -14,7 +16,7 @@ interface FrameProps {
  * Widget root and size container (.jw). Container queries can only style descendants, so the layout
  * lives on the inner .jw__body.
  */
-export function Frame({ props, className = "", selectable = false, children }: FrameProps) {
+export function Frame({ props, className = "", typeClass, selectable = false, children }: FrameProps) {
   const { widget, mode, selected, onSelect } = props;
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -33,9 +35,13 @@ export function Frame({ props, className = "", selectable = false, children }: F
     return () => observer.disconnect();
   }, [widget.label, widget.icon]);
 
-  const classes = ["jw", `jw--${widget.type}`, widget.icon && "jw--icon", selected && "jw--selected", className];
+  const classes = ["jw", `jw--${typeClass ?? widget.type}`, widget.icon && "jw--icon", selected && "jw--selected", mode === "live" && "jw--live", className];
   return (
-    <div ref={rootRef} className={classes.filter(Boolean).join(" ")}>
+    <div
+      ref={rootRef}
+      className={classes.filter(Boolean).join(" ")}
+      style={widget.color ? ({ "--jw-accent": `var(--${widget.color})` } as CSSProperties) : undefined}
+    >
       <div className="jw__body">{children}</div>
       {selectable && mode === "edit" && (
         <button

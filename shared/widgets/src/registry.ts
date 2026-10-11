@@ -13,6 +13,7 @@ import LineGraphWidget from "./LineGraphWidget";
 import LogFeedWidget from "./LogFeedWidget";
 import RingWidget from "./RingWidget";
 import SliderWidget from "./SliderWidget";
+import StreamWidget from "./StreamWidget";
 import TemperatureWidget from "./TemperatureWidget";
 import ToggleWidget from "./ToggleWidget";
 import UnsupportedWidget from "./UnsupportedWidget";
@@ -41,7 +42,7 @@ export const WIDGETS: Partial<Record<WidgetType, WidgetDef>> = {
   dpad: { component: DPadWidget, defaultSize: size(2, 2), sizes: [size(2, 2)] },
   knob: { component: KnobWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 2)] },
   command: { component: CommandWidget, defaultSize: size(4, 1), sizes: [size(2, 1), size(4, 1)] },
-  agent: { component: AgentPromptWidget, defaultSize: size(4, 1), sizes: [size(4, 1), size(4, 2)] },
+  agent: { component: AgentPromptWidget, defaultSize: size(4, 2), sizes: [size(4, 2)] },
   bar: { component: BarWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1), size(4, 1)] },
   gauge: { component: GaugeWidget, defaultSize: size(2, 2), sizes: [size(1, 1), size(2, 1), size(2, 2)] },
   line: { component: LineGraphWidget, defaultSize: size(4, 1), sizes: [size(2, 1), size(4, 1), size(4, 2)] },
@@ -49,6 +50,7 @@ export const WIDGETS: Partial<Record<WidgetType, WidgetDef>> = {
   temperature: { component: TemperatureWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1)] },
   number: { component: BigNumberWidget, defaultSize: size(2, 1), sizes: [size(1, 1), size(2, 1)] },
   log: { component: LogFeedWidget, defaultSize: size(4, 2), sizes: [size(4, 2), size(4, 3)] },
+  stream: { component: StreamWidget, defaultSize: size(4, 2), sizes: [size(2, 2), size(4, 2), size(4, 3)] },
 };
 
 export const WIDGET_TYPES = Object.keys(WIDGETS) as WidgetType[];

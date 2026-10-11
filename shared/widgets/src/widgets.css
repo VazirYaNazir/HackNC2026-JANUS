@@ -36,6 +36,22 @@
 }
 .jw--selected { outline: 2px solid var(--amber); outline-offset: 3px; }
 
+/* Interaction highlight: ring + glow in the widget's accent color while a widget is pressed, dragged or being typed into (live mode only). */
+.jw { --jw-accent: var(--amber); transition: box-shadow 0.12s ease; } /* inputs are amber; widget.color overrides */
+.jw--toggle, .jw--push { --jw-accent: var(--green); }
+.jw--live:has(
+  .jw__tap:active:not(:disabled),
+  .jw__range[data-active],
+  .jw__dbtn:active,
+  .jw__dbtn--held,
+  .jw__key:active:not(:disabled),
+  .jw__stick--active,
+  .jw__surface[data-active],
+  input[type="text"]:focus:not(:disabled)
+) {
+  box-shadow: var(--neu-raised), 0 0 0 2px var(--jw-accent), 0 0 16px var(--jw-accent);
+}
+
 /* ---------- Shared text ---------- */
 .jw__title { font-size: clamp(var(--jw-font-min), 22cqh, 14px); font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; }
 .jw__heading { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
@@ -90,6 +106,11 @@
 .jw--button .jw__label { font-size: clamp(var(--jw-font-min), 24cqh, 16px); font-weight: 600; }
 .jw--button .jw__ico { width: clamp(16px, 34cqh, 22px); height: clamp(16px, 34cqh, 22px); }
 
+/* Push toggle: a button that stays pushed in (inset, green) while on. */
+.jw--push .jw__tap { color: var(--text-muted); }
+.jw--push-on { box-shadow: var(--neu-inset); }
+.jw--push-on .jw__tap { color: var(--green); }
+
 /* ---------- Toggle ---------- */
 .jw--toggle .jw__tap { justify-content: space-between; }
 .jw--toggle .jw__heading { flex: 1; }
@@ -113,6 +134,8 @@
   transition: transform 0.18s ease, background 0.18s ease;
 }
 .jw__switch--on .jw__knob { transform: translateX(22px); background: var(--green); }
+.jw__switch { transition: background 0.18s ease; }
+.jw__switch--on { background: color-mix(in srgb, var(--green) 28%, var(--surface)); }
 
 /* ---------- Slider ---------- */
 .jw--slider .jw__body {
@@ -265,6 +288,8 @@
 .jw--line .jw__heading { grid-area: title; }
 .jw--line .jw__val { grid-area: value; font-size: clamp(var(--jw-font-min), 22cqh, 16px); }
 .jw__screen {
+  position: relative;
+  min-width: 0;
   grid-area: screen;
   position: relative;
   min-height: 0;
@@ -334,6 +359,25 @@
   font-size: clamp(var(--jw-font-min), min(40cqh, calc((100cqw - 28px) / (var(--len-u, 4) * 0.62))), 36px);
   line-height: 1.1;
 }
+
+/* ---------- Stream: inset screen showing frames from the host ---------- */
+.jw--stream .jw__body { gap: 6px; padding: 8px 12px 12px; }
+.jw__screen {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  box-shadow: var(--neu-inset-sm);
+}
+.jw__frame { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+.jw__frame--dim { opacity: 0.6; }
+.jw__nosignal { padding: 0 12px; font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); text-align: center; }
+.jw__live { flex: none; font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); }
+.jw__live--live { color: var(--coral); }
+.jw__live--live::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 8px var(--coral); }
 
 /* ---------- Log feed: inset monospace box, newest line at the bottom ---------- */
 .jw--log .jw__body { gap: 6px; padding: 8px 12px 12px; }
@@ -537,14 +581,17 @@
 .jw__key:disabled { opacity: 0.45; cursor: default; }
 .jw__key:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
 .jw__reply {
+  flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-y: auto; /* long answers scroll */
+  overflow-wrap: anywhere;
   font-size: var(--jw-font-min);
-  line-height: 1.1;
+  line-height: 1.4;
   color: var(--text-muted);
+  scrollbar-width: thin;
+  scrollbar-color: var(--graphite) transparent;
 }
 .jw__reply--error { color: var(--coral); }
 
@@ -691,23 +738,9 @@
   .jw--knob .jw__big { display: inline; font-size: var(--jw-font-min); }
 }
 
-/* One-row agent prompt with a reply: 40px field + one reply line fit in 62px. */
-@container jw (max-height: 99px) {
-  .jw--reply .jw__body { --field-h: 40px; gap: 2px; padding: 4px 10px; }
-}
-
-/* Two-row agent prompt: the reply gets two lines. */
-@container jw (min-height: 100px) {
-  .jw--agent .jw__body { gap: 8px; padding: 12px; }
-  .jw--agent .jw__reply {
-    white-space: normal;
-    line-height: 1.35;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-}
+/* Agent prompt is 4x2: field on top, the reply fills the rest and scrolls. */
+.jw--agent .jw__body { gap: 8px; padding: 12px; }
+.jw--agent.jw--reply .jw__body { justify-content: flex-start; }
 
 /* Tall button (2x2): icon over a label that may wrap to two lines. */
 @container jw (min-height: 100px) {

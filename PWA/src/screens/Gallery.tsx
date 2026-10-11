@@ -18,6 +18,7 @@ const ICONS: Partial<Record<WidgetType, string>> = {
   temperature: "thermometer",
   number: "monitor",
   log: "terminal",
+  stream: "monitor",
   joystick: "monitor",
   dpad: "play",
   knob: "sun",
@@ -35,6 +36,7 @@ const SHORT_LABELS: Partial<Record<WidgetType, string>> = {
   temperature: "GPU Temp",
   number: "Processes",
   log: "Agent Log",
+  stream: "Screen",
   joystick: "Mouse",
   dpad: "Arrows",
   knob: "Brightness",
@@ -74,9 +76,28 @@ const MESSAGES = [
 ];
 const KEYS: Key[] = ["short", "long"];
 const MOCK_SHORT_REPLY = "Your next meeting is at 3pm.";
-const MOCK_LONG_REPLY =
-  "Here is a long answer from the mock agent. It keeps going so the reply line has to clip to one line, or to two lines when the widget is two rows tall.";
+const MOCK_LONG_REPLY = [
+  "Here is a long answer from the mock agent, so the reply area has to scroll.",
+  "First, check that the backup drive is mounted. Then run the backup script and wait for it to report that every folder has synced.",
+  "If anything fails, open the agent log for the exact error, fix the path it names, and run the script again.",
+  "Finally, confirm the newest backup shows up in the destination folder with today's date.",
+].join(" ");
+/** Mock host frame: an SVG "desktop" with a moving cursor and a clock. Real frames would come from the PC. */
+function mockFrame(n: number): string {
+  const x = 40 + ((n * 23) % 220);
+  const y = 30 + ((n * 17) % 100);
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" fill="#2a3040"/>` +
+    `<rect x="16" y="16" width="170" height="110" rx="6" fill="#1a1f2b"/><rect x="16" y="16" width="170" height="14" rx="6" fill="#3b4358"/>` +
+    `<text x="26" y="62" fill="#5ec8e5" font-family="monospace" font-size="11">npm run dev</text>` +
+    `<text x="26" y="80" fill="#8a93a6" font-family="monospace" font-size="11">frame ${n}</text>` +
+    `<rect y="164" width="320" height="16" fill="#1a1f2b"/><text x="266" y="176" fill="#8a93a6" font-family="monospace" font-size="10">${new Date().toLocaleTimeString([], { hour12: false })}</text>` +
+    `<path d="M${x} ${y}l0 14 4-4 3 7 3-1-3-7 5 0z" fill="#fff"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 const sourceOf = (type: WidgetType, key: Key) => `demo.${type}.${key}`;
+
+let frameCount = 0;
 
 function tick(prev: Record<string, Sample>): Record<string, Sample> {
   const next: Record<string, Sample> = {};
@@ -90,6 +111,9 @@ function tick(prev: Record<string, Sample>): Record<string, Sample> {
         const base = typeof last === "number" ? last : lo + Math.random() * (hi - lo);
         const value = Math.min(hi, Math.max(lo, base + (Math.random() - 0.5) * (hi - lo) * 0.25));
         next[id] = Math.round(value * 10) / 10;
+      } else if (type === "stream") {
+        // "short" streams; "long" points at a dead URL to show the offline state.
+        next[id] = key === "short" ? mockFrame(++frameCount) : "/no-such-stream.mjpg";
       } else if (type === "log") {
         const time = new Date().toLocaleTimeString([], { hour12: false });
         next[id] = `${time} ${MESSAGES[Math.floor(Math.random() * MESSAGES.length)]}`;
@@ -118,15 +142,17 @@ function section(type: WidgetType, w: number, h: number): Layout {
     { key: "short", text: SHORT_LABELS[type] ?? type },
     { key: "long", text: LONG_LABEL },
   ];
-  const widgets = labels.map(({ key, text }): Widget => {
+  // Toggles also come in a push-down variant (stays pushed in while on).
+  const entries = labels.flatMap((l) => (type === "toggle" ? [{ ...l, push: false }, { ...l, push: true }] : [{ ...l, push: false }]));
+  const widgets = entries.map(({ key, text, push }): Widget => {
     if (x + w > GRID.columns) {
       x = 0;
       y += h;
     }
-    const base = { id: `${type}-${w}x${h}-${key}`, label: text, icon: ICONS[type], x, y, w, h };
+    const base = { id: `${type}-${w}x${h}-${key}${push ? "-push" : ""}`, label: text, icon: ICONS[type], x, y, w, h };
     x += w;
     return isInput(type)
-      ? { ...base, type, action: "gallery.demo", min: 0, max: 100, step: 1 }
+      ? { ...base, type, action: "gallery.demo", min: 0, max: 100, step: 1, ...(push && { variant: "push" as const }) }
       : { ...base, type, source: sourceOf(type, key), unit: UNITS[type], ...THRESHOLDS[type] };
   });
   return { schemaVersion: SCHEMA_VERSION, name: `${type} ${w}x${h}`, columns: GRID.columns, widgets };
@@ -135,8 +161,6 @@ function section(type: WidgetType, w: number, h: number): Layout {
 export default function Gallery() {
   const data = useTicker();
   const [states, setStates] = useState<Record<string, string>>(() => ({
-    "agent-4x1-short": MOCK_SHORT_REPLY,
-    "agent-4x1-long": MOCK_LONG_REPLY,
     "agent-4x2-short": MOCK_SHORT_REPLY,
     "agent-4x2-long": MOCK_LONG_REPLY,
   }));
@@ -149,7 +173,10 @@ export default function Gallery() {
     const initial: Record<string, WidgetValue> = {};
     for (const type of WIDGET_TYPES) {
       for (const { w, h } of WIDGETS[type]?.sizes ?? []) {
-        if (type === "toggle") initial[`toggle-${w}x${h}-long`] = true;
+        if (type === "toggle") {
+          initial[`toggle-${w}x${h}-long`] = true;
+          initial[`toggle-${w}x${h}-long-push`] = true;
+        }
         if (type === "knob") {
           initial[`knob-${w}x${h}-short`] = 40;
           initial[`knob-${w}x${h}-long`] = 75;

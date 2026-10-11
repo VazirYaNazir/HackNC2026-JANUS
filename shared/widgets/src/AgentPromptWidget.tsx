@@ -14,7 +14,12 @@ export default function AgentPromptWidget(props: WidgetProps) {
     <Frame props={props} selectable className={status ? "jw--reply" : ""}>
       <PromptForm props={props} placeholder="Ask Gemini…" icon={widget.icon ?? "sparkle"} />
       {status && (
-        <p className={`jw__reply ${state === "error" ? "jw__reply--error" : ""}`} aria-live="polite">
+        <p
+          key={status} // a new answer starts at the top
+          className={`jw__reply ${state === "error" ? "jw__reply--error" : ""}`}
+          aria-live="polite"
+          tabIndex={0}
+        >
           {status}
         </p>
       )}
