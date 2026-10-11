@@ -146,6 +146,26 @@ def _mounts():
     return result
 
 
+def _network_interfaces(path=Path("/proc/self/net/dev")):
+    """Inspect this process's network namespace, independent of sysfs mounts."""
+    lines = path.read_text(encoding="ascii").splitlines()
+    if len(lines) < 3 or [part.strip() for part in lines[0].split("|")] != ["Inter-", "Receive", "Transmit"]:
+        raise ValueError("Verified network namespace inspection is required")
+    headers = [part.split() for part in lines[1].split("|")]
+    if headers != [["face"], ["bytes", "packets", "errs", "drop", "fifo", "frame", "compressed", "multicast"],
+                   ["bytes", "packets", "errs", "drop", "fifo", "colls", "carrier", "compressed"]]:
+        raise ValueError("Verified network namespace inspection is required")
+    interfaces = set()
+    for line in lines[2:]:
+        name, values = line.rsplit(":", 1)
+        name, counters = name.strip(), values.split()
+        if (not name or len(name.split()) != 1 or name in interfaces
+                or len(counters) != 16 or not all(value.isdecimal() for value in counters)):
+            raise ValueError("Verified network namespace inspection is required")
+        interfaces.add(name)
+    return interfaces
+
+
 def assert_runtime(limits):
     if sys.platform != "linux" or os.getpid() != 1 or os.getuid() == 0:
         raise ValueError("Worker must be the unprivileged init process of its own Linux container")
@@ -162,7 +182,7 @@ def assert_runtime(limits):
         scratch_bytes += shm.f_blocks * shm.f_frsize
     if scratch_bytes > limits["disk_bytes"] or not os.access(WORK, os.W_OK):
         raise ValueError("Writable storage exceeds the disk budget")
-    if set(path.name for path in Path("/sys/class/net").iterdir()) != {"lo"}:
+    if _network_interfaces() != {"lo"}:
         raise ValueError("Worker networking must be disabled")
     if set(os.environ) - {"PATH", "HOSTNAME", "HOME", "LANG", "LC_ALL", "TERM"}:
         raise ValueError("Worker environment must not contain host credentials")

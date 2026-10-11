@@ -279,7 +279,7 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.mounts = self.stack.enter_context(patch.object(self.runner, "_mounts", return_value={"/": ({"ro"}, "overlay"), "/work": ({"rw"}, "tmpfs")}))
         self.storage = self.stack.enter_context(patch.object(self.runner.os, "statvfs", return_value=SimpleNamespace(f_blocks=LIMITS["disk_bytes"] // 4096, f_frsize=4096)))
         self.access = self.stack.enter_context(patch.object(self.runner.os, "access", side_effect=lambda path, mode: str(path) != "/dev/shm"))
-        self.interfaces = self.stack.enter_context(patch.object(Path, "iterdir", return_value=[Path("/sys/class/net/lo")]))
+        self.interfaces = self.stack.enter_context(patch.object(self.runner, "_network_interfaces", return_value={"lo"}))
         self.cgroups = self.stack.enter_context(patch.object(self.runner, "assert_cgroup_limits", return_value=Mock()))
         self.stack.enter_context(patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": "/work"}, clear=True))
 
@@ -327,12 +327,82 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.access.side_effect = lambda path, mode: True
         self.assert_rejected()
 
-    def test_extra_network_interfaces_and_host_environment_are_rejected(self):
-        self.interfaces.return_value = [Path("/sys/class/net/lo"), Path("/sys/class/net/eth0")]
+    def test_host_vm_sysfs_interfaces_do_not_override_the_process_network_namespace(self):
+        # Docker Desktop can expose VM interfaces through its shared sysfs mount.
+        # Namespace-local evidence still reports only loopback for network=none.
+        with patch.object(Path, "iterdir", side_effect=AssertionError("sysfs must not be used for networking")):
+            self.assertIs(self.runner.assert_runtime(dict(LIMITS)), self.cgroups.return_value)
+        self.interfaces.assert_called_once_with()
+
+    def test_missing_or_unverifiable_process_namespace_network_evidence_fails_closed(self):
+        self.interfaces.side_effect = ValueError("Invalid kernel network evidence")
         self.assert_rejected()
-        self.interfaces.return_value = [Path("/sys/class/net/lo")]
+
+    def test_extra_network_interfaces_and_host_environment_are_rejected(self):
+        self.interfaces.return_value = {"lo", "eth0"}
+        self.assert_rejected()
+        self.interfaces.return_value = {"lo"}
         with patch.dict(os.environ, {"GEMINI_API_KEY": "private-key"}):
             self.assert_rejected()
+
+
+@unittest.skipUnless(LINUX, "Linux process network namespace inspection")
+class NetworkNamespaceTests(unittest.TestCase):
+    HEADER = (
+        "Inter-|   Receive                                                |  Transmit\n"
+        " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runner = load_runner()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "dev"
+
+    def interfaces(self, content):
+        self.path.write_text(content, encoding="ascii")
+        return self.runner._network_interfaces(self.path)
+
+    def row(self, name="lo", counters=None):
+        values = counters if counters is not None else [str(number) for number in range(16)]
+        return f"  {name}: " + " ".join(values) + "\n"
+
+    def test_disabled_network_reports_only_namespace_loopback(self):
+        self.assertEqual(self.interfaces(self.HEADER + self.row()), {"lo"})
+
+    def test_connected_namespace_preserves_all_interfaces_for_runtime_rejection(self):
+        for extra in ("eth0", "docker0", "veth123abc", "enp0s1"):
+            with self.subTest(interface=extra):
+                self.assertEqual(self.interfaces(self.HEADER + self.row() + self.row(extra)), {"lo", extra})
+
+    def test_namespace_inspection_never_queries_host_vm_sysfs(self):
+        with patch.object(Path, "iterdir", side_effect=AssertionError("host sysfs is irrelevant")):
+            self.assertEqual(self.interfaces(self.HEADER + self.row()), {"lo"})
+
+    def test_missing_empty_malformed_or_incomplete_kernel_headers_fail_closed(self):
+        cases = ("", self.row(), self.HEADER.splitlines()[0] + "\n" + self.row(),
+                 self.HEADER.replace("Receive", "unknown") + self.row(),
+                 self.HEADER.replace("carrier", "unknown") + self.row(), self.HEADER)
+        for content in cases:
+            with self.subTest(content=content[:40]), self.assertRaises(ValueError):
+                self.interfaces(content)
+
+    def test_wrong_counter_count_or_nondecimal_negative_values_fail_closed(self):
+        cases = (["0"] * 15, ["0"] * 17,
+                 ["-1"] + ["0"] * 15, ["1.0"] + ["0"] * 15,
+                 ["not-a-number"] + ["0"] * 15)
+        for counters in cases:
+            with self.subTest(counters=counters), self.assertRaises(ValueError):
+                self.interfaces(self.HEADER + self.row(counters=counters))
+
+    def test_duplicate_empty_or_missing_interface_names_fail_closed(self):
+        cases = (self.row() + self.row(), self.row(name=""), "  " + " ".join(["0"] * 16) + "\n")
+        for content in cases:
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                self.interfaces(self.HEADER + content)
 
 
 @unittest.skipUnless(LINUX, "Linux process tree supervision")

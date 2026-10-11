@@ -14,14 +14,16 @@ from agent.worker_diagnostics import DIAGNOSTIC_CHECKS, DIAGNOSTIC_CODES, DIAGNO
 
 
 class WorkerDiagnosticsTests(unittest.TestCase):
-    def run_source(self, *, runtime_error=None, seccomp_error=None, machine="aarch64", files=None, compiler=True):
+    def run_source(self, *, runtime_error=None, seccomp_error=None, machine="aarch64", files=None, compiler=True, interfaces=None, network_error=None):
         values = {"memory.max": "536870912", "memory.swap.max": "0", "pids.max": "16",
                   "cpu.max": "100000 100000", "cpu.max.burst": "0",
                   "status": "CapEff: 0\nCapBnd: 0\nNoNewPrivs: 1\n"}
         values.update(files or {})
         runtime = Mock(side_effect=runtime_error)
         seccomp = Mock(side_effect=seccomp_error)
+        network = Mock(return_value={"lo"} if interfaces is None else interfaces, side_effect=network_error)
         worker = {"assert_runtime": runtime, "install_seccomp": seccomp,
+                  "_network_interfaces": network,
                   "CgroupMonitor": Mock(return_value=SimpleNamespace(wall_allowance=lambda: 29)),
                   "_mounts": lambda: {"/": ({"ro"}, "overlay"), "/work": ({"rw"}, "tmpfs")}}
         output = io.StringIO()
@@ -32,7 +34,7 @@ class WorkerDiagnosticsTests(unittest.TestCase):
             stack.enter_context(patch.object(Path, "read_text", lambda path: values[path.name]))
             stack.enter_context(patch.object(Path, "exists", return_value=True))
             stack.enter_context(patch.object(Path, "is_file", return_value=compiler))
-            stack.enter_context(patch.object(Path, "iterdir", return_value=[Path("lo")]))
+            stack.enter_context(patch.object(Path, "iterdir", side_effect=AssertionError("Network inspection must not use sysfs")))
             stack.enter_context(patch("os.getpid", return_value=1))
             stack.enter_context(patch("os.getuid", return_value=65532))
             stack.enter_context(patch("os.statvfs", return_value=SimpleNamespace(f_blocks=16384, f_frsize=4096)))
@@ -46,6 +48,13 @@ class WorkerDiagnosticsTests(unittest.TestCase):
         self.assertTrue(all(type(value) is bool for value in result["checks"].values()))
         self.assertIn(result["code"], DIAGNOSTIC_CODES | {None})
         return result, runtime, seccomp
+
+    def test_network_diagnostic_uses_process_namespace_and_rejects_unreadable_evidence(self):
+        for options in ({"interfaces": {"lo", "eth0"}}, {"network_error": OSError("private network path")}):
+            result, _, _ = self.run_source(runtime_error=ValueError("Network isolation required"), **options)
+            self.assertFalse(result["checks"]["network"])
+            self.assertFalse(result["ready"])
+            self.assertNotIn("private network path", json.dumps(result))
 
     def test_native_arm64_and_x86_success_use_existing_worker_checks(self):
         for machine in ("aarch64", "arm64", "x86_64"):
