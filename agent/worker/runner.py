@@ -16,6 +16,7 @@ import platform
 import resource
 import selectors
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -146,8 +147,31 @@ def _mounts():
     return result
 
 
-def _network_interfaces(path=Path("/proc/self/net/dev")):
-    """Inspect this process's network namespace, independent of sysfs mounts."""
+def _network_interfaces():
+    """Query the kernel's current network namespace before installing seccomp.
+
+    Linux libc uses a temporary NETLINK_ROUTE socket for if_nameindex and
+    closes it before returning. No socket is inherited by generated programs.
+    Unlike proc/sysfs mounts, this query follows the caller's actual namespace.
+    """
+    entries = socket.if_nameindex()
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Verified kernel network namespace inspection is required")
+    indexes, interfaces = set(), set()
+    for entry in entries:
+        if not isinstance(entry, tuple) or len(entry) != 2:
+            raise ValueError("Verified kernel network namespace inspection is required")
+        index, name = entry
+        if (type(index) is not int or index <= 0 or not isinstance(name, str) or not name
+                or len(name.split()) != 1 or index in indexes or name in interfaces):
+            raise ValueError("Verified kernel network namespace inspection is required")
+        indexes.add(index)
+        interfaces.add(name)
+    return interfaces
+
+
+def _proc_network_interfaces(path=Path("/proc/self/net/dev")):
+    """Supplemental proc view for diagnostics, never the isolation authority."""
     lines = path.read_text(encoding="ascii").splitlines()
     if len(lines) < 3 or [part.strip() for part in lines[0].split("|")] != ["Inter-", "Receive", "Transmit"]:
         raise ValueError("Verified network namespace inspection is required")

@@ -168,7 +168,7 @@ class ContainerBoundary(IsolationBoundary):
 
     def diagnose(self):
         """Local checks only: never report client output, paths, or credentials."""
-        report = {**self.describe(), "probe_version": 2, "diagnostics": list(self.diagnostics)}
+        report = {**self.describe(), "probe_version": 3, "diagnostics": list(self.diagnostics)}
         if (not self.available and self.image and self.endpoint
                 and any(item["stage"] == "worker_probe" and item["outcome"] == "failed" for item in self.diagnostics)
                 and any(item["stage"] == "worker_cleanup" and item["outcome"] == "passed" for item in self.diagnostics)):

@@ -14,7 +14,7 @@ from agent.worker_diagnostics import DIAGNOSTIC_CHECKS, DIAGNOSTIC_CODES, DIAGNO
 
 
 class WorkerDiagnosticsTests(unittest.TestCase):
-    def run_source(self, *, runtime_error=None, seccomp_error=None, machine="aarch64", files=None, compiler=True, interfaces=None, network_error=None):
+    def run_source(self, *, runtime_error=None, seccomp_error=None, machine="aarch64", files=None, compiler=True, interfaces=None, network_error=None, proc_interfaces=None, proc_error=None):
         values = {"memory.max": "536870912", "memory.swap.max": "0", "pids.max": "16",
                   "cpu.max": "100000 100000", "cpu.max.burst": "0",
                   "status": "CapEff: 0\nCapBnd: 0\nNoNewPrivs: 1\n"}
@@ -22,8 +22,10 @@ class WorkerDiagnosticsTests(unittest.TestCase):
         runtime = Mock(side_effect=runtime_error)
         seccomp = Mock(side_effect=seccomp_error)
         network = Mock(return_value={"lo"} if interfaces is None else interfaces, side_effect=network_error)
+        proc_network = Mock(return_value={"lo"} if proc_interfaces is None else proc_interfaces, side_effect=proc_error)
         worker = {"assert_runtime": runtime, "install_seccomp": seccomp,
                   "_network_interfaces": network,
+                  "_proc_network_interfaces": proc_network,
                   "CgroupMonitor": Mock(return_value=SimpleNamespace(wall_allowance=lambda: 29)),
                   "_mounts": lambda: {"/": ({"ro"}, "overlay"), "/work": ({"rw"}, "tmpfs")}}
         output = io.StringIO()
@@ -47,6 +49,8 @@ class WorkerDiagnosticsTests(unittest.TestCase):
         self.assertEqual(set(result["checks"]), DIAGNOSTIC_CHECKS)
         self.assertTrue(all(type(value) is bool for value in result["checks"].values()))
         self.assertIn(result["code"], DIAGNOSTIC_CODES | {None})
+        network.assert_called_once_with()
+        proc_network.assert_called_once_with()
         return result, runtime, seccomp
 
     def test_network_diagnostic_uses_process_namespace_and_rejects_unreadable_evidence(self):
@@ -54,7 +58,40 @@ class WorkerDiagnosticsTests(unittest.TestCase):
             result, _, _ = self.run_source(runtime_error=ValueError("Network isolation required"), **options)
             self.assertFalse(result["checks"]["network"])
             self.assertFalse(result["ready"])
+            self.assertEqual(result["code"], "WORKER_NETWORK_UNAVAILABLE")
+            self.assertEqual(result["checks"]["network_kernel_query"], "network_error" not in options)
             self.assertNotIn("private network path", json.dumps(result))
+
+    def test_proc_read_errors_are_informational_when_kernel_confirms_loopback(self):
+        for error in (OSError("secret /private/network"), ValueError("secret malformed counters")):
+            with self.subTest(error=type(error).__name__):
+                result, runtime, _ = self.run_source(proc_error=error)
+                self.assertTrue(result["ready"])
+                self.assertIsNone(result["code"])
+                self.assertTrue(result["checks"]["network"])
+                self.assertTrue(result["checks"]["network_kernel_query"])
+                self.assertFalse(result["checks"]["network_proc_readable"])
+                self.assertFalse(result["checks"]["network_proc_loopback"])
+                runtime.assert_called_once()
+                self.assertNotIn("secret", json.dumps(result))
+
+    def test_extra_proc_interfaces_do_not_override_authoritative_kernel_namespace(self):
+        result, runtime, _ = self.run_source(proc_interfaces={"lo", "eth0"})
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["checks"]["network"])
+        self.assertTrue(result["checks"]["network_proc_readable"])
+        self.assertFalse(result["checks"]["network_proc_loopback"])
+        runtime.assert_called_once()
+
+    def test_kernel_network_failure_is_never_masked_by_other_successful_checks(self):
+        for options in ({"interfaces": {"lo", "eth0"}}, {"network_error": OSError("private kernel error")}):
+            with self.subTest(options=options):
+                result, _, _ = self.run_source(**options)
+                self.assertFalse(result["ready"])
+                self.assertEqual(result["code"], "WORKER_NETWORK_UNAVAILABLE")
+                self.assertTrue(result["checks"]["network_proc_readable"])
+                self.assertTrue(result["checks"]["network_proc_loopback"])
+                self.assertNotIn("private kernel error", json.dumps(result))
 
     def test_native_arm64_and_x86_success_use_existing_worker_checks(self):
         for machine in ("aarch64", "arm64", "x86_64"):

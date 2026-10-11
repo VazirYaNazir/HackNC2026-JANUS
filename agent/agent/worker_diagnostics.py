@@ -8,12 +8,13 @@ DIAGNOSTIC_CHECKS = frozenset({
     "runtime", "seccomp", "compiler", "architecture", "memory", "swap",
     "processes", "cpu_quota", "cpu_period", "cpu_burst", "cpu_allowance",
     "container_init", "credentials", "readonly_root", "scratch", "network",
-    "environment",
+    "network_kernel_query", "network_proc_readable", "network_proc_loopback", "environment",
 })
 DIAGNOSTIC_CODES = frozenset({
     "WORKER_RUNTIME_UNAVAILABLE", "WORKER_SECCOMP_UNAVAILABLE",
     "WORKER_COMPILER_UNAVAILABLE", "WORKER_ARCHITECTURE_UNSUPPORTED",
     "WORKER_DIAGNOSTIC_UNAVAILABLE",
+    "WORKER_NETWORK_UNAVAILABLE",
 })
 
 DIAGNOSTIC_SOURCE = r'''
@@ -27,7 +28,7 @@ import sys
 names = ("runtime", "seccomp", "compiler", "architecture", "memory", "swap",
          "processes", "cpu_quota", "cpu_period", "cpu_burst", "cpu_allowance",
          "container_init", "credentials", "readonly_root", "scratch", "network",
-         "environment")
+         "network_kernel_query", "network_proc_readable", "network_proc_loopback", "environment")
 checks = {name: False for name in names}
 code = "WORKER_DIAGNOSTIC_UNAVAILABLE"
 
@@ -69,7 +70,20 @@ try:
             size += shm.f_blocks * shm.f_frsize
         return kind == "tmpfs" and "noexec" not in options and size <= limits["disk_bytes"] and os.access("/work", os.W_OK)
     check("scratch", scratch)
-    check("network", lambda: worker["_network_interfaces"]() == {"lo"})
+    try:
+        interfaces = worker["_network_interfaces"]()
+        checks["network_kernel_query"] = True
+        checks["network"] = interfaces == {"lo"}
+    except Exception:
+        pass
+    # /proc is supplemental evidence only. Docker Desktop can expose a view
+    # that differs from the kernel query in this process's network namespace.
+    try:
+        proc_interfaces = worker["_proc_network_interfaces"]()
+        checks["network_proc_readable"] = True
+        checks["network_proc_loopback"] = proc_interfaces == {"lo"}
+    except Exception:
+        pass
     check("environment", lambda: not set(os.environ) - {"PATH", "HOSTNAME", "HOME", "LANG", "LC_ALL", "TERM"})
     try:
         worker["assert_runtime"](limits)
@@ -86,6 +100,7 @@ try:
     except Exception:
         pass
     code = next((reason for name, reason in (
+        ("network", "WORKER_NETWORK_UNAVAILABLE"),
         ("runtime", "WORKER_RUNTIME_UNAVAILABLE"),
         ("seccomp", "WORKER_SECCOMP_UNAVAILABLE"),
         ("compiler", "WORKER_COMPILER_UNAVAILABLE"),

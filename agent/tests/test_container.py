@@ -369,7 +369,7 @@ class WorkerDiagnosticTests(BoundaryFixtures, unittest.TestCase):
             report = boundary.diagnose()
         command.assert_not_called()
         self.assertEqual(set(boundary.describe()), {"available", "reason", "execution_target"})
-        self.assertEqual(report["probe_version"], 2)
+        self.assertEqual(report["probe_version"], 3)
         self.assertEqual(report["diagnostics"], [{"stage": "docker_client", "outcome": "failed"}])
 
     def test_failed_engine_limits_report_exact_checks_without_raw_metadata(self):
