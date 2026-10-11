@@ -19,9 +19,12 @@ Prerequisites: Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Py
 so `npm start -- --imessage` reaches npm as its own (unknown) option. The scripts below have their flags built in:
 
 ```sh
-npm run start:demo       # backend + agent + Studio + iMessage + screen sharing + tunnel  (--imessage --screen --tunnel)
+npm run start:demo       # backend + agent + Studio + iMessage + screen sharing + Cloudflare tunnel  (--imessage --screen --tunnel)
 npm run start:imessage   # the same without screen sharing or the tunnel                (--imessage)
 ```
+
+With the tunnel, the console prints a green `Cloudflare tunnel is up: https://….trycloudflare.com` line once cloudflared is running
+(or a red warning if it could not start), and **Pair Device** in Studio uses that URL.
 
 The scripts also read flags that npm swallowed (`npm_config_<flag>`), so `npm start --imessage` works too, with an
 "Unknown env config" warning from npm that you can ignore.

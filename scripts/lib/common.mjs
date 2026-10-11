@@ -248,6 +248,16 @@ export function withIpv4First(existing = process.env.NODE_OPTIONS) {
   return `${existing ?? ''} --dns-result-order=ipv4first`.trim();
 }
 
+/** The name this platform's PATH variable really has ("Path" on Windows), so overriding it replaces it instead of adding a twin. */
+export function pathKey(env = process.env) {
+  return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+}
+
+/** The public URL from the backend's "Cloudflare Tunnel active at: https://….trycloudflare.com" log line, or null. */
+export function tunnelUrlFrom(line) {
+  return /Cloudflare Tunnel active at:\s*(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/i.exec(line)?.[1] ?? null;
+}
+
 // ---- flags ---------------------------------------------------------------------------------------------------
 
 /**

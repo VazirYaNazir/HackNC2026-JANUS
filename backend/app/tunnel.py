@@ -4,7 +4,8 @@ import logging
 import re
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+# uvicorn's logger, like the rest of the backend: a module-named logger has no handler and its INFO lines never show.
+logger = logging.getLogger("uvicorn.error")
 
 _tunnel_url: Optional[str] = None
 _tunnel_process: Optional[asyncio.subprocess.Process] = None

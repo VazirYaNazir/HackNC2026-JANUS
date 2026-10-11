@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { doctor, report } from './doctor.mjs';
 import { ensureCloudflared, BIN_DIR } from './lib/cloudflared.mjs';
-import { ROOT, forgetProcesses, isJanusProcess, isWindows, killLeftovers, killTree, listenerPid, liveAgent, makeFlags, otherOrchestrator, portInUse, processName, readDevices, readEnvFile, recordProcess, run, withIpv4First } from './lib/common.mjs';
+import { ROOT, forgetProcesses, isJanusProcess, isWindows, killLeftovers, killTree, listenerPid, liveAgent, makeFlags, otherOrchestrator, portInUse, processName, readDevices, readEnvFile, pathKey, recordProcess, run, tunnelUrlFrom, withIpv4First } from './lib/common.mjs';
 
 const flags = makeFlags();
 const only = flags.value('only');
@@ -35,7 +35,7 @@ function track(name, child) {
   recordProcess(key, child.pid);
 }
 
-function launch(name, command, commandArgs, { cwd = ROOT, env = {}, onExit } = {}) {
+function launch(name, command, commandArgs, { cwd = ROOT, env = {}, onExit, onLine } = {}) {
   const child = spawn(command, commandArgs, { cwd, env: { ...process.env, ...env }, shell: isWindows, detached: !isWindows, stdio: ['ignore', 'pipe', 'pipe'] });
   const prefix = `[${name}] `;
   for (const stream of [child.stdout, child.stderr]) {
@@ -43,7 +43,7 @@ function launch(name, command, commandArgs, { cwd = ROOT, env = {}, onExit } = {
     stream.on('data', (chunk) => {
       const lines = (pending + chunk).split(/\r?\n/);
       pending = lines.pop() ?? '';
-      for (const line of lines) console.log(prefix + line);
+      for (const line of lines) { console.log(prefix + line); onLine?.(line); }
     });
   }
   child.on('error', (error) => { console.error(`${prefix}failed to start: ${error.message}`); void shutdown(1); });
@@ -113,6 +113,7 @@ function device() {
 }
 
 const RED = '\x1b[1;31m';
+const GREEN = '\x1b[1;32m';
 const RESET = '\x1b[0m';
 
 /** Tells the backend the sidecar is gone so Studio shows "iMessage: off" now rather than after the heartbeat timeout. */
@@ -177,15 +178,30 @@ async function main() {
   if (only === 'agent') { await waitForBackend(); startAgent(); return; }
 
   const backendEnv = {};
+  let tunnelUrl = null;
   if (wantTunnel) {
     await ensureCloudflared();
     backendEnv.JANUS_AUTO_TUNNEL = '1';
-    backendEnv.PATH = `${BIN_DIR}${path.delimiter}${process.env.PATH}`;
+    // Same key the process already uses ("Path" on Windows), so the pinned cloudflared directory really is first on PATH.
+    backendEnv[pathKey()] = `${BIN_DIR}${path.delimiter}${process.env[pathKey()] ?? ''}`;
     console.log('Tunnel enabled: the backend will be reachable on the public internet (still behind its credentials) until you stop JANUS.');
   }
-  launch('backend', 'uv', ['run', '--locked', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--env-file', '.env'], { cwd: path.join(ROOT, 'backend'), env: backendEnv });
+  launch('backend', 'uv', ['run', '--locked', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--env-file', '.env'], {
+    cwd: path.join(ROOT, 'backend'),
+    env: backendEnv,
+    // The backend starts cloudflared during its own startup and logs the public URL; surface it where it can't be missed.
+    onLine: (line) => {
+      const url = tunnelUrlFrom(line);
+      if (url && !tunnelUrl) { tunnelUrl = url; console.log(`${GREEN}Cloudflare tunnel is up: ${url}${RESET}`); }
+    },
+  });
   await waitForBackend();
   console.log(`Backend ready at ${BACKEND}`);
+  if (wantTunnel) {
+    // The backend finishes its startup (tunnel included) before /health answers, so a missing URL here means it failed.
+    if (tunnelUrl) console.log(`${GREEN}Phone pairing: open Pair Device in Studio — it will use ${tunnelUrl}${RESET}`);
+    else console.error(`${RED}The Cloudflare tunnel did not come up, so phone pairing will not work. Look above for "Could not start Cloudflare tunnel" (cloudflared missing or blocked?).${RESET}`);
+  }
 
   if (wantAgent) startAgent();
   if (wantImessage) await startImessage();
