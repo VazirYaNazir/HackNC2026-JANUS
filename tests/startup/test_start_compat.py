@@ -304,6 +304,59 @@ class LauncherModeTests(unittest.TestCase):
             with self.subTest(service=service.name):
                 service.stop.assert_called_once()
 
+    def test_default_launch_opens_electron_with_the_selected_private_connection(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-agent", "--backend-port=18000",
+                                           "--studio-port=15173"]), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa", "electron"])
+        self.assertEqual(self.install.call_args.args[2:], (True, False))
+        electron = self.services[-1]
+        self.assertEqual(electron.command, ["node", str(self.root / "frontend" / "electron" / "launch.cjs")])
+        self.assertEqual(electron.cwd, self.root / "frontend")
+        self.assertEqual(electron.environment["JANUS_STUDIO_URL"], self.bootstrap.browser_url())
+        self.assertEqual(electron.environment["JANUS_BACKEND_URL"], "http://127.0.0.1:18000")
+        self.assertEqual(electron.environment["AGENT_DEVICE_ID"], self.registration.device_id)
+        self.bootstrap_factory.assert_called_once_with("http://127.0.0.1:15173", "http://127.0.0.1:18000",
+                                                       self.registration.controller_token)
+        self.browser.assert_not_called()
+        markers = [line for line in self.output.getvalue().splitlines() if line.startswith("[janus-process]")]
+        self.assertEqual(markers, [f"[janus-process] {service.name} {service.process.pid}" for service in self.services])
+        for secret in (self.registration.agent_token, self.registration.controller_token):
+            self.assertNotIn(secret, " ".join(electron.command))
+            self.assertNotIn(secret, self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_explicit_browser_uses_bootstrap_without_installing_or_starting_electron(self):
+        self.assertEqual(self.run_launcher(["--studio=browser", "--local-only", "--no-agent"]), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
+        self.assertEqual(self.install.call_args.args[2:], (False, False))
+        self.browser.assert_called_once_with(self.bootstrap.browser_url())
+        self.assert_local_services_cleaned_up()
+
+    def test_headless_default_serves_studio_and_pwa_without_electron_runtime_or_window(self):
+        self.assertEqual(self.run_launcher(["--no-browser", "--local-only", "--no-agent"]), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
+        self.assertEqual(self.install.call_args.args[2:], (False, False))
+        self.assertEqual([call.args[0] for call in self.http.call_args_list],
+                         ["http://127.0.0.1:8000/health", "http://127.0.0.1:5173", "http://127.0.0.1:5174"])
+        self.bootstrap.start.assert_called_once()
+        self.browser.assert_not_called()
+        self.assertNotIn("[janus-process] electron", self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_default_electron_waits_for_all_services_to_be_ready(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-agent"], ready=False), 1)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa"])
+        self.bootstrap_factory.assert_not_called()
+        self.browser.assert_not_called()
+        self.assertNotIn("[janus-process] electron", self.output.getvalue())
+        self.assert_local_services_cleaned_up()
+
+    def test_closing_default_electron_stops_all_local_services(self):
+        self.assertEqual(self.run_launcher(["--local-only", "--no-agent"], runtime_exit={"electron": 0}), 0)
+        self.assertEqual([service.name for service in self.services], ["backend", "studio", "pwa", "electron"])
+        self.bootstrap.stop.assert_called_once()
+        self.assert_local_services_cleaned_up()
+
     def test_solo_agent_preserves_main_public_origins_and_controller_credentials(self):
         state = self.root / ".janus"
         state.mkdir()
@@ -314,6 +367,9 @@ class LauncherModeTests(unittest.TestCase):
         original = origins.read_bytes(), controller.read_bytes()
         self.assertEqual(self.run_launcher(["--only=agent", "--no-install"]), 0)
         self.assertEqual([service.name for service in self.services], ["agent"])
+        self.assertEqual(self.install.call_args.args[2:], (False, True))
+        markers = [line for line in self.output.getvalue().splitlines() if line.startswith("[janus-process]")]
+        self.assertEqual(markers, ["[janus-process] agent 1000"])
         self.ports.assert_not_called()
         self.database.assert_not_called()
         self.write_state.assert_not_called()
@@ -364,6 +420,7 @@ class LauncherModeTests(unittest.TestCase):
     def test_studio_none_skips_studio_browser_and_bootstrap_but_keeps_phone_pwa(self):
         self.assertEqual(self.run_launcher(["--studio=none", "--no-agent", "--local-only", "--no-install"]), 0)
         self.assertEqual([service.name for service in self.services], ["backend", "pwa"])
+        self.assertEqual(self.install.call_args.args[2:], (False, True))
         self.assertEqual([call.args[0] for call in self.http.call_args_list],
                          ["http://127.0.0.1:8000/health", "http://127.0.0.1:5174"])
         self.bootstrap_factory.assert_not_called()

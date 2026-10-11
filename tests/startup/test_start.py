@@ -233,6 +233,13 @@ class CommandLineTests(unittest.TestCase):
         options = launcher.parse_args([])
         self.assertEqual((options.backend_port, options.studio_port, options.pwa_port, options.admin_port),
                          (8000, 5173, 5174, 8001))
+        self.assertEqual(options.studio, "electron")
+        self.assertTrue(options.electron)
+
+    def test_browser_override_disables_the_default_electron_interface(self):
+        options = launcher.parse_args(["--studio=browser"])
+        self.assertEqual(options.studio, "browser")
+        self.assertFalse(options.electron)
 
     def test_explicit_operating_modes_and_ports_are_supported(self):
         options = launcher.parse_args(["--local-only", "--no-agent", "--no-browser", "--no-install", "--electron",
@@ -998,7 +1005,7 @@ class LauncherOrchestrationTests(unittest.TestCase):
         self.assertEqual(self.published[-1], {"backend": None, "pwa": None})
 
     def test_studio_bootstrap_and_browser_open_before_phone_tunnels_start(self):
-        self.assertEqual(self.run_launcher(["--no-agent", "--no-install"]), 0)
+        self.assertEqual(self.run_launcher(["--studio=browser", "--no-agent", "--no-install"]), 0)
         self.bootstrap.start.assert_called_once()
         self.browser.assert_called_once()
         self.assertLess(self.events.index("bootstrap"), self.events.index("start-tunnel-backend"))

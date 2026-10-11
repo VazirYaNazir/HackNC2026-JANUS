@@ -12,14 +12,14 @@ Install Node 20.19+ and [`uv`](https://docs.astral.sh/uv/) (it fetches Python 3.
 npm start
 ```
 
-The launcher installs locked dependencies, preserves existing registrations and environment settings, starts the backend, SQLite, browser Studio and phone PWA, and creates HTTPS Cloudflare connections for phone pairing. Studio connects automatically through a single-use local credential handoff. On macOS or Windows, the terminal asks whether JANUS may control this laptop for the session. Type `yes` to enable the native tools and screen mirror; declining keeps the web services running. macOS also requires Accessibility and Screen Recording permission, and Windows native compilation requires the Visual Studio C tools and Windows SDK.
+The launcher installs locked dependencies, preserves existing registrations and environment settings, starts the backend, SQLite, Electron Studio and phone PWA, and creates HTTPS Cloudflare connections for phone pairing. Studio connects automatically through a single-use local credential handoff. On macOS or Windows, the terminal asks whether JANUS may control this laptop for the session. Type `yes` to enable the native tools and screen mirror; declining keeps the web services running. macOS also requires Accessibility and Screen Recording permission, and Windows native compilation requires the Visual Studio C tools and Windows SDK.
 
 Choose **Project → Laptop controls starter**, then **Save & Push → Pair Device**. Open the HTTPS phone app address printed in the terminal and scan the QR, paste the pairing link, or enter its backend address and code. When a tunnel fails, local Studio stays available and pairing reports that the public connection is unavailable. A tunnel restart changes its address: generate a new pairing code.
 
 ```sh
 npm start -- --local-only                    # local development without public tunnels
-npm start -- --local-only --no-agent         # web development without laptop permissions
-npm start -- --studio=electron               # optional Electron Studio instead of a browser
+npm start -- --local-only --no-agent         # desktop development without laptop permissions
+npm start -- --studio=browser                # optional browser Studio instead of Electron
 npm start -- --studio=none --no-agent        # backend and phone app without Studio
 npm start -- --no-screen                     # approve controls without screen capture
 npm start -- --only=agent                    # approve/start an agent against an existing backend
@@ -28,7 +28,7 @@ npm run start:demo                           # compatibility shortcut; includes 
 npm run doctor                              # diagnose optional integrations and prerequisites
 ```
 
-`--no-install` uses installed dependencies; `--no-browser` leaves browser Studio running without opening a tab. `--device-id`, `--backend-port`, `--admin-port`, `--studio-port` and `--pwa-port` select the laptop and local ports. Legacy `--pwa`, `--tunnel` and `--screen` flags remain accepted because those features are now included by default. The wrapper also accepts flags npm places in `npm_config_<flag>` on Windows.
+`--no-install` uses installed dependencies; `--no-browser` keeps the local servers running without opening Electron or a browser tab. `--device-id`, `--backend-port`, `--admin-port`, `--studio-port` and `--pwa-port` select the laptop and local ports. Legacy `--pwa`, `--tunnel` and `--screen` flags remain accepted because those features are now included by default. The wrapper also accepts flags npm places in `npm_config_<flag>` on Windows.
 
 ### Startup permissions and private state
 
@@ -36,7 +36,7 @@ Startup creates `agent/.validation-policy.json` with all supported capabilities 
 
 The launcher uses private local files in `.janus/`: registrations, the manual controller credential, SQLite, process records, tunnel origins and redacted service logs. POSIX permissions and Windows owner ACLs protect sensitive launcher files. Existing `backend/.env` and its credentials are preserved. On first startup the previous `backend/app/app.db` is copied using SQLite backup, including committed WAL data, into writable `.janus/janus.sqlite`; the original is preserved. Set `JANUS_DB_PATH` to use a different writable database. `JANUS_STATE_DIR` can select another private state directory.
 
-Ctrl+C stops the owned process trees and clears published phone origins. Verified PID records prevent a second launcher from replacing an active session and let the next startup clean up its own leftovers after a crash. A stopped agent or messaging sidecar leaves the web services running. The default browser receives its credential once through an origin-restricted loopback handoff, keeps it only in memory, and removes the handoff fragment immediately. Electron also supports local IPC and a permission dialog for **Start agent**.
+Ctrl+C stops the owned process trees and clears published phone origins. Verified PID records prevent a second launcher from replacing an active session and let the next startup clean up its own leftovers after a crash. A stopped agent or messaging sidecar leaves the web services running. Studio receives its credential once through an origin-restricted loopback handoff, keeps it only in memory, and removes the handoff fragment immediately. Electron is the default interface and also supports local IPC and a permission dialog for **Start agent**. Use `--studio=browser` for browser development; the default launcher installs the Electron runtime when needed.
 
 `npm run setup` remains available for manual prerequisite checks, environment initialization, native builds and optional Tiger Data schema setup. It preserves configured values. Standalone backend startup uses `JANUS_AUTO_TUNNEL=1` or `JANUS_TUNNEL_MODE=auto` for its own tunnel; the full launcher owns its tunnels and disables duplicate backend tunneling.
 

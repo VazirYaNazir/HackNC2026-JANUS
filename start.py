@@ -603,8 +603,8 @@ def parse_args(argv=None):
     parser.add_argument("--no-agent", action="store_true", help="Run web services without laptop controls or permission approval")
     parser.add_argument("--no-browser", action="store_true", help="Keep services in this terminal without opening Studio")
     parser.add_argument("--no-install", action="store_true", help="Use already installed locked dependencies")
-    parser.add_argument("--electron", action="store_true", help="Open Electron instead of browser Studio")
-    parser.add_argument("--studio", choices=("browser", "electron", "none"), default="browser")
+    parser.add_argument("--electron", action="store_true", help="Open Electron Studio (the default)")
+    parser.add_argument("--studio", choices=("browser", "electron", "none"), default="electron", help="Studio interface (default: electron)")
     parser.add_argument("--only", choices=("agent",), help="Start the locally approved agent against an existing backend")
     parser.add_argument("--startup-approval-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--imessage", action="store_true", help="Start the configured Photon Spectrum messaging sidecar")
@@ -649,7 +649,8 @@ def main(argv=None) -> int:
             signal.signal(signum, interrupt_startup)
         if not options.only:
             check_ports([options.backend_port, options.admin_port, options.pwa_port] + ([options.studio_port] if options.studio != "none" else []))
-        install_dependencies(ROOT, env, options.electron, options.no_install)
+        needs_electron = options.electron and not options.no_browser and not options.only
+        install_dependencies(ROOT, env, needs_electron, options.no_install)
         database = ensure_database(ROOT, env) if not options.only else None
         registration = provision_registration(ROOT, env, options.device_id)
         approved = False
@@ -734,7 +735,7 @@ def main(argv=None) -> int:
                     print("iMessage build/start failed; local JANUS remains available.", file=sys.stderr)
         print(f"\nLocal JANUS is ready. Studio: {studio_origin}")
         bootstrap = LocalBootstrap(studio_origin, local_backend, registration.controller_token).start() if studio else None
-        if options.electron:
+        if options.electron and not options.no_browser:
             launch("electron", ["node", str(ROOT / "frontend" / "electron" / "launch.cjs")], ROOT / "frontend", {"JANUS_STUDIO_URL": bootstrap.browser_url(), "JANUS_BACKEND_URL": local_backend, "AGENT_DEVICE_ID": registration.device_id})
         elif bootstrap and not options.no_browser:
             webbrowser.open(bootstrap.browser_url())
