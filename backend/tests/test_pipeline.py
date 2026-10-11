@@ -237,8 +237,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         await self.laptop(["original"])
         original = self.backend.runtime.hub.get("device-1")
         duplicate = await self.raw_agent()
-        with self.assertRaises(ConnectionClosed):
+        with self.assertRaises(ConnectionClosed) as closed:
             await duplicate.recv()
+        # A distinct, final close code (not the generic policy violation) so the agent can stop retrying.
+        self.assertEqual((closed.exception.rcvd.code, closed.exception.rcvd.reason), (4409, "DEVICE_ALREADY_CONNECTED"))
         self.assertIs(self.backend.runtime.hub.get("device-1"), original)
         self.assertEqual((await self.backend.generate("original")).status_code, 202)
         self.assertEqual((await self.backend.result("original"))["state"], "COMPLETED")

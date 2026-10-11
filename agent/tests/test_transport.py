@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from websockets.exceptions import ConnectionClosedOK
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from websockets.frames import Close
 
 from agent.jobs import ValidationService
@@ -255,6 +255,25 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((kwargs["ping_interval"], kwargs["ping_timeout"], kwargs["max_size"]), (20, 20, 1048576))
         self.assertNotIn("secret-fixture-token", stderr.getvalue())
         self.assertNotIn("private-fixture", stderr.getvalue())
+
+    async def test_a_duplicate_device_rejection_ends_the_agent_instead_of_retrying_forever(self):
+        options = SimpleNamespace(url="wss://backend/ws/agents/laptop", device_id="laptop", workers=4)
+        refused = ConnectionClosed(Close(4409, "DEVICE_ALREADY_CONNECTED"), None)
+        sleeps = []
+        async def sleep(delay):
+            sleeps.append(delay)
+        with patch("agent.transport.connect", side_effect=refused) as connection, patch("agent.transport.asyncio.sleep", side_effect=sleep), redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(SystemExit, "already connected"):
+                await run_connection(options, "fixture", object())
+        self.assertEqual((connection.call_count, sleeps), (1, []))
+
+    async def test_other_close_codes_still_reconnect(self):
+        options = SimpleNamespace(url="wss://backend/ws/agents/laptop", device_id="laptop", workers=4)
+        async def sleep(delay):
+            raise asyncio.CancelledError
+        with patch("agent.transport.connect", side_effect=ConnectionClosed(Close(1008, ""), None)), patch("agent.transport.asyncio.sleep", side_effect=sleep), redirect_stderr(io.StringIO()):
+            with self.assertRaises(asyncio.CancelledError):
+                await run_connection(options, "fixture", object())
 
     async def test_successful_handshake_resets_backoff_and_normal_close_reconnects(self):
         class Context:

@@ -165,6 +165,10 @@ async def connected_session(websocket, device_id, service, *, on_ready=None, nat
             raise
 
 
+# Application close code the backend uses for "this device already has a connected agent".
+DUPLICATE_CLOSE_CODE = 4409
+
+
 async def run_connection(options, token, service, binaries=None) -> None:
     retry = 1
     def ready():
@@ -179,6 +183,9 @@ async def run_connection(options, token, service, binaries=None) -> None:
                 native = LiveNative(binaries, options) if binaries else None
                 await connected_session(websocket, options.device_id, service, on_ready=ready, native=native)
         except (ConnectionClosed, InvalidHandshake, OSError, RuntimeError, ValueError) as error:
+            if isinstance(error, ConnectionClosed) and error.rcvd is not None and error.rcvd.code == DUPLICATE_CLOSE_CODE:
+                # The backend already has a live agent for this device; retrying would only add a second contender.
+                raise SystemExit("Another agent is already connected for this device. Stop it first, or keep using that one; not retrying.") from None
             print(f"Agent connection interrupted ({type(error).__name__}); retrying", file=sys.stderr)
         await asyncio.sleep(random.uniform(retry / 2, retry))
         retry = min(30, retry * 2)
