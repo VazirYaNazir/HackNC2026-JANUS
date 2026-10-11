@@ -1,6 +1,8 @@
 """Authenticated panel configuration, phone pairing, and request reuse."""
+import os
 import re
 from typing import Annotated
+from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.agent_runtime.connections import PipelineError
@@ -9,6 +11,7 @@ from app.agent_runtime.models import GenerationRequest, source_hash
 from app.agent_runtime.similarity import suggestions
 from app.panels import DispatchRequest, PairRequest, SaveLayout, action_request, dispatch
 from app.routes.agent_jobs import CONTROLLER, SERVICE
+from app.tunnel import get_tunnel_url
 
 router = APIRouter(tags=["Connected panels"])
 
@@ -64,9 +67,34 @@ async def configured_action(action_id: str, identity: CONTROLLER, service: SERVI
     return request.model_dump()
 
 
+def configured_origin(name: str) -> str | None:
+    """Public pairing addresses are local configuration, never credential URLs."""
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    try:
+        url = urlsplit(value)
+        if (url.scheme != "https" or not url.hostname or url.username or url.password
+                or url.path not in ("", "/") or url.query or url.fragment
+                or any(character.isspace() for character in url.netloc)):
+            raise ValueError
+        # Accessing port also rejects malformed or out-of-range values.
+        url.port
+        return f"https://{url.netloc}"
+    except ValueError:
+        raise HTTPException(503, f"INVALID_{name}") from None
+
+
 @router.post("/api/v1/studio/pairing")
-async def pairing(identity: DESKTOP, service: SERVICE):
-    return {"code": await service.store.pairing(identity), "expires_in_seconds": 60}
+async def pairing(request: Request, identity: DESKTOP, service: SERVICE):
+    public = configured_origin("PUBLIC_BACKEND_URL")
+    pwa = configured_origin("PWA_PUBLIC_URL")
+    # Keep a caller's existing HTTPS origin; a local Studio can use the backend's
+    # automatic tunnel without knowing its generated hostname.
+    host = public or (str(request.base_url).rstrip("/") if request.url.scheme == "https"
+                      else get_tunnel_url() or str(request.base_url).rstrip("/"))
+    return {"code": await service.store.pairing(identity), "expires_in_seconds": 60,
+            "host": host, "pwa_url": pwa}
 
 
 @router.post("/api/pair")

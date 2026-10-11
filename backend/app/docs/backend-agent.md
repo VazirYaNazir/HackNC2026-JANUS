@@ -62,6 +62,8 @@ persisted registration. Existing connections and jobs terminate on shutdown.
 | `AGENT_MAX_JOBS_PER_DEVICE` | 4 outstanding jobs, local range 1–4; distinct from native worker count. |
 | `AGENT_JOB_TIMEOUT` | 150 seconds total, including generation, validation, repair, and execution. |
 | `APP_ENV` | `development` allows loopback `ws`; every other value requires `wss` on the new agent endpoint. |
+| `PUBLIC_BACKEND_URL` | Optional stable HTTPS backend origin advertised for phone pairing; otherwise the current HTTPS request or automatic Cloudflare tunnel is used. |
+| `PWA_PUBLIC_URL` | Optional deployed phone app HTTPS origin; Studio's QR opens it with a pairing review form. |
 | `JANUS_DB_PATH` | Optional path in an existing writable directory; default `app/app.db`. Persist it and its WAL sidecars outside standalone containers. |
 
 From the repository root, use the existing Docker workflow:

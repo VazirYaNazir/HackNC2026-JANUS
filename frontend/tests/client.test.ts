@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PanelClient, activeJob, backendHost, jobText, pairBackend } from '@janus/client'
+import { ApiError, PanelClient, activeJob, backendHost, jobText, pairBackend } from '@janus/client'
 import { parseServerMessage, type JobView } from '@janus/schema'
 import { mergeHistory, recordJob } from '../../shared/client/src/jobs'
 
@@ -52,6 +52,35 @@ describe('shared frontend transport', () => {
     await expect(pairBackend('https://backend.example', 'wrong')).rejects.toThrow('invalid or expired')
     fetch.mockResolvedValue(new Response('{}'))
     await expect(pairBackend('https://backend.example', 'wrong')).rejects.toThrow('Invalid pairing response')
+  })
+
+  it('distinguishes pairing network failures, rate limits, and server failures from bad codes', async () => {
+    const fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetch)
+    await expect(pairBackend('https://backend.example', 'code')).rejects.toThrow('Could not reach the backend')
+    fetch.mockResolvedValue(new Response('{}', { status: 429 }))
+    await expect(pairBackend('https://backend.example', 'code')).rejects.toMatchObject({ status: 429, message: expect.stringContaining('Too many pairing attempts') })
+    fetch.mockResolvedValue(new Response('{}', { status: 503 }))
+    await expect(pairBackend('https://backend.example', 'code')).rejects.toBeInstanceOf(ApiError)
+    await expect(pairBackend('https://backend.example', 'code')).rejects.toThrow('could not complete pairing')
+  })
+
+  it('rejects empty, incomplete, non-object, and unreadable pairing responses', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    for (const value of [null, [], { token: 'phone', agentDeviceId: 'laptop', pcName: 'PC' }, { token: '', deviceId: 'id', agentDeviceId: 'laptop', pcName: 'PC' }]) {
+      fetch.mockResolvedValue(new Response(JSON.stringify(value)))
+      await expect(pairBackend('https://backend.example', 'code')).rejects.toThrow('Invalid pairing response')
+    }
+    fetch.mockResolvedValue(new Response('not JSON'))
+    await expect(pairBackend('https://backend.example', 'code')).rejects.toThrow('Invalid pairing response')
+  })
+
+  it('propagates a caller cancellation instead of presenting it as an unreachable backend', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('Cancelled', 'AbortError')))
+    await expect(pairBackend('https://backend.example', 'code', 'Phone', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
   })
 
   it('propagates server errors and sends fresh IDs with only explicitly chosen reuse', async () => {

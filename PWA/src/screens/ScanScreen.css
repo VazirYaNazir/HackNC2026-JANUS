@@ -11,7 +11,9 @@
 /* Camera fills the screen; the frame sits on top and dims everything outside it. */
 .scan__video { position: absolute; inset: 0; overflow: hidden; background: var(--surface); }
 .scan__video #scan-region { position: absolute !important; inset: 0; } /* the library forces position: relative */
-.scan__video video { position: absolute !important; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
+/* The decoder crops using the video's displayed dimensions. Preserve its
+   native aspect ratio instead of stretching it to the full portrait screen. */
+.scan__video video { position: absolute !important; top: 50%; left: 0; width: 100% !important; height: auto !important; transform: translateY(-50%); }
 .scan__video #qr-shaded-region { display: none !important; } /* we draw our own frame */
 .scan__frame {
   position: absolute;
@@ -22,7 +24,7 @@
   height: 70vmin;
   max-width: 320px;
   max-height: 320px;
-  transform: translate(-50%, -55%);
+  transform: translate(-50%, -50%);
   border: 3px solid var(--amber);
   border-radius: var(--radius-widget);
   box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--surface) 65%, transparent), 0 0 18px var(--amber);

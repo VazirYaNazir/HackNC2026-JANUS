@@ -6,6 +6,7 @@ export type { PanelDocument };
 export interface Session { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
+export interface PairingCode { code: string; expires_in_seconds: number; host?: string; pwa_url?: string | null }
 
 /** An HTTP error from the backend. `status` lets callers tell "not authorized" (401) from other failures. */
 export class ApiError extends Error {
@@ -52,14 +53,14 @@ export class PanelClient {
   async layout(signal?: AbortSignal): Promise<PanelDocument> {
     const document = parsePanelDocument(await this.request<unknown>('/api/layout', { signal }));
     try { normalizeLayout(document.layout); }
-    catch (reason) { throw new Error(`The saved panel is invalid: ${reason instanceof Error ? reason.message : 'bad layout'}`); }
+    catch (reason) { throw new Error(`The saved panel is invalid: ${reason instanceof Error ? reason.message : 'bad layout'}`, { cause: reason }); }
     return document;
   }
   history(signal?: AbortSignal) { return this.request<{ jobs: JobView[] }>('/api/v1/agent-jobs', { signal }); }
   session(signal?: AbortSignal) { return this.request<Session>('/api/v1/panels/session', { signal }); }
   save(layout: Layout, revision: number) { return this.request<PanelDocument>('/api/v1/studio/layout', { method: 'PUT', body: JSON.stringify({ layout, revision }) }); }
   configure(action: string, request: GenerationRequest) { return this.request(`/api/v1/studio/actions/${encodeURIComponent(action)}`, { method: 'PUT', body: JSON.stringify(request) }); }
-  pairing() { return this.request<{ code: string; expires_in_seconds: number }>('/api/v1/studio/pairing', { method: 'POST' }); }
+  pairing(signal?: AbortSignal) { return this.request<PairingCode>('/api/v1/studio/pairing', { method: 'POST', signal }); }
   prepare(payload: Dispatch, signal?: AbortSignal) { return this.request<Prepared>('/api/v1/panel-actions/prepare', { method: 'POST', body: JSON.stringify(payload), signal }); }
   dispatch(payload: Dispatch) { return this.request<JobView>('/api/v1/panel-actions/dispatch', { method: 'POST', body: JSON.stringify(payload) }); }
   cancel(jobId: string) { return this.request<JobView>(`/api/v1/agent-jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }); }
@@ -106,12 +107,28 @@ export class PanelClient {
   }
 }
 
-export async function pairBackend(host: string, code: string, name = 'Mobile phone'): Promise<PairResponse> {
-  const response = await fetch(new URL('/api/pair', backendHost(host)), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }), signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new Error('Pairing code is invalid or expired.');
-  const result = await response.json() as PairResponse;
-  if (typeof result.token !== 'string' || typeof result.agentDeviceId !== 'string' || typeof result.pcName !== 'string') throw new Error('Invalid pairing response.');
-  return result;
+export async function pairBackend(host: string, code: string, name = 'Mobile phone', signal?: AbortSignal): Promise<PairResponse> {
+  const url = new URL('/api/pair', backendHost(host));
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
+  } catch (reason) {
+    if (signal?.aborted) throw reason;
+    throw new Error('Could not reach the backend. Check the HTTPS backend address and your connection.', { cause: reason });
+  }
+  if (!response.ok) {
+    const message = [400, 404, 410].includes(response.status)
+      ? 'Pairing code is invalid or expired, or has already been used. Create a new code in Studio.'
+      : response.status === 429 ? 'Too many pairing attempts. Wait a moment and try again.'
+        : 'The backend could not complete pairing. Try again shortly.';
+    throw new ApiError(message, response.status);
+  }
+  let result: unknown;
+  try { result = await response.json(); } catch { throw new Error('Invalid pairing response.'); }
+  if (!result || typeof result !== 'object' || !('token' in result) || !('deviceId' in result)
+    || !('agentDeviceId' in result) || !('pcName' in result)
+    || [result.token, result.deviceId, result.agentDeviceId, result.pcName].some((value) => typeof value !== 'string' || !value.trim())) throw new Error('Invalid pairing response.');
+  return result as PairResponse;
 }
 
 const ACTIVE = new Set(['QUEUED', 'GENERATING', 'VALIDATING', 'REPAIRING', 'EXECUTING']);
