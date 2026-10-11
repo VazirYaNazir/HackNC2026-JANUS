@@ -79,6 +79,10 @@ class GeminiProvider:
         except (ValueError, TypeError):
             raise ProviderError("MALFORMED_RESPONSE") from None
 
+    async def structured(self, prompt, schema, instruction):
+        """JSON text constrained by `schema`. Callers must validate it; the output is never trusted."""
+        return await self._json(prompt, schema, instruction)
+
     async def _json(self, prompt, schema, instruction):
         if self.client is None:
             raise ProviderError("PROVIDER_NOT_CONFIGURED")

@@ -14,8 +14,10 @@ describe('both development servers protect local launcher state', () => {
     const fixture = await mkdtemp(join(root, '.vite-private-test-'));
     let server: Awaited<ReturnType<typeof createServer>> | undefined;
     vi.stubEnv('JANUS_PWA_HTTP', '1');
+    vi.stubEnv('JANUS_STATE_DIR', join(fixture, 'private-state[1]'));
+    const files = [...privateFiles, 'private-state[1]/controller.json'];
     try {
-      for (const file of privateFiles) {
+      for (const file of files) {
         const path = join(fixture, file);
         await mkdir(join(path, '..'), { recursive: true });
         await writeFile(path, 'private-fixture-do-not-serve');
@@ -27,7 +29,7 @@ describe('both development servers protect local launcher state', () => {
       if (!address || typeof address === 'string') throw new Error('Missing test HTTP address');
       const host = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${host}/src/main.tsx`)).status).toBe(200);
-      for (const file of privateFiles) {
+      for (const file of files) {
         for (const query of ['', '?raw', '?url']) {
           const response = await fetch(`${host}/@fs${join(fixture, file)}${query}`);
           expect(response.status, `${file}${query}`).toBe(403);

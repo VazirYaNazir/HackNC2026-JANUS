@@ -3,7 +3,8 @@ import { parsePanelDocument, parseServerMessage, type GenerationRequest, type Jo
 
 export interface Connection { host: string; token: string }
 export type { PanelDocument };
-export interface Session { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
+/** `generation_available` is false when the backend has no Gemini credential; absent on older backends. */
+export interface Session { device_id: string; online: boolean; generation_available?: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
 export interface PairingCode { code: string; expires_in_seconds: number; host?: string; pwa_url?: string | null }
@@ -24,6 +25,19 @@ export function backendHost(value: string): string {
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error('Remote backends require HTTPS.');
   return url.origin;
 }
+
+/** One minute of a metric from Tiger Data's metrics_1m aggregate. */
+export interface MetricPoint { time: string; avg: number; max: number; min: number }
+export interface MetricHistory { available: boolean; metric: string; range: string; points: MetricPoint[] }
+export interface ActivityEvent {
+  time: string;
+  source: 'widget' | 'imessage' | 'generated';
+  action_id: string;
+  args: Record<string, unknown>;
+  outcome: string;
+  request_id: string | null;
+}
+export interface Activity { available: boolean; events: ActivityEvent[] }
 
 export class PanelClient {
   readonly host: string;
@@ -58,6 +72,11 @@ export class PanelClient {
   }
   history(signal?: AbortSignal) { return this.request<{ jobs: JobView[] }>('/api/v1/agent-jobs', { signal }); }
   session(signal?: AbortSignal) { return this.request<Session>('/api/v1/panels/session', { signal }); }
+  /** `available: false` (and no points) when the backend has no Tiger Data store, or it is unreachable. */
+  metricHistory(metric: string, range = '1h', signal?: AbortSignal) {
+    return this.request<MetricHistory>(`/api/metrics/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`, { signal });
+  }
+  activity(signal?: AbortSignal) { return this.request<Activity>('/api/activity', { signal }); }
   save(layout: Layout, revision: number) { return this.request<PanelDocument>('/api/v1/studio/layout', { method: 'PUT', body: JSON.stringify({ layout, revision }) }); }
   configure(action: string, request: GenerationRequest) { return this.request(`/api/v1/studio/actions/${encodeURIComponent(action)}`, { method: 'PUT', body: JSON.stringify(request) }); }
   pairing(signal?: AbortSignal) { return this.request<PairingCode>('/api/v1/studio/pairing', { method: 'POST', signal }); }

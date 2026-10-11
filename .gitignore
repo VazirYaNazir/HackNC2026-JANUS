@@ -54,3 +54,6 @@ Thumbs.db
 *.pyc
 .DS_Store
 *.db
+
+# JANUS local tooling (pidfile, pinned cloudflared)
+.janus/

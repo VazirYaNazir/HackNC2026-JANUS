@@ -3,13 +3,18 @@ import '@janus/design/tokens.css'
 import { normalizeLayout } from '@janus/design'
 import { isNativeAction, type GenerationRequest, type LogicalCanvasLayout, type Widget, type WidgetType, type WidgetValue } from '@janus/schema'
 import { isInputWidget } from '@janus/widgets'
-import { PanelClient, RequestDialog, activeJob, jobText, useNativeControls, usePanel, widgetStates, type Connection } from '@janus/client'
+import { PanelClient, RequestDialog, activeJob, jobText, useMetricHistory, useNativeControls, usePanel, widgetStates, type Connection } from '@janus/client'
 import '@janus/client/styles.css'
 import { TopBar } from './components/TopBar'
 import { WidgetPalette } from './components/WidgetPalette'
 import { EditorCanvas } from './components/EditorCanvas'
 import { Inspector } from './components/Inspector'
 import { BottomBar } from './components/BottomBar'
+import { AgentHelp } from './components/AgentHelp'
+import { ActivityPanel } from './components/ActivityPanel'
+import { GenerationStatus } from './components/GenerationStatus'
+import { useActivity } from './useActivity'
+import { useMessagingStatus } from './useMessagingStatus'
 import { ConnectionDialog } from './components/ConnectionDialog'
 import { PairingDialog } from './components/PairingDialog'
 import { ProjectDialog } from './components/ProjectDialog'
@@ -25,6 +30,9 @@ function App() {
   const [pendingType, setPendingType] = useState<WidgetType | null>(null)
   const [client, setClient] = useState<PanelClient | null>(null)
   const live = usePanel(client)
+  const messaging = useMessagingStatus(client)
+  const activity = useActivity(client)
+  const history = useMetricHistory(client, editor.layout.widgets.flatMap((widget) => (isInputWidget(widget) ? [] : [widget.source])))
   const [revision, setRevision] = useState(0)
   const [sheet, setSheet] = useState<'connect' | 'pair' | 'history' | 'project' | null>(null)
   const [pending, setPending] = useState<{ widget: Widget; value?: WidgetValue } | null>(null)
@@ -109,11 +117,14 @@ function App() {
     <TopBar name={editor.layout.name} onName={editor.renameLayout} onProject={() => setSheet('project')} connected={client !== null && live.status === 'connected'} status={client ? `${live.session?.online ? 'Laptop online' : 'Laptop offline'} · ${live.status}` : 'Connect backend'} busy={busy} onConnect={() => setSheet('connect')} onPair={() => setSheet('pair')} onSave={() => void save().catch(() => undefined)} onHistory={() => setSheet('history')} />
     <div className="studio-body">
       <WidgetPalette onDragStart={setPendingType} onDragEnd={() => setPendingType(null)} disabled={editor.mode === 'preview'} />
-      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} states={widgetStates(live.jobs)} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
+      <EditorCanvas layout={editor.layout} selectedId={editor.selectedId} pendingType={pendingType} snapToGrid={editor.snapToGrid} mode={editor.mode} values={editor.values} data={live.readings} history={history} states={widgetStates(live.jobs)} canUndo={editor.canUndo} canRedo={editor.canRedo} onSelect={editor.selectWidget} onInsert={editor.addWidget} onGeometryChange={editor.changeGeometry} onTrigger={trigger} onToggleSnap={() => editor.setSnapToGrid((current) => !current)} onToggleMode={() => editor.setMode((current) => current === 'edit' ? 'preview' : 'edit')} onUndo={editor.undo} onRedo={editor.redo} />
       <Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} />
     </div>
+    <ActivityPanel feed={activity} />
+    <GenerationStatus session={client ? live.session : null} messaging={messaging} />
     <BottomBar key={editor.selectedId ?? 'none'} enabled={client !== null && !!editor.selectedWidget && isInputWidget(editor.selectedWidget) && !busy} target={live.session?.target ?? null} onGenerate={prepare} />
     {message && message !== dismissed && <div className="studio-notice" role="status">{message}<button type="button" onClick={reload} disabled={!live.document}>Load saved panel</button><button type="button" onClick={() => { setDismissed(message); setNotice('') }}>Dismiss</button></div>}
+    {client && live.status === 'connected' && live.session?.online === false && !message && <AgentHelp />}
     {sheet === 'project' && <ProjectDialog layout={editor.layout} onReplace={editor.replaceLayout} onClose={() => setSheet(null)} />}
     {sheet === 'connect' && <ConnectionDialog onClose={() => setSheet(null)} onConnect={async (next) => {
       const document = await next.layout()

@@ -3,6 +3,7 @@ import { polar, sweepPath } from "./arc";
 import WidgetTitle from "./WidgetTitle";
 import { isDialWidget, type WidgetProps } from "./types";
 import { levelOf } from "./level";
+import Sparkline from "./Sparkline";
 
 /* 270° gauge on a 100x86 viewBox (cropped below the open end of the arc). */
 const R = 40;
@@ -42,6 +43,7 @@ export default function GaugeWidget(props: WidgetProps) {
               <small>{unit}</small>
             </span>
           </div>
+          <Sparkline values={props.history} />
         </div>
       </div>
       {/* Shown instead of the dial when the cell is one row tall. */}

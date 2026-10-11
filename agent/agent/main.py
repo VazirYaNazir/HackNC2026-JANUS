@@ -10,7 +10,7 @@ from .native import TOOLS, build_tools
 
 
 def parser() -> argparse.ArgumentParser:
-    cli = argparse.ArgumentParser(description="Janus laptop tools (macOS / Windows)")
+    cli = argparse.ArgumentParser(description="JANUS laptop tools (macOS / Windows)")
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("build", help="Compile all five standalone tools")
     run = commands.add_parser("run", help="Build and run one tool; JSON Lines on stdout")

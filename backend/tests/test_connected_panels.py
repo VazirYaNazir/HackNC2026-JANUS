@@ -9,6 +9,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 from tests.support import RunningServer, TrustedFixtureBoundary, headers, program, registry, request
 from agent.jobs import ValidationService
+from agent.transport import packet
 from agent.validation import ExecutionPolicy, Fixture
 from app import db
 from app.agent_runtime.config import Identity, RuntimeSettings
@@ -328,6 +329,59 @@ class ConnectedPanelsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.message(socket, "error"))["message"], "INVALID_MESSAGE")
         await socket.send('{"type":"ping"}')
         await self.message(socket, "pong")
+
+
+class GenerationAvailabilityTests(unittest.IsolatedAsyncioTestCase):
+    """Needs no C compiler: no agent connects, so only the session endpoints are exercised."""
+
+    async def test_sessions_report_whether_the_backend_has_a_gemini_key(self):
+        with tempfile.TemporaryDirectory(prefix="janus-session-db-") as folder, patch.object(db, "DB_PATH", Path(folder) / "app.db"):
+            store = SQLiteStore()
+            await store.initialize(registry())
+            backend = await RunningServer().start(store=store)
+            try:
+                for path in ("/api/v1/studio/session", "/api/v1/panels/session"):
+                    body = (await backend.http.get(path, headers=headers())).json()
+                    self.assertIs(body["generation_available"], True, path)
+                    self.assertFalse(body["online"])
+                backend.runtime.provider.client = None  # what GeminiProvider holds without a credential
+                for path in ("/api/v1/studio/session", "/api/v1/panels/session"):
+                    self.assertIs((await backend.http.get(path, headers=headers())).json()["generation_available"], False, path)
+            finally:
+                await backend.close()
+
+
+class DuplicateAgentTests(unittest.IsolatedAsyncioTestCase):
+    """Needs no C compiler: raw WebSocket agents only exchange the hello/ready handshake."""
+
+    async def agent(self, backend):
+        socket = await connect(f"ws://127.0.0.1:{backend.port}/ws/agents/device-1", additional_headers={"Authorization": "Bearer agent-1-" + "a" * 32})
+        backend.sockets.append(socket)
+        await socket.send(json.dumps(packet("device-1", "agent_hello", None, "CONNECTED", {
+            "platform": "Windows", "architecture": "x86_64", "max_workers": 1, "max_attempts": 3,
+            "build_boundary_available": False, "execution_boundary_available": False})))
+        return socket
+
+    async def test_a_second_agent_for_the_same_device_is_refused_with_a_final_close_code(self):
+        with tempfile.TemporaryDirectory(prefix="janus-dup-db-") as folder, patch.object(db, "DB_PATH", Path(folder) / "app.db"):
+            store = SQLiteStore()
+            await store.initialize(registry())
+            backend = await RunningServer().start(store=store)
+            try:
+                first = await self.agent(backend)
+                self.assertEqual(json.loads(await asyncio.wait_for(first.recv(), 2))["type"], "connection_ready")
+                original = backend.runtime.hub.get("device-1")
+                second = await self.agent(backend)
+                with self.assertRaises(ConnectionClosed) as closed:
+                    await asyncio.wait_for(second.recv(), 2)
+                self.assertEqual((closed.exception.rcvd.code, closed.exception.rcvd.reason), (4409, "DEVICE_ALREADY_CONNECTED"))
+                self.assertIs(backend.runtime.hub.get("device-1"), original)  # the original stays registered and open
+                await first.close()
+                await asyncio.sleep(0.2)
+                third = await self.agent(backend)  # once the first is gone the device can connect again
+                self.assertEqual(json.loads(await asyncio.wait_for(third.recv(), 2))["type"], "connection_ready")
+            finally:
+                await backend.close()
 
 
 class PanelContracts(unittest.TestCase):

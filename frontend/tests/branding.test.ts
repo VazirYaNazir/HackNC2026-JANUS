@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url));
-describe('supplied Janus branding assets', () => {
+describe('supplied JANUS branding assets', () => {
   it.each([
     ['frontend/public/janus-logo.svg', 'janus-logo-kit/janus-logo-transparent.svg'],
     ['PWA/public/janus-logo.svg', 'janus-logo-kit/janus-logo-transparent.svg'],

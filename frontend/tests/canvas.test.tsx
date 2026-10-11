@@ -11,7 +11,9 @@ function event(type: string, x: number, y: number, dataTransfer?: object) {
   const value = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
   Object.defineProperty(value, 'pointerId', { value: 1 }); if (dataTransfer) Object.defineProperty(value, 'dataTransfer', { value: dataTransfer }); return value;
 }
-const bounds = { x: 0, y: 0, left: 0, top: 0, right: 360, bottom: 780, width: 360, height: 780, toJSON() {} };
+// The phone screen is the 360 x 780 canvas plus the shared edge gap (18) on every side: 396 x 816. Mocking it at that size in pixels
+// keeps one pixel = one logical unit, and a pointer at pixel (px, py) is at canvas (px - 18, py - 18).
+const bounds = { x: 0, y: 0, left: 0, top: 0, right: 396, bottom: 816, width: 396, height: 816, toJSON() {} };
 
 describe('canvas interactions', () => {
   it('places dragged widgets only when inside the canvas and clears invalid previews', () => {

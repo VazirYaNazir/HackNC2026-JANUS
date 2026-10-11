@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { JobView, Widget, WidgetValue } from '@janus/schema';
 import { PanelClient, type Prepared } from './api';
 
+/** Default location documented in agent/docs/validation-protocol.md; the agent reads it only when it starts. */
+const GRANT_FILE = 'agent/.validation-policy.json';
+
 export function RequestDialog({ client, widget, value, onClose, onSubmitted }: {
   client: PanelClient; widget: Widget; value?: WidgetValue;
   onClose: () => void; onSubmitted: (job: JobView) => void;
@@ -34,7 +37,7 @@ export function RequestDialog({ client, widget, value, onClose, onSubmitted }: {
     <p>The laptop must approve this request before it runs.</p>
     <form onSubmit={(event) => void submit(event)}>
       <label>Request ID<input value={jobId} maxLength={128} pattern="[A-Za-z0-9_-]{1,128}" required onChange={(event) => setJobId(event.target.value)} /></label>
-      <p className="janus-muted">Use this ID for the laptop’s local grant. Each execution needs a fresh ID.</p>
+      <p className="janus-muted">Each execution needs a fresh ID. Approval happens on the laptop: JANUS startup asks whether to enable the local policy for this session. If session approval is disabled, add a grant for this exact Request ID to <code>{GRANT_FILE}</code>, pass it with <code>--validation-policy</code>, and restart the agent. Without local approval the request stops at “authorization required”. Generated programs also require an installed isolation adapter.</p>
       {prepared && <><p>{prepared.request.description}</p><p className="janus-muted">Requested access: {prepared.request.capabilities.join(', ') || 'none'}</p></>}
       {!prepared && !error && <p role="status">Checking for reusable programs…</p>}
       {prepared?.matches.length ? <fieldset><legend>Similar programs found — choose whether to reuse</legend>

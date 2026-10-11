@@ -31,8 +31,9 @@ configuration returns a generic HTTP 503 error without echoing its contents.
 
 ## Standalone backend
 
-When running only the backend, `JANUS_TUNNEL_MODE=auto` (the default) starts the
-optional quick backend tunnel in a background task. Cloudflare connection
+Standalone tunneling is opt-in. `JANUS_TUNNEL_MODE=auto` starts the
+optional quick backend tunnel in a background task. If mode is unset, the
+legacy `JANUS_AUTO_TUNNEL=1` flag also enables it; otherwise it remains off. Cloudflare connection
 failures do not delay HTTP startup or block local API access. Set
 `JANUS_BACKEND_PORT` to match the port used by uvicorn; its default is 8000.
 Set `JANUS_TUNNEL_MODE=off` when a reverse proxy, named tunnel or full launcher
@@ -46,7 +47,7 @@ install it with `brew install cloudflared`; on Windows use
 The standalone manager runs:
 
 ```text
-cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<JANUS_BACKEND_PORT>
+cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:<JANUS_BACKEND_PORT>
 ```
 
 An assigned `trycloudflare.com` hostname alone is not connection readiness. The

@@ -139,5 +139,15 @@ async def dispatch(runtime: "AgentRuntime", identity: Identity, payload: Dispatc
         program = await runtime.store.program(identity, payload.program_id, request)
         if program is None:
             raise PipelineError("PROGRAM_NOT_FOUND", 404)
-    return await runtime.jobs.submit(identity, identity.device_id, payload.job_id, request, program,
-                                     widget_id=widget["id"], action_id=widget["action"])
+    sink = getattr(getattr(runtime, "native", None), "sink", None)
+    details = {"widget_id": widget["id"], "operation": request.operation}
+    try:
+        record = await runtime.jobs.submit(identity, identity.device_id, payload.job_id, request, program,
+                                           widget_id=widget["id"], action_id=widget["action"])
+    except PipelineError as error:
+        if sink is not None:
+            sink.action(identity.device_id, "generated", widget["action"], details, f"error:{error.reason}", payload.job_id)
+        raise
+    if sink is not None:
+        sink.action(identity.device_id, "generated", widget["action"], details, "submitted", payload.job_id)
+    return record

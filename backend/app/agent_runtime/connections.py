@@ -63,6 +63,10 @@ async def receive_frame(websocket: WebSocket, device_id: str) -> Envelope:
     return frame
 
 
+# Application close code (4000-4999) for "another agent is already connected for this device".
+DUPLICATE_CLOSE_CODE = 4409
+
+
 class ConnectionHub:
     def __init__(self, registry: DeviceRegistry, settings: RuntimeSettings):
         self.registry, self.settings = registry, settings
@@ -111,7 +115,12 @@ class ConnectionHub:
                 task.result()
         except WebSocketDisconnect:
             pass
-        except (ValueError, TypeError, UnicodeError, PipelineError, TimeoutError):
+        except PipelineError as error:
+            # A second agent for a device that is already connected is refused (not swapped in): replacing would make
+            # two live agents evict each other forever. The distinct code tells the agent to stop retrying.
+            duplicate = error.reason == "DEVICE_ALREADY_CONNECTED"
+            await self._close_socket(websocket, DUPLICATE_CLOSE_CODE if duplicate else 1008, error.reason if duplicate else "")
+        except (ValueError, TypeError, UnicodeError, TimeoutError):
             await self._close_socket(websocket, 1008)
         finally:
             for task in tasks:
@@ -142,9 +151,9 @@ class ConnectionHub:
                 raise ValueError("Unexpected protocol message")
 
     @staticmethod
-    async def _close_socket(websocket: WebSocket, code: int) -> None:
+    async def _close_socket(websocket: WebSocket, code: int, reason: str = "") -> None:
         try:
-            await websocket.close(code=code)
+            await websocket.close(code=code, reason=reason)
         except (RuntimeError, OSError, WebSocketDisconnect):
             pass
 

@@ -81,6 +81,8 @@ class NativeManager:
     def __init__(self, hub, events):
         self.hub, self.events = hub, events
         self.pending, self.latest = {}, {}
+        # Optional observer (app.tiger.TigerSink); every call is exception-safe and non-blocking.
+        self.sink = None
 
     async def receive(self, connection, frame):
         if frame.job_id is not None or frame.state != "CONNECTED":
@@ -98,40 +100,74 @@ class NativeManager:
                 return
         values = readings(event)
         self.latest.setdefault(connection.identity, {}).update(values)
+        if self.sink is not None:
+            self.sink.readings(connection.identity.device_id, values)
         for source, value in values.items():
             self.events.publish(connection.identity, {"type": "data", "source": source, "value": value})
 
-    async def command(self, identity, action, value):
-        if action not in NATIVE_ACTIONS:
-            raise PipelineError("NATIVE_ACTION_NOT_FOUND", 404)
+    async def _dispatch(self, connection, target, kind, args):
+        """Send one fixed command to a local native tool and wait (3 s) for its acknowledgement."""
+        request_id = uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        key = (connection, request_id)
+        self.pending[key] = future
+        try:
+            await connection.send("native_command", None, "CONNECTED", {"request_id": request_id, "target": target, "action": kind, "args": args})
+            result = await asyncio.wait_for(future, 3)
+            if not result["ok"]:
+                raise PipelineError("NATIVE_COMMAND_FAILED", 409)
+            return {"ok": True, "request_id": request_id}
+        except TimeoutError:
+            raise PipelineError("NATIVE_COMMAND_TIMEOUT", 504) from None
+        finally:
+            self.pending.pop(key, None)
+
+    def _connection_for(self, identity, target):
         connection = self.hub.get(identity.device_id)
-        target = "volume" if action == "native_volume" else "mouse"
         if target not in connection.hello.native_streams:
             raise PipelineError("NATIVE_TOOLS_NOT_ENABLED", 409)
         if sum(key[0] is connection for key in self.pending) >= 32:
             raise PipelineError("NATIVE_COMMAND_CAPACITY", 429)
+        return connection
+
+    def _record(self, identity, source, action, args, outcome, request_id):
+        if self.sink is not None:
+            self.sink.action(identity.device_id, source, action, args, outcome, request_id)
+
+    async def command(self, identity, action, value, *, source="widget", request_id=None):
+        """Run a fixed native control. `source` ("widget" or "imessage") and `request_id` only label the activity log."""
+        args = {} if action in ("native_left_click", "native_right_click") else {"value": value} if action in ("native_volume", "native_scroll") else {}
+        try:
+            result = await self._command(identity, action, value)
+        except PipelineError as error:
+            if action in NATIVE_ACTIONS:
+                self._record(identity, source, action, args, f"error:{error.reason}", request_id)
+            raise
+        self._record(identity, source, action, args, "ok", request_id)
+        return result
+
+    async def _command(self, identity, action, value):
+        if action not in NATIVE_ACTIONS:
+            raise PipelineError("NATIVE_ACTION_NOT_FOUND", 404)
+        target = "volume" if action == "native_volume" else "mouse"
+        connection = self._connection_for(identity, target)
         args = {"value": value} if target == "volume" else value if action == "native_mouse" else {"amount": value}
         kind = "set" if target == "volume" else "move" if action == "native_mouse" else "scroll"
-        async def send(kind, args):
-            request_id = uuid4().hex
-            future = asyncio.get_running_loop().create_future()
-            key = (connection, request_id)
-            self.pending[key] = future
-            try:
-                await connection.send("native_command", None, "CONNECTED", {"request_id": request_id, "target": target, "action": kind, "args": args})
-                result = await asyncio.wait_for(future, 3)
-                if not result["ok"]:
-                    raise PipelineError("NATIVE_COMMAND_FAILED", 409)
-                return {"ok": True, "request_id": request_id}
-            except TimeoutError:
-                raise PipelineError("NATIVE_COMMAND_TIMEOUT", 504) from None
-            finally:
-                self.pending.pop(key, None)
         if action in ("native_left_click", "native_right_click"):
             button = "left" if action == "native_left_click" else "right"
-            await send("button", {"button": button, "state": "down"})
-            return await send("button", {"button": button, "state": "up"})
-        return await send(kind, args)
+            await self._dispatch(connection, target, "button", {"button": button, "state": "down"})
+            return await self._dispatch(connection, target, "button", {"button": button, "state": "up"})
+        return await self._dispatch(connection, target, kind, args)
+
+    async def lock(self, identity, *, source="widget", request_id=None):
+        """Lock the laptop's session. Deliberately not a panel widget action: only the messaging service calls it."""
+        try:
+            result = await self._dispatch(self._connection_for(identity, "mouse"), "mouse", "lock", {})
+        except PipelineError as error:
+            self._record(identity, source, "lock", {}, f"error:{error.reason}", request_id)
+            raise
+        self._record(identity, source, "lock", {}, "ok", request_id)
+        return result
 
     def disconnected(self, connection):
         self.latest.pop(connection.identity, None)

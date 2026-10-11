@@ -33,6 +33,24 @@ IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 TUNNEL_URL = re.compile(r"https://[a-z0-9]+(?:-[a-z0-9]+)*\.trycloudflare\.com(?=[\s/\"'<>]|$)", re.I)
 
 
+def state_directory(root: Path, env: dict[str, str] | None = None) -> Path:
+    configured = (os.environ if env is None else env).get("JANUS_STATE_DIR", "").strip()
+    path = Path(configured) if configured else root / ".janus"
+    return path if path.is_absolute() else root / path
+
+
+def restrict_to_owner(path: Path) -> None:
+    if os.name != "nt":
+        path.chmod(0o600)
+        return
+    identity = subprocess.check_output(["powershell", "-NoProfile", "-Command",
+        "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value"], text=True).strip()
+    if not re.fullmatch(r"S-1-[0-9-]+", identity):
+        raise RuntimeError("Could not identify the current Windows account for private JANUS files")
+    subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"*{identity}:F"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+
 def atomic_json(path: Path, data: dict | list) -> None:
     """Write private local state without exposing partially written JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,6 +58,7 @@ def atomic_json(path: Path, data: dict | list) -> None:
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            restrict_to_owner(temporary)
             json.dump(data, file, indent=2)
             file.write("\n")
         os.replace(temporary, path)
@@ -65,7 +84,7 @@ def ensure_database(root: Path, env: dict[str, str]) -> Path:
         if path.exists() and not os.access(path, os.W_OK):
             raise ValueError("Configured JANUS_DB_PATH is read-only; choose a writable database path")
     else:
-        path = root / ".janus" / "janus.sqlite"
+        path = state_directory(root, env) / "janus.sqlite"
         path.parent.mkdir(parents=True, exist_ok=True)
         legacy = root / "backend" / "app" / "app.db"
         if not path.exists():
@@ -73,6 +92,7 @@ def ensure_database(root: Path, env: dict[str, str]) -> Path:
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.close(descriptor)
             try:
+                restrict_to_owner(temporary)
                 if legacy.exists():
                     with closing(sqlite3.connect(legacy.resolve().as_uri() + "?mode=ro", uri=True)) as original:
                         with closing(sqlite3.connect(temporary)) as destination:
@@ -101,7 +121,7 @@ def provision_registration(root: Path, env: dict[str, str], device_id: str | Non
     """Reuse configured credentials; generate distinct roles only for a new setup."""
     configured_file = env.get("AGENT_DEVICES_FILE", "").strip()
     raw = env.get("AGENT_DEVICES_JSON", "[]").strip() or "[]"
-    state_file = root / ".janus" / "devices.json"
+    state_file = state_directory(root, env) / "devices.json"
     if configured_file:
         path = Path(configured_file)
         if not path.is_absolute():
@@ -184,6 +204,7 @@ def approve_startup(input_stream=None, input_fn=input, output_stream=None) -> bo
         return False
     print("\nAllow JANUS controls and paired phones to use this laptop for this session?", file=destination)
     print("This enables mouse/volume control, screen sharing, process inspection, and generated jobs", file=destination)
+    print("Optional iMessage commands can also lock the desktop.", file=destination)
     print("with file read/write, network/external sending, process spawning, admin and persistent-write", file=destination)
     print("capabilities within the local policy and isolation worker. Job outputs may be shared.", file=destination)
     print("Generated jobs still require an installed isolation adapter. Approval ends when JANUS exits.", file=destination)
@@ -192,6 +213,34 @@ def approve_startup(input_stream=None, input_fn=input, output_stream=None) -> bo
     except (EOFError, KeyboardInterrupt):
         return False
     return answer.strip().lower() == "yes"
+
+
+def consume_startup_approval(input_stream=None) -> bool:
+    """Receive the local desktop dialog's approval through a private pipe."""
+    source = input_stream or sys.stdin
+    return not source.isatty() and source.readline(64) == "JANUS_STARTUP_APPROVED\n"
+
+
+def mark_sidecar_down(host: str, token: str) -> None:
+    try:
+        request = Request(host + "/api/messaging/heartbeat", data=b'{"connected":false}',
+                          headers={"Content-Type": "application/json", "Authorization": "Bearer " + token}, method="POST")
+        with urlopen(request, timeout=2):
+            pass
+    except (OSError, URLError):
+        pass
+
+
+def imessage_environment(env: dict[str, str], host: str) -> dict[str, str] | None:
+    required = ("SPECTRUM_PROJECT_ID", "SPECTRUM_PROJECT_SECRET", "MESSAGING_SERVICE_TOKEN")
+    missing = [name for name in required if not env.get(name, "").strip()]
+    if missing:
+        print("iMessage sidecar not started: set " + ", ".join(missing) + " in backend/.env.", file=sys.stderr)
+        return None
+    if len(env["MESSAGING_SERVICE_TOKEN"]) < 32:
+        print("iMessage sidecar not started: MESSAGING_SERVICE_TOKEN must contain at least 32 characters.", file=sys.stderr)
+        return None
+    return {"JANUS_BACKEND_URL": host, "NODE_OPTIONS": (env.get("NODE_OPTIONS", "") + " --dns-result-order=ipv4first").strip()}
 
 
 def check_ports(ports: list[int]) -> None:
@@ -238,6 +287,11 @@ class ManagedProcess:
         log = self.logs_dir / f"{self.name}.log"
         descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         file = os.fdopen(descriptor, "w", encoding="utf-8")
+        try:
+            restrict_to_owner(log)
+        except BaseException:
+            file.close()
+            raise
         kwargs = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         try:
             self.process = subprocess.Popen(self.command, cwd=self.cwd, env=self.env, text=True, encoding="utf-8", errors="replace",
@@ -340,6 +394,9 @@ class CloudflareTunnel:
 
         self.service = ManagedProcess(self.name, [str(self.executable), "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", f"http://127.0.0.1:{self.port}"],
                                       ROOT, self.env, self.logs_dir, on_line=capture).start()
+        pid = getattr(getattr(self.service, "process", None), "pid", None)
+        if isinstance(pid, int):
+            print(f"[janus-process] {self.name} {pid}", flush=True)
         deadline = time.monotonic() + 40
         while not self.ready.wait(timeout=0.2):
             if self.service.poll() is not None or time.monotonic() >= deadline:
@@ -445,7 +502,7 @@ def ensure_cloudflared(root: Path, explicit: str | None) -> str:
     architecture = {"x86_64": "amd64", "AMD64": "amd64", "arm64": "arm64", "aarch64": "arm64"}.get(platform.machine())
     if not system or not architecture:
         raise RuntimeError("Install cloudflared for this platform, or use --local-only")
-    bin_dir = root / ".janus" / "bin"
+    bin_dir = state_directory(root) / "bin"
     binary = bin_dir / ("cloudflared.exe" if system == "windows" else "cloudflared")
     record = bin_dir / "cloudflared.json"
     if binary.exists() and record.exists():
@@ -515,7 +572,14 @@ def install_dependencies(root: Path, env: dict[str, str], electron: bool, skip: 
                 raise RuntimeError(f"Dependencies missing in {folder}; run startup without --no-install")
         else:
             subprocess.run(["uv", "sync", "--locked", "--directory", str(root / folder)], env=env, check=True)
-    if not skip and (not (root / "node_modules" / "vite" / "bin" / "vite.js").exists()
+    lock_digest = hashlib.sha256((root / "package-lock.json").read_bytes()).hexdigest()
+    install_record = state_directory(root, env) / "dependencies.json"
+    try:
+        installed_digest = json.loads(install_record.read_text(encoding="utf-8")).get("package_lock_sha256")
+    except (OSError, ValueError):
+        installed_digest = None
+    if not skip and (installed_digest != lock_digest
+                     or not (root / "node_modules" / "vite" / "bin" / "vite.js").exists()
                      or electron and not (root / "node_modules" / "electron" / "dist").exists()):
         install_env = dict(env)
         if not electron:
@@ -528,6 +592,7 @@ def install_dependencies(root: Path, env: dict[str, str], electron: bool, skip: 
         # cmd.exe is needed only to invoke npm.cmd; no user text is interpolated.
         command = ["cmd.exe", "/d", "/c", npm, "ci"] if os.name == "nt" else [npm, "ci"]
         subprocess.run(command, cwd=root, env=install_env, check=True)
+        atomic_json(install_record, {"package_lock_sha256": lock_digest})
     if not (root / "node_modules" / "vite" / "bin" / "vite.js").exists():
         raise RuntimeError("JavaScript dependencies missing; run npm ci from the repository root")
 
@@ -539,13 +604,27 @@ def parse_args(argv=None):
     parser.add_argument("--no-browser", action="store_true", help="Keep services in this terminal without opening Studio")
     parser.add_argument("--no-install", action="store_true", help="Use already installed locked dependencies")
     parser.add_argument("--electron", action="store_true", help="Open Electron instead of browser Studio")
+    parser.add_argument("--studio", choices=("browser", "electron", "none"), default="browser")
+    parser.add_argument("--only", choices=("agent",), help="Start the locally approved agent against an existing backend")
+    parser.add_argument("--startup-approval-stdin", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--imessage", action="store_true", help="Start the configured Photon Spectrum messaging sidecar")
+    parser.add_argument("--pwa", action="store_true", help="Phone PWA is included by default (compatibility option)")
+    parser.add_argument("--tunnel", action="store_true", help="Public phone tunnels are included by default (compatibility option)")
+    parser.add_argument("--screen", action="store_true", help="Screen sharing is included after approval (compatibility option)")
+    parser.add_argument("--no-screen", action="store_true", help="Disable laptop screen capture")
     parser.add_argument("--device-id")
     parser.add_argument("--backend-port", type=int, default=8000)
     parser.add_argument("--admin-port", type=int, default=8001)
     parser.add_argument("--studio-port", type=int, default=5173)
     parser.add_argument("--pwa-port", type=int, default=5174)
     parser.add_argument("--cloudflared", help="Path to an existing cloudflared executable")
-    return parser.parse_args(argv)
+    options = parser.parse_args(argv)
+    if options.electron:
+        options.studio = "electron"
+    options.electron = options.studio == "electron"
+    if options.startup_approval_stdin and options.only != "agent":
+        parser.error("--startup-approval-stdin is only available for the local desktop agent dialog")
+    return options
 
 
 def main(argv=None) -> int:
@@ -553,7 +632,9 @@ def main(argv=None) -> int:
     env = load_environment(ROOT / "backend" / ".env", dict(os.environ))
     env["PYTHONUNBUFFERED"] = "1"
     services, tunnels, bootstrap = [], {}, None
-    public_urls = ROOT / ".janus" / "public-urls.json"
+    state_dir = state_directory(ROOT, env)
+    env["JANUS_STATE_DIR"] = str(state_dir)
+    public_urls = state_dir / "public-urls.json"
     owns_public_urls = False
     stopped = threading.Event()
     old_handlers = {}
@@ -566,56 +647,96 @@ def main(argv=None) -> int:
         for signum in (signal.SIGINT, signal.SIGTERM):
             old_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, interrupt_startup)
-        check_ports([options.backend_port, options.admin_port, options.studio_port, options.pwa_port])
+        if not options.only:
+            check_ports([options.backend_port, options.admin_port, options.pwa_port] + ([options.studio_port] if options.studio != "none" else []))
         install_dependencies(ROOT, env, options.electron, options.no_install)
-        database = ensure_database(ROOT, env)
+        database = ensure_database(ROOT, env) if not options.only else None
         registration = provision_registration(ROOT, env, options.device_id)
         approved = False
         if not options.no_agent:
             if platform.system() not in ("Darwin", "Windows"):
                 print("Native controls require macOS or Windows. Starting backend, Studio and PWA for development.")
             else:
-                approved = approve_startup()
+                approved = consume_startup_approval() if options.startup_approval_stdin else approve_startup()
                 if not approved:
                     print("Laptop permissions declined. Starting web services with laptop controls disabled.")
         policy = ensure_policy(ROOT, platform.system()) if approved else None
         local_backend = f"http://127.0.0.1:{options.backend_port}"
         studio_origin = f"http://127.0.0.1:{options.studio_port}"
-        logs_dir = ROOT / ".janus" / "logs"
+        logs_dir = state_dir / "logs"
         env.update(JANUS_TUNNEL_MODE="off", JANUS_PUBLIC_URLS_FILE=str(public_urls), ADMIN_HOST="127.0.0.1", ADMIN_PORT=str(options.admin_port))
         origins = {"backend": None, "pwa": None}
         for name, setting in (("backend", "PUBLIC_BACKEND_URL"), ("pwa", "PWA_PUBLIC_URL")):
             if env.get(setting, "").strip():
                 origins[name] = validate_origin(env[setting].strip())
         fixed_origins = dict(origins)
-        atomic_json(public_urls, origins)
-        owns_public_urls = True
-        atomic_json(ROOT / ".janus" / "controller.json", {"host": local_backend, "device_id": registration.device_id, "token": registration.controller_token})
-        redactions = [registration.agent_token, registration.controller_token, *[env.get(name, "") for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ADMIN_SECRET", "LLM_API_KEY")]]
+        if not options.only:
+            atomic_json(public_urls, origins)
+            owns_public_urls = True
+            atomic_json(state_dir / "controller.json", {"host": local_backend, "device_id": registration.device_id, "token": registration.controller_token})
+        redactions = [registration.agent_token, registration.controller_token, *[value for name, value in env.items()
+                       if name.endswith(("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")) or name in ("TIGER_DATABASE_URL", "SPECTRUM_PROJECT_ID")]]
 
         def launch(name, command, cwd=ROOT, extra_env=None, input_data=None):
             service = ManagedProcess(name, command, cwd, {**env, **(extra_env or {})}, logs_dir, redactions=redactions, input_data=input_data, console=True).start()
             services.append(service)
+            pid = getattr(getattr(service, "process", None), "pid", None)
+            if isinstance(pid, int):
+                print(f"[janus-process] {name} {pid}", flush=True)
             return service
+
+        def start_agent():
+            command = ["uv", "run", "--no-sync", "--directory", str(ROOT / "agent"), "python", "-m", "agent.main", "connect", "--url", f"ws://127.0.0.1:{options.backend_port}/ws/agents/{registration.device_id}",
+                       "--device-id", registration.device_id, "--workers", "4", "--native-tools", "--validation-policy", str(policy), "--session-approval-stdin"]
+            if not options.no_screen:
+                command.append("--screen")
+            if env.get("AGENT_ISOLATION_ADAPTER"):
+                command.extend(["--isolation-adapter", env["AGENT_ISOLATION_ADAPTER"]])
+            return launch("agent", command, extra_env={"AGENT_TOKEN": registration.agent_token}, input_data="JANUS_SESSION_APPROVED\n")
+
+        if options.only:
+            if not approved:
+                print("Agent not started: local laptop permission was not approved.", file=sys.stderr)
+                return 1
+            if not wait_http(local_backend + "/health", 35):
+                raise RuntimeError("Start the JANUS backend before starting a standalone agent")
+            solo = start_agent()
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(signum, lambda *_: stopped.set())
+            while not stopped.wait(0.5):
+                if solo.poll() is not None:
+                    return solo.poll() or 0
+            return 0
 
         backend = launch("backend", ["uv", "run", "--no-sync", "--directory", str(ROOT / "backend"), "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(options.backend_port)])
         vite = str(ROOT / "node_modules" / "vite" / "bin" / "vite.js")
-        studio = launch("studio", ["node", vite, "--host", "127.0.0.1", "--port", str(options.studio_port), "--strictPort"], ROOT / "frontend", {"VITE_BACKEND_URL": local_backend})
+        studio = launch("studio", ["node", vite, "--host", "127.0.0.1", "--port", str(options.studio_port), "--strictPort"], ROOT / "frontend", {"VITE_BACKEND_URL": local_backend}) if options.studio != "none" else None
         pwa = launch("pwa", ["node", vite, "--host", "127.0.0.1", "--port", str(options.pwa_port), "--strictPort"], ROOT / "PWA", {"JANUS_PWA_HTTP": "1"})
         for name, url, service in (("backend", local_backend + "/health", backend), ("Studio", studio_origin, studio), ("phone PWA", f"http://127.0.0.1:{options.pwa_port}", pwa)):
+            if service is None:
+                continue
             if not wait_http(url, 35, service):
                 raise RuntimeError(f"{name} did not become ready; inspect {logs_dir}")
         if approved:
-            command = ["uv", "run", "--no-sync", "--directory", str(ROOT / "agent"), "python", "-m", "agent.main", "connect", "--url", f"ws://127.0.0.1:{options.backend_port}/ws/agents/{registration.device_id}",
-                       "--device-id", registration.device_id, "--workers", "4", "--native-tools", "--screen", "--validation-policy", str(policy), "--session-approval-stdin"]
-            if env.get("AGENT_ISOLATION_ADAPTER"):
-                command.extend(["--isolation-adapter", env["AGENT_ISOLATION_ADAPTER"]])
-            launch("agent", command, extra_env={"AGENT_TOKEN": registration.agent_token}, input_data="JANUS_SESSION_APPROVED\n")
+            start_agent()
+        if options.imessage:
+            sidecar_env = imessage_environment(env, local_backend)
+            if sidecar_env:
+                try:
+                    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+                    if not npm:
+                        raise RuntimeError("npm was not found")
+                    command = ["cmd.exe", "/d", "/c", npm, "run", "build", "--workspace", "@janus/imessage"] if os.name == "nt" else [npm, "run", "build", "--workspace", "@janus/imessage"]
+                    subprocess.run(command, cwd=ROOT, env=env, check=True)
+                    launch("imessage", ["node", "dist/index.js"], ROOT / "imessage", sidecar_env)
+                    print("iMessage sidecar started; the backend enforces the sender allowlist.")
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    print("iMessage build/start failed; local JANUS remains available.", file=sys.stderr)
         print(f"\nLocal JANUS is ready. Studio: {studio_origin}")
-        bootstrap = LocalBootstrap(studio_origin, local_backend, registration.controller_token).start()
+        bootstrap = LocalBootstrap(studio_origin, local_backend, registration.controller_token).start() if studio else None
         if options.electron:
-            launch("electron", ["node", str(ROOT / "frontend" / "electron" / "launch.cjs")], ROOT / "frontend", {"JANUS_STUDIO_URL": bootstrap.browser_url()})
-        elif not options.no_browser:
+            launch("electron", ["node", str(ROOT / "frontend" / "electron" / "launch.cjs")], ROOT / "frontend", {"JANUS_STUDIO_URL": bootstrap.browser_url(), "JANUS_BACKEND_URL": local_backend, "AGENT_DEVICE_ID": registration.device_id})
+        elif bootstrap and not options.no_browser:
             webbrowser.open(bootstrap.browser_url())
         if not options.local_only and not all(origins.values()):
             print("Connecting the phone app and backend through Cloudflare…")
@@ -646,9 +767,10 @@ def main(argv=None) -> int:
         unavailable = "disabled (--local-only)" if options.local_only else "unavailable; check tunnel logs"
         print(f"Phone app: {origins['pwa'] or unavailable}")
         print(f"Phone backend: {origins['backend'] or unavailable}")
-        print("Controller credential: .janus/controller.json (private local file; never put it in a QR code)")
+        print(f"Controller credential: {state_dir / 'controller.json'} (private local file; never put it in a QR code)")
         print("Use Project → Laptop controls starter, Save & Push, then Pair Device in Studio.")
         print("Gemini: " + ("configured" if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") else "no key configured; built-in tools remain available"))
+        print("Tiger Data history: " + ("configured; backend reports connection/migration failures" if env.get("TIGER_DATABASE_URL") else "optional; SQLite panel and request history remains available"))
         if approved:
             print("Generated jobs: " + ("configured local isolation adapter" if env.get("AGENT_ISOLATION_ADAPTER") else "blocked until a local isolation adapter is installed"))
         print("Press Ctrl+C to stop all JANUS services and revoke this session's approval.\n")
@@ -656,8 +778,19 @@ def main(argv=None) -> int:
             signal.signal(signum, lambda *_: stopped.set())
         recovery_attempts = {name: 0 for name in tunnels}
         while not stopped.wait(0.5):
-            for service in services:
+            for service in list(services):
                 if service.poll() is not None:
+                    if service.name == "imessage":
+                        print("iMessage sidecar stopped — texts will not be received. Local JANUS remains available.", file=sys.stderr)
+                        mark_sidecar_down(local_backend, env["MESSAGING_SERVICE_TOKEN"])
+                        service.stop()
+                        services.remove(service)
+                        continue
+                    if service.name == "agent":
+                        print(f"Laptop agent stopped ({service.poll()}); web services remain available. Start it again to approve a new session.", file=sys.stderr)
+                        service.stop()
+                        services.remove(service)
+                        continue
                     if service.name == "electron" and service.poll() == 0:
                         stopped.set()
                         break
@@ -705,6 +838,8 @@ def main(argv=None) -> int:
             cleanup(lambda: atomic_json(public_urls, {"backend": None, "pwa": None}))
         if bootstrap:
             cleanup(bootstrap.stop)
+        if options.imessage and env.get("MESSAGING_SERVICE_TOKEN"):
+            cleanup(lambda: mark_sidecar_down(f"http://127.0.0.1:{options.backend_port}", env["MESSAGING_SERVICE_TOKEN"]))
         for tunnel in reversed(list(tunnels.values())):
             cleanup(tunnel.stop)
         for service in reversed(services):

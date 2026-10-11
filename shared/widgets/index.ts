@@ -6,4 +6,5 @@ export type { WidgetDef, WidgetSize } from "./src/registry";
 export { isDialWidget, isInputWidget } from "./src/types";
 export { getWidgetAccent } from './src/accent';
 export { builtinActions, builtinSources, defaultBinding, sourceUnit, telemetryStatus } from './src/bindings';
+export { sparklinePath } from './src/sparklinePath';
 export type { Vec2, WidgetProps, WidgetState, WidgetValue } from "./src/types";

@@ -1,4 +1,4 @@
-name: Janus tests
+name: JANUS tests
 on: [push, pull_request]
 jobs:
   integration:

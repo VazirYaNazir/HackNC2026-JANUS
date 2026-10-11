@@ -4,13 +4,14 @@ import logging
 import re
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 _tunnel_url: Optional[str] = None
 _tunnel_process: Optional[asyncio.subprocess.Process] = None
 _drain_task: Optional[asyncio.Task] = None
 _start_task: Optional[asyncio.Task] = None
 
-TUNNEL_REGEX = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
+# "api.trycloudflare.com" is the Cloudflare API host that cloudflared mentions in its own log lines, not a tunnel.
+TUNNEL_REGEX = re.compile(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com")
 
 
 def get_tunnel_url() -> Optional[str]:
@@ -47,7 +48,7 @@ async def _launch(port: int, timeout: float) -> str:
     try:
         try:
             process = await asyncio.create_subprocess_exec(
-                "cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}",
+                "cloudflared", "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", f"http://127.0.0.1:{port}",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError:
