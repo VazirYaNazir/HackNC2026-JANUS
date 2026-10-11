@@ -28,6 +28,9 @@ uv run --no-sync python -m agent.main run volume
 The last command stays running: type `set 35` followed by Enter to set volume,
 or `stop` to exit. Binaries are cached under ignored `.native-bin/`, rebuilt when
 their source or compiler changes, and may be run directly without Python.
+The builder compiles independent tools in up to five threads. Each build stages
+its output before replacing the cache; interruption or failure cancels active
+compiler commands and removes unfinished staging directories.
 
 For streaming, configure `AGENT_TOKEN` securely in the local environment to match
 the backend's agent token; configure `AGENT_BACKEND_URL` to its `/ws/agent` URL.
@@ -46,6 +49,22 @@ sample per stream when the network is slow. Command acknowledgements are
 prioritized. The startup `agent_hello` message lists enabled streams and commands.
 Use Ctrl+C to stop. Screen capture starts only with `--screen`, and cannot be
 enabled remotely through the command protocol.
+
+## Generated C validation and repair
+
+The bridge also routes `validate_job`, `code_revision`, `execute_job`, and
+`cancel_job` messages. Validation enforces a local per-job policy, a 128 KiB C11
+source contract, at most three compilations, sanitized backend repair requests,
+and a separate artifact/execution authorization gate. Runtime outputs stay local
+unless the local policy explicitly opts into sharing them.
+
+Generated-code compilation and execution **are blocked by default**: a verified
+macOS/Windows isolation worker is not supplied. The five repository-owned tools
+continue to work. A local `--validation-policy .validation-policy.json` file can
+register grants but cannot enable isolation. See the
+[protocol and local-worker interface](docs/validation-protocol.md) for message
+schemas, local policy, resource limits, and activation requirements. Backend
+handlers and LLM calls are outside this agent-only change.
 
 ## Tools
 
@@ -140,9 +159,12 @@ The bridge replies after the native API operation:
 {"type":"command_result","stream":"volume","request_id":"volume-42","timestamp_ms":1790000000000,"seq":13,"ok":true,"data":{"value":42.0,"muted":false}}
 ```
 
-Invalid controls return `ok: false` and an `error`. Commands are serialized so
-acknowledgements cannot be assigned to the wrong request. No remote shell,
-arbitrary executable, C source, path, or screenshot-enable command is accepted.
+Invalid controls return `ok: false` and an `error`. Commands for one device stay
+ordered, while mouse and volume use separate workers so a slow acknowledgement
+cannot block the other device or job messages. Each device queue holds at most
+32 pending commands; excess commands return an error. Native control commands
+accept only the actions above. Generated C uses the separate validation protocol
+and requires a local grant and verified isolation before it can be compiled.
 For joystick movement, the acknowledgement means the velocity was accepted by
 the input API; subsequent mouse telemetry supplies cursor position. Sensor and
 desktop permission failures remain observable as events.
@@ -186,15 +208,21 @@ using MSVC. No shared local headers or generated C dependencies are required.
 ## Validation
 
 ```sh
-uv run --no-sync python -m unittest discover -s tests -v
+uv sync --locked
+uv run --locked python -m unittest discover -s tests -v
+# Check combined Python statement/branch coverage (99% minimum):
+uv run --locked coverage run -m unittest discover -s tests
+uv run --locked coverage report -m
 ```
 
-The tests exercise real subprocess pipes and a local WebSocket server, command
-validation/acknowledgements, existing job compatibility, slow-consumer sample
-coalescing, subprocess cleanup, and platform-independent C filtering/JSON
-logic. On macOS and Windows, an additional test compiles all five tools against
-the installed native SDK with fresh outputs; this test is skipped on Linux.
-They do not simulate successful native OS calls. Windows x86-64 builds
+The suite covers every Python module, portable C logic in all five tools, actual
+subprocess/WebSocket transport, and concurrent execution/cancellation races.
+See the [detailed test matrix and concurrency model](docs/testing.md). Python
+coverage measures both statements and branches; native C coverage is separate.
+Generated-code worker replies are simulated and establish no sandbox containment.
+On macOS/Windows, C harnesses and a separate fresh build use the installed native
+SDK. The SDK build test is skipped on Linux; successful desktop/hardware API calls
+still require target-machine verification. Windows x86-64 builds
 were cross-compiled from Linux with Zig 0.15.2. macOS SDK compilation, MSVC
 compilation, hardware sensors, mouse input, audio devices, and desktop capture
 must still be verified on target machines. On each target, build all tools;
