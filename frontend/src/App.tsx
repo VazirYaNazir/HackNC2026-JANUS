@@ -10,6 +10,7 @@ import { WidgetPalette } from './components/WidgetPalette'
 import { EditorCanvas } from './components/EditorCanvas'
 import { Inspector } from './components/Inspector'
 import { BottomBar } from './components/BottomBar'
+import { AgentHelp } from './components/AgentHelp'
 import { ConnectionDialog } from './components/ConnectionDialog'
 import { PairingDialog } from './components/PairingDialog'
 import { ProjectDialog } from './components/ProjectDialog'
@@ -96,6 +97,7 @@ function App() {
     </div>
     <BottomBar key={editor.selectedId ?? 'none'} enabled={client !== null && !!editor.selectedWidget && isInputWidget(editor.selectedWidget) && !busy} target={live.session?.target ?? null} onGenerate={prepare} />
     {message && message !== dismissed && <div className="studio-notice" role="status">{message}<button type="button" onClick={reload} disabled={!live.document}>Load saved panel</button><button type="button" onClick={() => { setDismissed(message); setNotice('') }}>Dismiss</button></div>}
+    {client && live.status === 'connected' && live.session?.online === false && !message && <AgentHelp />}
     {sheet === 'project' && <ProjectDialog layout={editor.layout} onReplace={editor.replaceLayout} onClose={() => setSheet(null)} />}
     {sheet === 'connect' && <ConnectionDialog onClose={() => setSheet(null)} onConnect={async (next) => {
       const document = await next.layout()
