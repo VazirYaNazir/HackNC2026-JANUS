@@ -85,6 +85,10 @@ class TunnelTests(unittest.IsolatedAsyncioTestCase):
             await tunnel._drain_task
         await tunnel.stop_tunnel(); self.assertIsNone(tunnel.get_tunnel_url()); process.terminate.assert_called_once()
         with self.assertRaises(AttributeError): getattr(tunnel, 'missing')
+    async def test_ignores_the_cloudflare_api_host_in_log_lines(self):
+        process = self.process([b'Post "https://api.trycloudflare.com/tunnel": dial failed\n', b'| https://real-name.trycloudflare.com |\n', b''])
+        with patch('app.tunnel.asyncio.create_subprocess_exec', return_value=process):
+            self.assertEqual(await tunnel.start_tunnel(), 'https://real-name.trycloudflare.com')
     async def test_missing_executable_missing_url_and_read_failure_are_cleaned(self):
         with patch('app.tunnel.asyncio.create_subprocess_exec', side_effect=FileNotFoundError), self.assertRaisesRegex(RuntimeError, 'not found'): await tunnel.start_tunnel()
         for lines in ([b''], [OSError('pipe failed')]):

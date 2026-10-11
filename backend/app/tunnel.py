@@ -10,7 +10,8 @@ _tunnel_url: Optional[str] = None
 _tunnel_process: Optional[asyncio.subprocess.Process] = None
 _drain_task: Optional[asyncio.Task] = None
 
-TUNNEL_REGEX = re.compile(r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com")
+# "api.trycloudflare.com" is the Cloudflare API host that cloudflared mentions in its own log lines, not a tunnel.
+TUNNEL_REGEX = re.compile(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com")
 
 
 def get_tunnel_url() -> Optional[str]:
