@@ -52,7 +52,7 @@ test('Studio starter, paired phone, native controls and all laptop streams work 
   const phone = await context.newPage(); phone.on('pageerror', e => errors.push(e.message));
   await phone.setViewportSize({ width: 390, height: 844 }); await phone.goto('http://127.0.0.1:18982');
   await phone.getByRole('button', { name: 'Enter code instead' }).click();
-  await phone.getByLabel('PC address').fill('http://127.0.0.1:18980'); await phone.getByLabel('Pairing code').fill(pairing.code);
+  await phone.getByLabel('Pairing link', { exact: true }).fill(`http://127.0.0.1:18980?pairing_code=${pairing.code}`);
   await phone.getByRole('button', { name: 'Pair', exact: true }).click(); await phone.getByLabel('Panel name').fill('Native laptop');
   await phone.getByRole('button', { name: 'Save', exact: true }).click(); await phone.getByText('Native laptop', { exact: true }).click();
   await expect(phone.getByRole('table', { name: 'Relevant processes' })).toContainText('Busy app');

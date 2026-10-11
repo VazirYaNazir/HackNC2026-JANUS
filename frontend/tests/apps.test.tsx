@@ -56,20 +56,20 @@ describe('both app roots and panel workflows', () => {
   it('manual pairing persists its credential immediately and saves the panel name', async () => {
     localStorage.clear(); const done = vi.fn(); vi.spyOn(connection, 'pair').mockResolvedValue({ token: 'phone', deviceId: 'phone-id', agentDeviceId: 'laptop', pcName: 'Laptop' });
     render(<ScanScreen method="manual" onDone={done} />);
-    fireEvent.change(screen.getByLabelText('PC address'), { target: { value: 'https://backend.example' } }); fireEvent.change(screen.getByLabelText('Pairing code'), { target: { value: 'ABCDEF123456' } });
+    fireEvent.change(screen.getByLabelText('Pairing link'), { target: { value: 'https://backend.example?pairing_code=ABCDEF123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Pair', exact: true })); await waitFor(() => expect(screen.getByLabelText('Panel name')).toBeTruthy());
     expect(listPanels()[0].token).toBe('phone'); fireEvent.change(screen.getByLabelText('Panel name'), { target: { value: 'Office' } }); fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true })); expect(listPanels()[0].name).toBe('Office'); expect(done).toHaveBeenCalled();
   });
   it('failed pairing retains details for retry; camera denial has manual fallback', async () => {
     vi.spyOn(connection, 'pair').mockRejectedValue(new Error('Expired code')); const view = render(<ScanScreen method="manual" onDone={() => {}} />);
-    fireEvent.change(screen.getByLabelText('PC address'), { target: { value: 'https://backend.example' } }); fireEvent.change(screen.getByLabelText('Pairing code'), { target: { value: 'ABCDEF123456' } }); fireEvent.click(screen.getByRole('button', { name: 'Pair', exact: true }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Expired code')); expect((screen.getByLabelText('Pairing code') as HTMLInputElement).value).toBe('ABCDEF123456');
+    fireEvent.change(screen.getByLabelText('Pairing link'), { target: { value: 'https://backend.example?pairing_code=ABCDEF123456' } }); fireEvent.click(screen.getByRole('button', { name: 'Pair', exact: true }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Expired code')); expect((screen.getByLabelText('Pairing link') as HTMLInputElement).value).toBe('https://backend.example?pairing_code=ABCDEF123456');
     view.unmount(); render(<ScanScreen onDone={() => {}} />); await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy()); expect(screen.getByRole('button', { name: 'Enter code instead' })).toBeTruthy();
   });
   it('the PWA root navigates saved panels and opens manual pairing', async () => {
     backend(); localStorage.clear(); window.history.replaceState({}, '', '/'); vi.spyOn(connection, 'checkHost').mockResolvedValue(true);
     addPanel({ name: 'Desk', pcName: 'Laptop', host: 'http://localhost:8000', token: 'phone' }); render(<PWA />);
     fireEvent.click(screen.getByText('Desk', { exact: true })); await waitFor(() => expect(screen.getByRole('button', { name: 'Back to panels' })).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Back to panels' })); fireEvent.click(screen.getByRole('button', { name: 'Enter code instead' })); await waitFor(() => expect(screen.getByLabelText('Pairing code')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Back to panels' })); fireEvent.click(screen.getByRole('button', { name: 'Enter code instead' })); await waitFor(() => expect(screen.getByLabelText('Pairing link')).toBeTruthy()); expect(screen.queryByLabelText('Pairing code')).toBeNull();
   });
 });

@@ -5,6 +5,8 @@ import { join } from 'node:path'
 
 const BACKEND = 'http://127.0.0.1:18980'
 const PHONE = 'http://127.0.0.1:18982'
+/** The pairing link a user pastes into the PWA (the PWA accepts only the full link). */
+const linkFor = (code: string) => `${BACKEND}?pairing_code=${code}`
 const headers = (device = 1) => ({ Authorization: `Bearer control-${device}-` + 'b'.repeat(32) })
 
 async function createCode(request: APIRequestContext, device = 1) {
@@ -32,8 +34,7 @@ async function studio(page: Page) {
 async function manual(page: Page, code: string) {
   await page.goto(PHONE)
   await page.getByRole('button', { name: 'Enter code instead', exact: true }).click()
-  await page.getByLabel('PC address').fill(BACKEND)
-  await page.getByLabel('Pairing code', { exact: true }).fill(code)
+  await page.getByLabel('Pairing link', { exact: true }).fill(linkFor(code))
 }
 
 async function save(page: Page, name: string) {
@@ -70,7 +71,6 @@ test('pasting the exact pairing link displayed by Studio links the phone', async
   const phone = await context.newPage()
   await phone.goto(PHONE)
   await phone.getByRole('button', { name: 'Enter code instead', exact: true }).click()
-  await phone.getByRole('button', { name: 'Paste pairing link', exact: true }).click()
   await phone.getByLabel('Pairing link', { exact: true }).fill(link)
   await phone.getByRole('button', { name: 'Pair', exact: true }).click()
   await save(phone, 'Pasted desk')
@@ -84,8 +84,7 @@ test('a link opening the PWA fills the form, waits for approval, and retains pai
   let submissions = 0
   page.on('request', (value) => { if (value.url() === `${BACKEND}/api/pair`) submissions++ })
   await page.goto(link.toString())
-  await expect(page.getByLabel('PC address')).toHaveValue(BACKEND)
-  await expect(page.getByLabel('Pairing code', { exact: true })).toHaveValue(code)
+  await expect(page.getByLabel('Pairing link', { exact: true })).toHaveValue(`${BACKEND}/?pairing_code=${code}`)
   expect(submissions).toBe(0)
   await expect(page).toHaveURL(PHONE + '/')
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
@@ -105,10 +104,9 @@ test('an expired code stays on the manual form and a new code allows retry', asy
   await manual(page, code)
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Create a new code in Studio')
-  await expect(page.getByLabel('PC address')).toHaveValue(BACKEND)
-  await expect(page.getByLabel('Pairing code', { exact: true })).toHaveValue(code)
+  await expect(page.getByLabel('Pairing link', { exact: true })).toHaveValue(linkFor(code))
   const fresh = await createCode(request)
-  await page.getByLabel('Pairing code', { exact: true }).fill(fresh.code)
+  await page.getByLabel('Pairing link', { exact: true }).fill(linkFor(fresh.code))
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await save(page, 'Retried desk')
 })
@@ -119,7 +117,7 @@ test('a code used by one phone cannot be replayed by a second phone', async ({ p
   await manual(page, code)
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('already been used')
-  await expect(page.getByLabel('Pairing code', { exact: true })).toHaveValue(code)
+  await expect(page.getByLabel('Pairing link', { exact: true })).toHaveValue(linkFor(code))
   expect(await page.evaluate(() => (JSON.parse(localStorage.getItem('janus.panels') ?? '[]') as { agentDeviceId?: string }[]).filter((panel) => panel.agentDeviceId))).toHaveLength(0)
 })
 
@@ -129,7 +127,7 @@ test('network failure preserves entered details and retries the same unconsumed 
   await page.route(`${BACKEND}/api/pair`, (route) => route.abort('connectionrefused'))
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Could not reach the backend')
-  await expect(page.getByLabel('Pairing code', { exact: true })).toHaveValue(code)
+  await expect(page.getByLabel('Pairing link', { exact: true })).toHaveValue(linkFor(code))
   await page.unroute(`${BACKEND}/api/pair`)
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await save(page, 'Network retry')
@@ -141,8 +139,7 @@ test('camera unavailability leaves manual pairing available', async ({ page, req
   await page.getByRole('button', { name: 'Scan to add panel' }).click()
   await expect(page.getByRole('alert')).toContainText('Camera unavailable')
   await page.getByRole('button', { name: 'Enter code instead', exact: true }).click()
-  await page.getByLabel('PC address').fill(BACKEND)
-  await page.getByLabel('Pairing code', { exact: true }).fill(code)
+  await page.getByLabel('Pairing link', { exact: true }).fill(linkFor(code))
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await save(page, 'No camera desk')
 })
@@ -174,13 +171,13 @@ test('re-pairing preserves panel identity and rejects a code belonging to anothe
   await page.getByRole('button', { name: 'Pair again' }).click()
   await page.getByRole('button', { name: 'Enter code instead', exact: true }).click()
   const wrongLaptop = await createCode(request, 2)
-  await page.getByLabel('Pairing code', { exact: true }).fill(wrongLaptop.code)
+  await page.getByLabel('Pairing link', { exact: true }).fill(linkFor(wrongLaptop.code))
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('different PC')
   const unchanged = await page.evaluate(() => (JSON.parse(localStorage.getItem('janus.panels') ?? '[]') as { id: string; name: string; token: string }[]).find((panel) => panel.name === 'Keep this name'))
   expect(unchanged).toMatchObject({ id: original?.id, name: original?.name, token: original?.token })
   const correctLaptop = await createCode(request)
-  await page.getByLabel('Pairing code', { exact: true }).fill(correctLaptop.code)
+  await page.getByLabel('Pairing link', { exact: true }).fill(linkFor(correctLaptop.code))
   await page.getByRole('button', { name: 'Pair', exact: true }).click()
   await expect(page.getByText('Laptop online · connected', { exact: true })).toBeVisible()
   const repaired = await page.evaluate(() => (JSON.parse(localStorage.getItem('janus.panels') ?? '[]') as { id: string; name: string; token: string }[]).find((panel) => panel.name === 'Keep this name'))
@@ -191,8 +188,7 @@ test('re-pairing preserves panel identity and rejects a code belonging to anothe
   await page.getByRole('button', { name: 'Back to panels' }).click()
   await page.getByRole('button', { name: 'Options for Keep this name' }).click()
   await page.getByRole('button', { name: 'Pair again', exact: true }).click()
-  await expect(page.getByLabel('PC address')).toHaveValue(BACKEND)
-  await expect(page.getByLabel('Pairing code', { exact: true })).toHaveValue('')
+  await expect(page.getByLabel('Pairing link', { exact: true })).toHaveValue('')
 })
 
 test('the real phone camera scanner decodes Studio’s rendered QR and pairs exactly once', async ({ page }) => {

@@ -28,10 +28,10 @@ no credentials are bundled into the build. Both the current JSON QR and pairing
 URL formats are supported, including the complete 12-character scoped code.
 
 From the home screen, **Scan to add panel** opens the camera. **Enter code
-instead** opens separate **PC address** and **Pairing code** fields without
-requesting camera access. **Paste pairing link** accepts the full link shown
-in Studio. Invalid/expired/used codes, network failures, and camera failures
-have separate messages. Failed manual attempts retain the form and its values.
+instead** opens a single field without requesting camera access; paste the
+full pairing link shown in Studio's Pair Device dialog and the PWA reads the
+backend address and code from it. Invalid/expired/used codes, network failures,
+and camera failures have separate messages. Failed attempts retain the pasted link.
 The credential is saved immediately after pairing; **Save** names the panel.
 
 Set the optional `PWA_PUBLIC_URL` backend variable to this app's deployed HTTPS
@@ -48,7 +48,7 @@ recent requests show progress, outcomes, and cancellation. The home screen's
 online indicator checks the authenticated laptop session.
 
 Remote backends must use HTTPS/WSS. Studio's pairing dialog obtains the public
-address from the backend's automatic tunnel, its existing HTTPS connection,
+address from the backend's opt-in tunnel (`npm start -- --tunnel`), its existing HTTPS connection,
 or the optional `PUBLIC_BACKEND_URL`. Its editable **Phone backend address**
 must be reachable from the phone: a phone cannot reach another computer's
 `127.0.0.1`. Codes last 60 seconds and are single-use. If the backend tunnel
