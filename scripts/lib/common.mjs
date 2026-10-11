@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-export const JANUS_DIR = path.join(ROOT, '.janus');
+// JANUS_STATE_DIR overrides the state directory (pidfile, pinned cloudflared, iMessage state); tests rely on it.
+export const JANUS_DIR = process.env.JANUS_STATE_DIR || path.join(ROOT, '.janus');
 export const ENV_FILE = path.join(ROOT, 'backend', '.env');
 export const ENV_EXAMPLE = path.join(ROOT, 'backend', '.env.example');
 export const isWindows = process.platform === 'win32';
@@ -119,21 +120,116 @@ export function killTree(pid) {
   else { try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } } }
 }
 
-// ---- pidfile: lets `npm start` recognise (and only ever stop) its own earlier processes -----------------------
+// ---- pidfile: lets `npm start` recognise (and only ever stop) its own earlier processes ---------------------------
 
 const PID_FILE = path.join(JANUS_DIR, 'pids.json');
+/** A recorded PID only counts as ours if the live process started within this window of when we recorded it. */
+const START_TOLERANCE_MS = 30_000;
 
-export function readPids() {
-  try { return JSON.parse(readFileSync(PID_FILE, 'utf8')); } catch { return {}; }
+/**
+ * {name: {pid, startedAt, owner, ownerStartedAt}}: the child, and the start.mjs process that launched it.
+ * Also reads the older {name: pid} shape (startedAt 0 = cannot be verified).
+ */
+export function readRecords() {
+  let raw;
+  try { raw = JSON.parse(readFileSync(PID_FILE, 'utf8')); } catch { return {}; }
+  const records = {};
+  for (const [name, value] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+    if (typeof value === 'number') records[name] = { pid: value, startedAt: 0, owner: 0, ownerStartedAt: 0 };
+    else if (value && typeof value.pid === 'number') {
+      records[name] = { pid: value.pid, startedAt: Number(value.startedAt) || 0, owner: Number(value.owner) || 0, ownerStartedAt: Number(value.ownerStartedAt) || 0 };
+    }
+  }
+  return records;
 }
 
-export function writePids(pids) {
+export function writeRecords(records) {
   mkdirSync(JANUS_DIR, { recursive: true });
-  if (Object.keys(pids).length === 0) rmSync(PID_FILE, { force: true });
-  else writeFileSync(PID_FILE, JSON.stringify(pids));
+  if (Object.keys(records).length === 0) rmSync(PID_FILE, { force: true });
+  else writeFileSync(PID_FILE, JSON.stringify(records));
 }
 
-/** True only when `pid` is, or descends from, a live process recorded by an earlier Janus start. */
+/** name -> pid. */
+export function readPids() {
+  return Object.fromEntries(Object.entries(readRecords()).map(([name, record]) => [name, record.pid]));
+}
+
+export function recordProcess(name, pid, startedAt = Date.now(), owner = process.pid, ownerStartedAt = Math.round(Date.now() - process.uptime() * 1000)) {
+  writeRecords({ ...readRecords(), [name]: { pid, startedAt, owner, ownerStartedAt } });
+}
+
+export function forgetProcesses(names) {
+  const records = readRecords();
+  for (const name of names) delete records[name];
+  writeRecords(records);
+}
+
+/** Process creation time in ms since the epoch, or null when it cannot be determined. */
+export function processCreatedAt(pid) {
+  const out = isWindows
+    ? capture('powershell', ['-NoProfile', '-Command', `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`]).stdout
+    : capture('ps', ['-o', 'lstart=', '-p', String(pid)]).stdout;
+  const time = Date.parse(out.trim());
+  return Number.isFinite(time) ? time : null;
+}
+
+function startedNear(pid, expected, alive, createdAt) {
+  if (!expected || !alive(pid)) return false;
+  const created = createdAt(pid);
+  return created !== null && Math.abs(created - expected) <= START_TOLERANCE_MS;
+}
+
+/** True only when `pid` is alive AND started when we recorded it, so a recycled PID is never mistaken for ours. */
+export function isRecordedProcess(record, { alive = isAlive, createdAt = processCreatedAt } = {}) {
+  return Boolean(record) && startedNear(record.pid, record.startedAt, alive, createdAt);
+}
+
+/**
+ * A start.mjs that is still running and owns recorded processes (other than this one). A second `npm start` must not
+ * kill a healthy stack as "leftovers": it refuses instead. Solo agents (from Studio's button) are excluded; a full
+ * start replaces those.
+ */
+export function otherOrchestrator({ alive = isAlive, createdAt = processCreatedAt, self = process.pid } = {}) {
+  for (const [name, record] of Object.entries(readRecords())) {
+    if (name.endsWith('-solo') || !record.owner || record.owner === self) continue;
+    if (startedNear(record.owner, record.ownerStartedAt, alive, createdAt)) return { name, ...record };
+  }
+  return null;
+}
+
+/**
+ * Kills every process tree recorded by an earlier run (a crash or a hard kill can leave them behind) and forgets the
+ * records. Entries whose PID is dead, or was recycled by an unrelated process, are dropped without touching anything.
+ * Returns one line per entry for the log.
+ */
+export function killLeftovers({ keep = [], alive = isAlive, createdAt = processCreatedAt, kill = killTree } = {}) {
+  const lines = [];
+  const records = readRecords();
+  const done = [];
+  for (const [name, record] of Object.entries(records)) {
+    if (keep.includes(name)) continue;
+    done.push(name);
+    if (!alive(record.pid)) continue;
+    if (isRecordedProcess(record, { alive, createdAt })) {
+      kill(record.pid);
+      lines.push(`Stopped leftover ${name} from an earlier run (PID ${record.pid}).`);
+    } else {
+      lines.push(`Left PID ${record.pid} (${name}) alone: it is running but cannot be confirmed as a JANUS process.`);
+    }
+  }
+  forgetProcesses(done);
+  return lines;
+}
+
+/** The recorded agent (from `npm start` or Studio's Start agent button) if it is still genuinely running. */
+export function liveAgent(deps) {
+  for (const [name, record] of Object.entries(readRecords())) {
+    if ((name === 'agent' || name === 'agent-solo') && isRecordedProcess(record, deps)) return { name, ...record };
+  }
+  return null;
+}
+
+/** True only when `pid` is, or descends from, a live process recorded by an earlier JANUS start. */
 export function isJanusProcess(pid) {
   const recorded = new Set(Object.values(readPids()).filter(isAlive));
   let current = pid;
@@ -142,4 +238,31 @@ export function isJanusProcess(pid) {
     current = parentPid(current);
   }
   return false;
+}
+
+// ---- flags ---------------------------------------------------------------------------------------------------
+
+/**
+ * Command-line flags that also survive npm swallowing them. Windows PowerShell drops the `--` separator, so
+ * `npm start -- --imessage` reaches npm as its own option and the script only sees `npm_config_imessage=true`
+ * (and `--no-agent` arrives as `npm_config_agent` set to false / empty). Both spellings work here.
+ */
+export function makeFlags(argv = process.argv.slice(2), env = process.env) {
+  const fromEnv = (name) => env[`npm_config_${name.replace(/-/g, '_')}`];
+  return {
+    has(name) {
+      if (argv.includes(`--${name}`)) return true;
+      if (name.startsWith('no-')) {
+        const negated = fromEnv(name.slice(3));
+        return negated === '' || negated === 'false';
+      }
+      return fromEnv(name) === 'true';
+    },
+    value(name) {
+      const inline = argv.find((arg) => arg.startsWith(`--${name}=`));
+      if (inline) return inline.split('=').slice(1).join('=');
+      const viaNpm = fromEnv(name);
+      return viaNpm && viaNpm !== 'true' && viaNpm !== 'false' ? viaNpm : undefined;
+    },
+  };
 }

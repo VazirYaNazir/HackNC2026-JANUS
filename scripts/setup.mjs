@@ -5,12 +5,11 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiChecks, doctor, report } from './doctor.mjs';
-import { ENV_EXAMPLE, ENV_FILE, ROOT, parseEnv, restrictToOwner, run } from './lib/common.mjs';
+import { ENV_EXAMPLE, ENV_FILE, ROOT, makeFlags, parseEnv, restrictToOwner, run } from './lib/common.mjs';
 
-const args = process.argv.slice(2);
-const flag = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
+const flags = makeFlags();
 const defaults = JSON.parse(readFileSync(new URL('./defaults.json', import.meta.url), 'utf8'));
-const pwaUrl = flag('pwa-url') || process.env.JANUS_PWA_URL || defaults.pwaPublicUrl;
+const pwaUrl = flags.value('pwa-url') || process.env.JANUS_PWA_URL || defaults.pwaPublicUrl;
 const token = () => randomBytes(32).toString('base64url');
 
 /** Adds keys from .env.example that the existing file lacks; never changes a value that is already set. */
@@ -56,7 +55,12 @@ function promptSecret(question) {
 /** Fills generated values only where the file has none. */
 export function fillGenerated(text, { pwaUrl: pwa, deviceId = 'my-laptop' } = {}) {
   const env = parseEnv(text);
-  const set = (current, key, value) => current.replace(new RegExp(`^${key}=.*$`, 'm'), () => `${key}=${value}`);
+  // Replaces the key's line, or appends one when the file has none (never silently drops a generated secret).
+  const set = (current, key, value) => {
+    const line = new RegExp(`^${key}=.*$`, 'm');
+    if (line.test(current)) return current.replace(line, () => `${key}=${value}`);
+    return `${current}${current.endsWith('\n') || !current ? '' : '\n'}${key}=${value}\n`;
+  };
   const filled = [];
   let out = text;
   if (!env.get('ADMIN_SECRET')) { out = set(out, 'ADMIN_SECRET', token()); filled.push('ADMIN_SECRET'); }
@@ -66,6 +70,8 @@ export function fillGenerated(text, { pwaUrl: pwa, deviceId = 'my-laptop' } = {}
     out = set(out, 'AGENT_DEVICES_JSON', JSON.stringify(device));
     filled.push('AGENT_DEVICES_JSON');
   }
+  // Authenticates the iMessage sidecar to the backend's loopback-only messaging endpoint.
+  if (!env.get('MESSAGING_SERVICE_TOKEN')) { out = set(out, 'MESSAGING_SERVICE_TOKEN', token()); filled.push('MESSAGING_SERVICE_TOKEN'); }
   if (pwa && !env.get('PWA_PUBLIC_URL')) { out = set(out, 'PWA_PUBLIC_URL', pwa.replace(/\/+$/, '')); filled.push('PWA_PUBLIC_URL'); }
   return { text: out, filled };
 }
@@ -74,7 +80,7 @@ async function main() {
   const preflight = await doctor({ beforeSetup: true });
   if (!report(preflight)) { console.error('\nFix the problems above and run `npm run setup` again.'); process.exit(1); }
 
-  if (!existsSync(path.join(ROOT, 'node_modules', '.package-lock.json')) || args.includes('--reinstall')) {
+  if (!existsSync(path.join(ROOT, 'node_modules', '.package-lock.json')) || flags.has('reinstall')) {
     console.log('Installing JavaScript dependencies…');
     await run('npm', ['ci']);
   } else console.log('JavaScript dependencies already installed (use --reinstall to redo).');
@@ -90,7 +96,7 @@ async function main() {
   // Optional: a Gemini key enables AI-generated widgets. Never taken from argv, so it stays out of shell history.
   const hasKey = ['GEMINI_API_KEY', 'GOOGLE_API_KEY'].some((key) => parseEnv(filled.text).get(key));
   if (!hasKey) {
-    const interactive = process.stdin.isTTY && process.stdout.isTTY && !process.env.CI && !args.includes('--no-prompt');
+    const interactive = process.stdin.isTTY && process.stdout.isTTY && !process.env.CI && !flags.has('no-prompt');
     const key = process.env.JANUS_GEMINI_KEY || (interactive ? await promptSecret('Gemini API key for AI-generated widgets (optional; press Enter to skip): ') : '');
     if (looksLikeApiKey(key)) { filled.text = setEnvValue(filled.text, 'GEMINI_API_KEY', key); filled.filled.push('GEMINI_API_KEY'); }
     else if (key) console.warn('! That does not look like an API key; skipped. Add GEMINI_API_KEY to backend/.env later.');
@@ -101,11 +107,11 @@ async function main() {
   if (filled.filled.length) console.log(`Generated values for: ${filled.filled.join(', ')}.`);
   if (!pwaUrl) console.log('! PWA_PUBLIC_URL is empty, so pairing QR codes will not open the hosted PWA directly. Re-run with --pwa-url=https://… or set it in scripts/defaults.json.');
 
-  if (!args.includes('--skip-native')) {
+  if (!flags.has('skip-native')) {
     console.log('Building native tools (the first run may download a compiler)…');
     await run('uv', ['run', '--no-sync', 'python', '-m', 'agent.main', 'build'], { cwd: path.join(ROOT, 'agent') }).catch((error) => {
       throw new Error(`${error.message}
-If Janus or its agent is running, stop it first (Windows locks the running native tools), then re-run \`npm run setup\`.`);
+If JANUS or its agent is running, stop it first (Windows locks the running native tools), then re-run \`npm run setup\`.`);
     });
   }
   report(aiChecks());

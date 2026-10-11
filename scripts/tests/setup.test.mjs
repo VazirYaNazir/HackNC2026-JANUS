@@ -27,7 +27,7 @@ describe('fillGenerated', () => {
   it('generates secrets and a device where they are empty, and defaults the PWA URL', () => {
     const { text, filled } = fillGenerated(example, { pwaUrl: 'https://pwa.example.app/' });
     const env = parseEnv(text);
-    expect(filled).toEqual(['ADMIN_SECRET', 'AGENT_DEVICES_JSON', 'PWA_PUBLIC_URL']);
+    expect(filled).toEqual(['ADMIN_SECRET', 'AGENT_DEVICES_JSON', 'MESSAGING_SERVICE_TOKEN', 'PWA_PUBLIC_URL']);
     expect(env.get('ADMIN_SECRET').length).toBeGreaterThanOrEqual(32);
     const [device] = JSON.parse(env.get('AGENT_DEVICES_JSON'));
     expect(device.device_id).toBe('my-laptop');
@@ -36,8 +36,17 @@ describe('fillGenerated', () => {
     expect(env.get('PWA_PUBLIC_URL')).toBe('https://pwa.example.app');
   });
 
+  it('generates the iMessage service token only when it is empty', () => {
+    const fresh = parseEnv(fillGenerated(`${example}\nMESSAGING_SERVICE_TOKEN=`, {}).text).get('MESSAGING_SERVICE_TOKEN');
+    expect(fresh.length).toBeGreaterThanOrEqual(32);
+    const appended = parseEnv(fillGenerated(example, {}).text).get('MESSAGING_SERVICE_TOKEN');
+    expect(appended.length).toBeGreaterThanOrEqual(32);
+    const kept = fillGenerated('ADMIN_SECRET=abc\nAGENT_DEVICES_JSON=[{"device_id":"x"}]\nMESSAGING_SERVICE_TOKEN=keep-me', {});
+    expect(parseEnv(kept.text).get('MESSAGING_SERVICE_TOKEN')).toBe('keep-me');
+  });
+
   it('keeps values that are already set, so re-running setup changes nothing', () => {
-    const configured = 'ADMIN_SECRET=abc\nAGENT_DEVICES_JSON=[{"device_id":"x"}]\nPWA_PUBLIC_URL=https://mine.app';
+    const configured = 'MESSAGING_SERVICE_TOKEN=svc\nADMIN_SECRET=abc\nAGENT_DEVICES_JSON=[{"device_id":"x"}]\nPWA_PUBLIC_URL=https://mine.app';
     const { text, filled } = fillGenerated(configured, { pwaUrl: 'https://other.app' });
     expect(filled).toEqual([]);
     expect(text).toBe(configured);

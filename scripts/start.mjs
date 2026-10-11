@@ -1,21 +1,25 @@
-// Starts Janus: backend, laptop agent and Studio (Electron). Studio's "Start agent" button runs this same
+// Starts JANUS: backend, laptop agent and Studio (Electron). Studio's "Start agent" button runs this same
 // script with --only=agent, so there is a single orchestration path.
 //   npm start [-- --pwa] [-- --tunnel] [-- --studio=electron|browser|none] [-- --no-agent] [-- --only=agent]
+//   (Windows PowerShell drops the `--`; both forms work. Shortcuts: npm run start:imessage, npm run start:demo)
 //   --pwa     also run the PWA dev server on :5174 (off by default; the phone uses the hosted PWA)
 //   --tunnel  expose the backend through a Cloudflare tunnel for phone pairing (off by default)
+//   --screen  start the agent with screen sharing for Studio (off by default)
+//   --imessage  also run the iMessage sidecar (text your laptop); needs Spectrum credentials + an allowlist in backend/.env
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { doctor, report } from './doctor.mjs';
 import { ensureCloudflared, BIN_DIR } from './lib/cloudflared.mjs';
-import { ROOT, isJanusProcess, isWindows, killTree, listenerPid, portInUse, processName, readDevices, readPids, writePids } from './lib/common.mjs';
+import { ROOT, forgetProcesses, isJanusProcess, isWindows, killLeftovers, killTree, listenerPid, liveAgent, makeFlags, otherOrchestrator, portInUse, processName, readDevices, readEnvFile, recordProcess, run } from './lib/common.mjs';
 
-const args = process.argv.slice(2);
-const flag = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.split('=').slice(1).join('=');
-const only = flag('only');
-const wantPwa = args.includes('--pwa');
-const wantTunnel = args.includes('--tunnel');
-const wantAgent = !args.includes('--no-agent');
-const studio = flag('studio') ?? 'electron';
+const flags = makeFlags();
+const only = flags.value('only');
+const wantPwa = flags.has('pwa');
+const wantTunnel = flags.has('tunnel');
+const wantImessage = flags.has('imessage');
+const wantScreen = flags.has('screen');
+const wantAgent = !flags.has('no-agent');
+const studio = flags.value('studio') ?? 'electron';
 if (only && only !== 'agent') throw new Error(`Unknown --only=${only}`);
 if (!['electron', 'browser', 'none'].includes(studio)) throw new Error(`Unknown --studio=${studio}`);
 
@@ -28,7 +32,7 @@ function track(name, child) {
   children.set(name, child);
   const key = only ? `${name}-solo` : name;
   pidKeys.add(key);
-  writePids({ ...readPids(), [key]: child.pid });
+  recordProcess(key, child.pid);
 }
 
 function launch(name, command, commandArgs, { cwd = ROOT, env = {} } = {}) {
@@ -55,16 +59,24 @@ function launch(name, command, commandArgs, { cwd = ROOT, env = {} } = {}) {
   return child;
 }
 
+/** Kills each child's whole process tree (taskkill /T /F on Windows, the process group elsewhere). */
+function killChildren() {
+  for (const child of children.values()) if (child.pid) killTree(child.pid);
+}
+
 async function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const child of children.values()) if (child.pid) killTree(child.pid);
-  const pids = readPids();
-  for (const key of pidKeys) delete pids[key];
-  writePids(pids);
+  killChildren();
+  forgetProcesses([...pidKeys]);
   process.exit(code);
 }
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => void shutdown(0));
+// Ctrl+C, a terminated shell, a closed console window, or a crash all tear the whole stack down.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', ...(isWindows ? ['SIGBREAK'] : [])]) process.on(signal, () => void shutdown(0));
+process.on('uncaughtException', (error) => { console.error(error); void shutdown(1); });
+process.on('unhandledRejection', (error) => { console.error(error); void shutdown(1); });
+// Last resort for any other way out: whatever is still tracked is killed, tree and all (synchronously).
+process.on('exit', () => { killChildren(); forgetProcesses([...pidKeys]); });
 
 /** Stop leftovers from a previous `npm start`; anything else holding a port aborts with an explanation. */
 async function claimPorts(ports) {
@@ -72,13 +84,13 @@ async function claimPorts(ports) {
     if (!(await portInUse(port))) continue;
     const pid = listenerPid(port);
     if (pid && isJanusProcess(pid)) {
-      console.log(`Stopping leftover Janus process on port ${port} (PID ${pid})…`);
+      console.log(`Stopping leftover JANUS process on port ${port} (PID ${pid})…`);
       killTree(pid);
       for (let i = 0; i < 20 && (await portInUse(port)); i += 1) await new Promise((resolve) => setTimeout(resolve, 250));
     }
     if (await portInUse(port)) {
       const holder = pid ? `${processName(pid)} (PID ${pid})` : 'an unknown process';
-      throw new Error(`Port ${port} is in use by ${holder}, which Janus did not start. Close it and try again.`);
+      throw new Error(`Port ${port} is in use by ${holder}, which JANUS did not start. Close it and try again.`);
     }
   }
 }
@@ -99,15 +111,44 @@ function device() {
   return first;
 }
 
+/** The sidecar only forwards texts; the backend decides everything. Secrets go to the child env, never to logs. */
+async function startImessage() {
+  const env = readEnvFile();
+  const value = (key) => process.env[key] || env?.get(key) || '';
+  const keys = ['SPECTRUM_PROJECT_ID', 'SPECTRUM_PROJECT_SECRET', 'MESSAGING_SERVICE_TOKEN'];
+  const missing = keys.filter((key) => !value(key));
+  if (missing.length) { console.warn(`iMessage sidecar not started: set ${missing.join(', ')} in backend/.env.`); return; }
+  await run('npm', ['run', 'build', '--workspace', '@janus/imessage']);
+  // The allowlist only tells the sidecar whom to greet at startup; the backend still enforces it on every text.
+  const optional = ['IMESSAGE_ALLOWED_SENDERS', 'IMESSAGE_GREETING'].filter((key) => value(key));
+  launch('imessage', 'node', ['dist/index.js'], { cwd: path.join(ROOT, 'imessage'), env: Object.fromEntries([...keys, ...optional].map((key) => [key, value(key)])) });
+  console.log('iMessage sidecar started (texts from allowlisted numbers only).');
+}
+
 async function main() {
+  if (only === 'agent') {
+    const running = liveAgent();
+    if (running) {
+      console.error(`An agent is already running (PID ${running.pid}); not starting a second one. Stop it first if you want to replace it.`);
+      process.exit(1);
+    }
+  } else {
+    const running = otherOrchestrator();
+    if (running) {
+      console.error(`JANUS is already running (started by PID ${running.owner}; ${running.name} is PID ${running.pid}). Stop it first (Ctrl+C in its window), then start again.`);
+      process.exit(1);
+    }
+    // A crash or hard kill can leave the previous run's processes behind: stop exactly the ones we recorded.
+    for (const line of killLeftovers()) console.log(line);
+  }
   const ports = only ? [] : [8000, ...(studio === 'none' ? [] : [5173]), ...(wantPwa ? [5174] : [])];
-  const preflight = await doctor({ tunnel: wantTunnel, pwa: wantPwa, ports: false });
+  const preflight = await doctor({ tunnel: wantTunnel, pwa: wantPwa, ports: false, imessage: wantImessage });
   if (!report(preflight)) process.exit(1);
   await claimPorts(ports);
 
   const registered = device();
   const agentEnv = { AGENT_TOKEN: registered.agent_token };
-  const startAgent = () => launch('agent', 'uv', ['run', '--locked', 'python', '-m', 'agent.main', 'connect', '--url', `ws://127.0.0.1:8000/ws/agents/${registered.device_id}`, '--device-id', registered.device_id, '--native-tools'], { cwd: path.join(ROOT, 'agent'), env: agentEnv });
+  const startAgent = () => launch('agent', 'uv', ['run', '--locked', 'python', '-m', 'agent.main', 'connect', '--url', `ws://127.0.0.1:8000/ws/agents/${registered.device_id}`, '--device-id', registered.device_id, '--native-tools', ...(wantScreen ? ['--screen'] : [])], { cwd: path.join(ROOT, 'agent'), env: agentEnv });
 
   if (only === 'agent') { await waitForBackend(); startAgent(); return; }
 
@@ -116,13 +157,14 @@ async function main() {
     await ensureCloudflared();
     backendEnv.JANUS_AUTO_TUNNEL = '1';
     backendEnv.PATH = `${BIN_DIR}${path.delimiter}${process.env.PATH}`;
-    console.log('Tunnel enabled: the backend will be reachable on the public internet (still behind its credentials) until you stop Janus.');
+    console.log('Tunnel enabled: the backend will be reachable on the public internet (still behind its credentials) until you stop JANUS.');
   }
   launch('backend', 'uv', ['run', '--locked', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--env-file', '.env'], { cwd: path.join(ROOT, 'backend'), env: backendEnv });
   await waitForBackend();
   console.log(`Backend ready at ${BACKEND}`);
 
   if (wantAgent) startAgent();
+  if (wantImessage) await startImessage();
   if (wantPwa) launch('pwa', 'npm', ['run', 'dev', '--workspace', '@janus/pwa', '--', '--host', '0.0.0.0', '--port', '5174', '--strictPort']);
   if (studio === 'electron') launch('studio', 'npm', ['run', 'electron', '--workspace', 'frontend']);
   else if (studio === 'browser') { launch('studio', 'npm', ['run', 'dev', '--workspace', 'frontend']); console.log('Open http://127.0.0.1:5173 in your browser.'); }
