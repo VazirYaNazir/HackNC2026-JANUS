@@ -82,9 +82,22 @@ An existing audited local worker can be selected with
 `--isolation-adapter my_local_app.worker:create_boundary` or
 `AGENT_ISOLATION_ADAPTER`. This is a local factory implementing the existing
 `IsolationBoundary`; no cloud command can select it. Interface checks establish
-conformance rather than verifying OS containment. With no adapter, generated C
-validation stays blocked. See the [backend–agent setup, protocol, endpoints, and
+conformance rather than verifying OS containment. The default adapter uses the
+shipped Docker worker and requires verified local Linux isolation. See the [backend–agent setup, protocol, endpoints, and
 tests](../backend/app/docs/backend-agent.md).
+
+If generated programs report an unavailable worker, collect its local readiness
+checks from the repository root:
+
+```sh
+uv run --locked --directory agent python -m agent.main worker diagnose
+```
+
+The JSON report includes safe diagnostic stages and failed checks collected by
+the worker probe. It excludes credentials, environment contents and raw Docker
+errors. `worker status` retains its compact availability report; `worker prepare`
+attempts to prepare the shipped image. Custom adapters without a diagnostic
+method fall back to their availability report.
 
 The bridge also routes `validate_job`, `code_revision`, `execute_job`, and
 `cancel_job` messages. Validation enforces a local per-job policy, a 128 KiB C11

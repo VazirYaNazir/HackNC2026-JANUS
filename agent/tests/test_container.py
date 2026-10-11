@@ -211,7 +211,7 @@ class ClientConfigurationTests(BoundaryFixtures, unittest.TestCase):
 class ReadinessProbeTests(BoundaryFixtures, unittest.TestCase):
     def probe(self, *, endpoint="unix:///fixture/docker.sock", engine=None, metadata=None,
               context_code=0, info_code=0, image_code=0, create_code=0,
-              response=None, start_code=0, remove_code=0, remove_stderr=b"", exception=None):
+              response=None, start_code=0, remove_code=0, remove_stderr=b"", remove_error=None, exception=None):
         engine = engine if engine is not None else {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
             "SwapLimit": True, "PidsLimit": True, "CpuCfsPeriod": True, "CpuCfsQuota": True,
             "SecurityOptions": ["name=seccomp,profile=builtin"], "Architecture": "amd64"}
@@ -234,6 +234,8 @@ class ReadinessProbeTests(BoundaryFixtures, unittest.TestCase):
             if "start" in argv:
                 return completed(start_code, json.dumps(response).encode())
             if "rm" in argv:
+                if remove_error:
+                    raise remove_error
                 return completed(remove_code, stderr=remove_stderr)
             self.fail(f"Unexpected Docker command {argv}")
         with patch.dict(os.environ, {"DOCKER_HOST": ""}), patch("agent.container.shutil.which", return_value="/trusted/docker"), \
@@ -358,6 +360,110 @@ class ReadinessProbeTests(BoundaryFixtures, unittest.TestCase):
                 boundary, _ = self.probe(**case)
                 self.assertEqual(boundary.reason, "WORKER_ENFORCEMENT_UNAVAILABLE")
                 self.assertFalse(boundary.available)
+
+
+class WorkerDiagnosticTests(BoundaryFixtures, unittest.TestCase):
+    def test_status_contract_is_unchanged_and_missing_docker_needs_no_guest(self):
+        boundary = self.boundary(False)
+        with patch("agent.container.sync_command") as command:
+            report = boundary.diagnose()
+        command.assert_not_called()
+        self.assertEqual(set(boundary.describe()), {"available", "reason", "execution_target"})
+        self.assertEqual(report["probe_version"], 2)
+        self.assertEqual(report["diagnostics"], [{"stage": "docker_client", "outcome": "failed"}])
+
+    def test_failed_engine_limits_report_exact_checks_without_raw_metadata(self):
+        engine = {"OSType": "linux", "CgroupVersion": "2", "MemoryLimit": True,
+                  "SwapLimit": False, "PidsLimit": True, "Architecture": "arm64",
+                  "SecurityOptions": ["name=seccomp"], "private": "fixture-secret"}
+        boundary, _ = ReadinessProbeTests.probe(self, engine=engine)
+        report = boundary.diagnose()
+        failed = next(item for item in report["diagnostics"] if item["outcome"] == "failed")
+        self.assertEqual(failed["stage"], "engine_limits")
+        self.assertFalse(failed["checks"]["SwapLimit"])
+        self.assertTrue(failed["checks"]["MemoryLimit"])
+        self.assertNotIn("fixture-secret", json.dumps(report))
+        self.assertNotIn("guest", report)
+
+    def test_create_probe_and_cleanup_failures_have_distinct_stages(self):
+        for case, stage in (({"create_code": 1}, "worker_create"),
+                            ({"response": {"ready": False}}, "worker_probe"),
+                            ({"remove_code": 1, "remove_stderr": b"private path"}, "worker_cleanup"),
+                            ({"remove_error": subprocess.TimeoutExpired("docker", 3)}, "worker_cleanup")):
+            with self.subTest(stage=stage):
+                boundary, _ = ReadinessProbeTests.probe(self, **case)
+                with patch.object(boundary, "_diagnose_guest", return_value={"code": "WORKER_RUNTIME_UNAVAILABLE"}) as guest:
+                    report = boundary.diagnose()
+                self.assertTrue(any(item["stage"] == stage and item["outcome"] == "failed" for item in report["diagnostics"]))
+                self.assertEqual(guest.call_count, 1 if stage == "worker_probe" else 0)
+                self.assertFalse(report["available"])
+                self.assertNotIn("private path", json.dumps(report))
+
+    def test_local_exception_and_timeout_are_reported_without_exception_text(self):
+        for error, code in ((OSError("fixture-secret /private/home"), "LOCAL_CHECK_FAILED"),
+                            (subprocess.TimeoutExpired("private command", 3), "DOCKER_COMMAND_TIMEOUT")):
+            boundary, _ = ReadinessProbeTests.probe(self, exception=error)
+            report = boundary.diagnose()
+            self.assertEqual(report["diagnostics"][-1], {"stage": "docker_context", "outcome": "failed", "code": code})
+            self.assertNotIn("private", json.dumps(report))
+
+    def guest(self, response=None, *, create_code=0, start_error=None, remove_code=0, absent=True):
+        from agent.worker_diagnostics import DIAGNOSTIC_CHECKS
+        boundary = self.boundary()
+        response = response if response is not None else {"ready": True, "code": None, "checks": {key: True for key in DIAGNOSTIC_CHECKS}}
+        calls = []
+        def command(arguments, **kwargs):
+            calls.append((arguments, kwargs))
+            if "create" in arguments:
+                return completed(create_code)
+            if "start" in arguments:
+                if start_error:
+                    raise start_error
+                return completed(stdout=json.dumps(response).encode())
+            if "rm" in arguments:
+                return completed(remove_code, stderr=b"private-error")
+            if "inspect" in arguments:
+                return completed(1 if absent else 0, stderr=b"No such object" if absent else b"")
+            self.fail("Unexpected Docker operation")
+        with patch("agent.container.sync_command", side_effect=command):
+            report = boundary._diagnose_guest()
+        return report, calls
+
+    def test_diagnostic_uses_original_isolation_and_immutable_image_then_verifies_removal(self):
+        report, calls = self.guest()
+        self.assertTrue(report["ready"])
+        create, options = calls[0]
+        for argument in ("--read-only", "--cap-drop", "no-new-privileges", "none", "65532:65532", "sha256:" + "a" * 64):
+            self.assertIn(argument, create)
+        self.assertEqual(create[-4:-1], ["-I", "-B", "-c"])
+        self.assertTrue(options["completion_barrier"])
+        self.assertEqual(json.loads(calls[1][1]["input_data"]), asdict(ResourceLimits()))
+        self.assertIn("rm", calls[-2][0])
+        self.assertIn("inspect", calls[-1][0])
+
+    def test_unrecognized_diagnostic_data_cannot_leak_secrets(self):
+        for response in ({"ready": False, "code": "fixture-secret", "checks": {}},
+                         {"ready": True, "code": None, "checks": {"private": True}},
+                         {"ready": True, "code": None, "checks": {"runtime": "fixture-secret"}},
+                         {"ready": 1, "code": None, "checks": {}}, []):
+            report, calls = self.guest(response)
+            self.assertFalse(report["ready"])
+            self.assertEqual(report["code"], "WORKER_DIAGNOSTIC_UNAVAILABLE")
+            self.assertNotIn("fixture-secret", json.dumps(report))
+            self.assertIn("inspect", calls[-1][0])
+        from agent.worker_diagnostics import DIAGNOSTIC_CHECKS
+        report, _ = self.guest({"ready": True, "code": None, "checks": {key: True for key in DIAGNOSTIC_CHECKS}, "extra": "fixture-secret"})
+        self.assertEqual(set(report), {"ready", "code", "checks"})
+        self.assertNotIn("fixture-secret", json.dumps(report))
+
+    def test_failed_creation_timeout_and_cleanup_fail_closed(self):
+        for options in ({"create_code": 1}, {"start_error": subprocess.TimeoutExpired("docker", 10)},
+                        {"remove_code": 1}, {"absent": False}):
+            report, calls = self.guest(**options)
+            self.assertFalse(report["ready"])
+            self.assertIn("rm", next(arguments for arguments, _ in calls if "rm" in arguments))
+        report, _ = self.guest(remove_code=1)
+        self.assertEqual(report["code"], "WORKER_CLEANUP_UNVERIFIED")
 
 
 class ResultValidationTests(unittest.TestCase):

@@ -126,6 +126,7 @@ class ContainerBoundary(IsolationBoundary):
 
     def __init__(self):
         self.reason = "DOCKER_NOT_INSTALLED"
+        self.diagnostics = []
         self.available = False
         self.execution_target = None
         self.compiler = None
@@ -139,6 +140,7 @@ class ContainerBoundary(IsolationBoundary):
         (Path(self._config.name) / "config.json").write_text(
             json.dumps({"cliPluginsExtraDirs": client_plugin_directories()}), encoding="utf-8")
         self.build_guarantees = self.run_guarantees = frozenset()
+        self._record_probe("docker_client", bool(self.docker))
         if self.docker:
             self._probe()
 
@@ -156,10 +158,65 @@ class ContainerBoundary(IsolationBoundary):
         target = {**self.execution_target, "capabilities": sorted(self.run_capabilities)} if self.execution_target else None
         return {"available": self.available, "reason": self.reason, "execution_target": target}
 
+    def _record_probe(self, stage, passed, *, code=None, checks=None):
+        record = {"stage": stage, "outcome": "passed" if passed else "failed"}
+        if code:
+            record["code"] = code
+        if checks is not None:
+            record["checks"] = checks
+        self.diagnostics.append(record)
+
+    def diagnose(self):
+        """Local checks only: never report client output, paths, or credentials."""
+        report = {**self.describe(), "probe_version": 2, "diagnostics": list(self.diagnostics)}
+        if (not self.available and self.image and self.endpoint
+                and any(item["stage"] == "worker_probe" and item["outcome"] == "failed" for item in self.diagnostics)
+                and any(item["stage"] == "worker_cleanup" and item["outcome"] == "passed" for item in self.diagnostics)):
+            report["guest"] = self._diagnose_guest()
+        return report
+
+    def _diagnose_guest(self):
+        from .worker_diagnostics import DIAGNOSTIC_SOURCE, DIAGNOSTIC_CHECKS, DIAGNOSTIC_CODES
+        name = "janus-diagnose-" + uuid.uuid4().hex
+        limits = ResourceLimits()
+        failure = {"ready": False, "code": "WORKER_DIAGNOSTIC_UNAVAILABLE", "checks": {}}
+        report = failure
+        try:
+            arguments = container_options(name, self.image, limits)
+            arguments[-3:] = ["-I", "-B", "-c", DIAGNOSTIC_SOURCE]
+            created = sync_command([*self.command, *arguments], timeout=CREATE_ALLOWANCE_SECONDS, completion_barrier=True)
+            if created.returncode == 0:
+                probe = sync_command([*self.command, "start", "--attach", "--interactive", name],
+                                     input_data=json.dumps(asdict(limits)).encode(), timeout=10)
+                candidate = json.loads(probe.stdout)
+                if (probe.returncode == 0 and isinstance(candidate, dict)
+                        and type(candidate.get("ready")) is bool
+                        and (candidate.get("code") is None or candidate.get("code") in DIAGNOSTIC_CODES)
+                        and isinstance(candidate.get("checks"), dict)
+                        and candidate["ready"] == (candidate.get("code") is None)
+                        and set(candidate["checks"]) == DIAGNOSTIC_CHECKS
+                        and all(type(value) is bool for value in candidate["checks"].values())):
+                    report = {key: candidate[key] for key in ("ready", "code", "checks")}
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            pass
+        finally:
+            try:
+                removed = sync_command([*self.command, "rm", "--force", name])
+                if removed.returncode and b"No such container" not in removed.stderr:
+                    report = {"ready": False, "code": "WORKER_CLEANUP_UNVERIFIED", "checks": {}}
+                else:
+                    absent = sync_command([*self.command, "inspect", "--type", "container", name])
+                    if absent.returncode == 0 or not any(message in absent.stderr for message in (b"No such object", b"No such container")):
+                        report = {"ready": False, "code": "WORKER_CLEANUP_UNVERIFIED", "checks": {}}
+            except (OSError, subprocess.SubprocessError):
+                report = {"ready": False, "code": "WORKER_CLEANUP_UNVERIFIED", "checks": {}}
+        return report
+
     def operation_timeout(self, limits, phase):
         return super().operation_timeout(limits, phase) + CREATE_ALLOWANCE_SECONDS
 
     def _probe(self):
+        stage = "docker_context"
         try:
             # Context metadata is read only by the trusted client. All subsequent
             # commands use an explicit local endpoint and an empty client config.
@@ -169,78 +226,114 @@ class ContainerBoundary(IsolationBoundary):
             else:
                 context = sync_command([self.docker, "context", "inspect"])
                 if context.returncode:
+                    self._record_probe(stage, False)
                     self.reason = "DOCKER_NOT_RUNNING"
                     return
                 endpoint = json.loads(context.stdout)[0]["Endpoints"]["docker"]["Host"]
+            self._record_probe(stage, True)
+            stage = "docker_endpoint"
             if not isinstance(endpoint, str) or not endpoint.startswith(("unix:///", "npipe:////./pipe/")):
+                self._record_probe(stage, False)
                 self.reason = "DOCKER_LOCAL_ENGINE_REQUIRED"
                 return
+            self._record_probe(stage, True)
             self.endpoint = endpoint
+            stage = "docker_info"
             info = sync_command([*self.command, "info", "--format", "{{json .}}"])
             if info.returncode:
+                self._record_probe(stage, False)
                 self.reason = "DOCKER_NOT_RUNNING"
                 return
             engine = json.loads(info.stdout)
             if not isinstance(engine, dict):
                 raise ValueError("Invalid engine metadata")
             if engine.get("OSType") != "linux":
+                self._record_probe(stage, False, code="LINUX_ENGINE_REQUIRED")
                 self.reason = "DOCKER_LINUX_ENGINE_REQUIRED"
                 return
-            if (str(engine.get("CgroupVersion")) != "2"
-                    or not all(engine.get(key) is True for key in ("MemoryLimit", "SwapLimit", "PidsLimit"))
-                    # New Docker API versions omit these legacy CPU summary
-                    # fields. Actual CPU enforcement remains mandatory in the
-                    # guest probe's cpu.max/quota/period/burst checks.
-                    or not all(engine.get(key, True) is True for key in ("CpuCfsPeriod", "CpuCfsQuota"))
-                    or not any("seccomp" in item for item in engine.get("SecurityOptions", []))):
+            self._record_probe(stage, True)
+            stage = "engine_limits"
+            # Missing legacy CPU summaries are verified by the actual guest.
+            security = engine.get("SecurityOptions", [])
+            checks = {"cgroup_v2": str(engine.get("CgroupVersion")) == "2",
+                      **{key: engine.get(key) is True for key in ("MemoryLimit", "SwapLimit", "PidsLimit")},
+                      **{key: engine.get(key, True) is True for key in ("CpuCfsPeriod", "CpuCfsQuota")},
+                      "seccomp": isinstance(security, list) and any(isinstance(item, str) and "seccomp" in item for item in security)}
+            self._record_probe(stage, all(checks.values()), checks=checks)
+            if not all(checks.values()):
                 self.reason = "WORKER_ENFORCEMENT_UNAVAILABLE"
                 return
+            stage = "worker_architecture"
             architecture = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "x86_64", "amd64": "x86_64"}.get(engine.get("Architecture"))
             if architecture is None:
+                self._record_probe(stage, False)
                 self.reason = "WORKER_ARCHITECTURE_UNSUPPORTED"
                 return
+            self._record_probe(stage, True)
+            stage = "worker_image"
             image, digest = worker_identity()
             found = sync_command([*self.command, "image", "inspect", image])
             if found.returncode:
+                self._record_probe(stage, False, code="IMAGE_MISSING")
                 self.reason = "WORKER_IMAGE_MISSING"
                 return
             metadata = json.loads(found.stdout)[0]
             if not isinstance(metadata, dict):
                 raise ValueError("Invalid worker metadata")
             if metadata.get("Config", {}).get("Labels", {}).get("org.janus.worker.digest") != digest:
+                self._record_probe(stage, False, code="IMAGE_DIGEST_MISMATCH")
                 self.reason = "WORKER_IMAGE_MISSING"
                 return
             image_id = metadata.get("Id")
             if not isinstance(image_id, str) or len(image_id) != 71 or not image_id.startswith("sha256:"):
+                self._record_probe(stage, False, code="IMAGE_ID_INVALID")
                 self.reason = "WORKER_IMAGE_MISSING"
                 return
             self.image = image_id
+            self._record_probe(stage, True)
             name = "janus-probe-" + uuid.uuid4().hex
             limits = ResourceLimits()
             try:
+                stage = "worker_create"
                 created = sync_command([*self.command, *container_options(name, self.image, limits)],
                                        timeout=CREATE_ALLOWANCE_SECONDS, completion_barrier=True)
                 if created.returncode:
+                    self._record_probe(stage, False)
                     self.reason = "WORKER_ENFORCEMENT_UNAVAILABLE"
                     return
+                self._record_probe(stage, True)
+                stage = "worker_probe"
                 probe = sync_command([*self.command, "start", "--attach", "--interactive", name],
                                      input_data=json.dumps({"phase": "probe", "limits": asdict(limits)}).encode(), timeout=5)
                 result = json.loads(probe.stdout)
-                if (probe.returncode or not isinstance(result, dict) or result.get("ready") is not True
-                        or frozenset(result.get("guarantees", [])) != REQUIRED_GUARANTEES
-                        or result.get("architecture") != architecture):
+                if not isinstance(result, dict):
+                    raise ValueError("Invalid worker response")
+                checks = {"exit_success": probe.returncode == 0, "ready": result.get("ready") is True,
+                          "guarantees": frozenset(result.get("guarantees", [])) == REQUIRED_GUARANTEES,
+                          "architecture": result.get("architecture") == architecture}
+                self._record_probe(stage, all(checks.values()), checks=checks)
+                if not all(checks.values()):
                     self.reason = "WORKER_ENFORCEMENT_UNAVAILABLE"
                     return
             finally:
-                removed = sync_command([*self.command, "rm", "--force", name])
+                try:
+                    removed = sync_command([*self.command, "rm", "--force", name])
+                except (OSError, subprocess.SubprocessError):
+                    stage = "worker_cleanup"
+                    raise
                 if removed.returncode and b"No such container" not in removed.stderr:
+                    stage = "worker_cleanup"
+                    self._record_probe("worker_cleanup", False)
                     raise BoundaryUnavailable("Worker cleanup unavailable")
+                self._record_probe("worker_cleanup", True)
             self.execution_target = {"platform": "Linux", "architecture": architecture,
                                      "profile": "portable-c", "capabilities": sorted(WORKER_CAPABILITIES), "dependencies": []}
             self.compiler = CCompiler("worker-gcc", self.docker, "Linux")
             self.build_guarantees = self.run_guarantees = REQUIRED_GUARANTEES
             self.available, self.reason = True, None
-        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError, AttributeError, BoundaryUnavailable):
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError, AttributeError, BoundaryUnavailable) as error:
+            code = "DOCKER_COMMAND_TIMEOUT" if isinstance(error, subprocess.TimeoutExpired) else "LOCAL_CHECK_FAILED"
+            self._record_probe(stage, False, code=code)
             self.reason = "WORKER_ENFORCEMENT_UNAVAILABLE"
 
     async def _call(self, arguments, *, input_data=b"", timeout=10, limit=65536):
