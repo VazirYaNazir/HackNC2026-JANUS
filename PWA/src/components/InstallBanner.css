@@ -1,0 +1,41 @@
+.install {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 14px 52px 14px 16px; /* right padding leaves room for the close button */
+  border-radius: var(--radius-widget);
+  background: var(--surface);
+  box-shadow: var(--neu-raised);
+}
+.install__body { display: flex; flex-direction: column; gap: 4px; }
+.install__title { margin: 0; font-size: 16px; font-weight: 600; color: var(--amber); }
+.install__text { margin: 0; line-height: 1.5; color: var(--text); }
+.install__text strong { font-weight: 600; }
+.install__share { display: inline-block; vertical-align: -3px; color: var(--cyan); }
+.install__note { margin: 4px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
+.install__action { align-self: flex-start; }
+.install__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.install__close:active { box-shadow: var(--neu-inset-sm); }
+.install__close:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+
+/* Empty state: the banner is the first thing a new user should act on. */
+.install--prominent { padding: 20px 18px; margin-top: 24px; box-shadow: var(--neu-raised); gap: 16px; }
+.install--prominent .install__title { font-size: 20px; }
+.install--prominent .install__action { align-self: stretch; }

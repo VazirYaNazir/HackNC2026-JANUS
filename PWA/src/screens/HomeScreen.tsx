@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "@janus/design";
 import type { SavedPanel } from "@janus/schema";
 import Dialog from "../components/Dialog";
+import InstallBanner from "../components/InstallBanner";
 import { checkHost } from "../lib/connection";
 import { listPanels, removePanel, renamePanel } from "../lib/panels";
 import "./HomeScreen.css";
@@ -61,46 +62,52 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
       <h1 className="home__title">Janus</h1>
 
       {panels.length === 0 ? (
-        <p className="home__empty">Open Janus on your PC and scan its QR code to add your first panel.</p>
+        <>
+          <InstallBanner prominent />
+          <p className="home__empty">Open Janus on your PC and scan its QR code to add your first panel.</p>
+        </>
       ) : (
-        <ul className="home__list">
-          {panels.map((panel) => {
-            const state = status[panel.id] ?? "checking";
-            return (
-              <li key={panel.id} className="card">
-                <button
-                  type="button"
-                  className="card__main"
-                  onClick={() => {
-                    // A long press already opened the menu; swallow the click that follows it.
-                    if (longPressed.current) longPressed.current = false;
-                    else onOpen(panel);
-                  }}
-                  onPointerDown={() => startPress(panel)}
-                  onPointerUp={endPress}
-                  onPointerLeave={endPress}
-                  onPointerCancel={endPress}
-                  onContextMenu={(e) => e.preventDefault()}
-                >
-                  <span className={`card__dot card__dot--${state}`} role="img" aria-label={state} />
-                  <span className="card__text">
-                    <span className="card__name">{panel.name}</span>
-                    <span className="card__pc">{panel.pcName}</span>
-                  </span>
-                  <Icon name="chevron" size={20} className="card__chevron" />
-                </button>
-                <button
-                  type="button"
-                  className="card__more"
-                  aria-label={`Options for ${panel.name}`}
-                  onClick={() => setSheet({ kind: "menu", panel })}
-                >
-                  <Icon name="more" size={20} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <InstallBanner />
+          <ul className="home__list">
+            {panels.map((panel) => {
+              const state = status[panel.id] ?? "checking";
+              return (
+                <li key={panel.id} className="card">
+                  <button
+                    type="button"
+                    className="card__main"
+                    onClick={() => {
+                      // A long press already opened the menu; swallow the click that follows it.
+                      if (longPressed.current) longPressed.current = false;
+                      else onOpen(panel);
+                    }}
+                    onPointerDown={() => startPress(panel)}
+                    onPointerUp={endPress}
+                    onPointerLeave={endPress}
+                    onPointerCancel={endPress}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <span className={`card__dot card__dot--${state}`} role="img" aria-label={state} />
+                    <span className="card__text">
+                      <span className="card__name">{panel.name}</span>
+                      <span className="card__pc">{panel.pcName}</span>
+                    </span>
+                    <Icon name="chevron" size={20} className="card__chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    className="card__more"
+                    aria-label={`Options for ${panel.name}`}
+                    onClick={() => setSheet({ kind: "menu", panel })}
+                  >
+                    <Icon name="more" size={20} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       <div className="home__bar">

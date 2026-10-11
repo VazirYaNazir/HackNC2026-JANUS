@@ -1,5 +1,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 
+/* black-translucent status bar: content draws under it, so keep clear of the notch and home indicator. */
+#root {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
 html, body, #root {
   margin: 0;
   min-height: 100%;
