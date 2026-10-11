@@ -4,4 +4,21 @@
   margin: 0 auto;
   background: var(--surface);
 }
-.panel__title { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--text); }
+.panel__header { display: flex; align-items: center; gap: 6px; margin: 0 0 12px -10px; }
+.panel__title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 600; color: var(--text); }
+.panel__back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.panel__back:active { box-shadow: var(--neu-inset-sm); }
+.panel__back:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }

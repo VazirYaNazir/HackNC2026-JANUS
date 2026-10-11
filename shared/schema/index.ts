@@ -81,6 +81,17 @@ export type ServerMessage =
 
 /* ---------- Saved on the phone (localStorage) ---------- */
 
+/** A paired PC panel shown on the phone's home screen. */
+export interface SavedPanel {
+  id: string;
+  name: string;          // user-editable, "Desk Control"
+  pcName: string;        // "my-pc"
+  host: string;
+  token: string;
+  addedAt: number;       // epoch ms
+  lastOpenedAt?: number; // epoch ms
+}
+
 export interface SavedConnection {
   host: string;
   token: string;

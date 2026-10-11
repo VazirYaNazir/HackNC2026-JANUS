@@ -1,14 +1,20 @@
 import type { ComponentType } from "react";
 import {
-  Bell, Camera, CircleHelp, Cpu, Folder, Lock, MemoryStick, Mic, Monitor, Moon, Music,
-  Pause, Play, Power, RefreshCw, Save, Send, SkipBack, SkipForward, Sparkles, Sun, Terminal,
-  Thermometer, Volume2, VolumeX, Wifi, Zap,
+  Bell, Camera, ChevronLeft, ChevronRight, CircleHelp, Cpu, Folder, Lock, MemoryStick, Mic, Monitor, Moon, Music,
+  Ellipsis, Pause, Play, Plus, Power, RefreshCw, Save, ScanLine, Send, SkipBack, SkipForward, Sparkles, Sun, Terminal,
+  Thermometer, Volume2, VolumeX, Wifi, X, Zap,
   type LucideProps,
 } from "lucide-react";
 
 /** Curated icons for PC control. Widgets reference these by name (`widget.icon`). */
 export const ICONS = {
   save: Save,
+  back: ChevronLeft,
+  chevron: ChevronRight,
+  more: Ellipsis,
+  scan: ScanLine,
+  close: X,
+  plus: Plus,
   lock: Lock,
   play: Play,
   pause: Pause,

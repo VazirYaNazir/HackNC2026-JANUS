@@ -1,0 +1,26 @@
+.dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  backdrop-filter: blur(2px);
+}
+.dialog__sheet {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+  border-radius: var(--radius-widget) var(--radius-widget) 0 0;
+  background: var(--surface);
+  box-shadow: var(--neu-raised);
+}
+.dialog__title { margin: 0; font-size: 18px; font-weight: 600; }
+.dialog__text { margin: 0; color: var(--text-muted); }
+.dialog__form { display: flex; flex-direction: column; gap: 14px; }
+.dialog__row { display: flex; gap: 12px; }
+.dialog__row > .btn { flex: 1; }

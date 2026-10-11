@@ -9,7 +9,7 @@ html, body, #root {
   color-scheme: dark;
 }
 
-.app-nav { display: flex; justify-content: center; gap: 8px; padding: 0 18px 24px; }
+.app-nav { display: flex; justify-content: center; gap: 8px; padding: 8px 18px 0; }
 .app-nav a {
   display: inline-flex;
   align-items: center;

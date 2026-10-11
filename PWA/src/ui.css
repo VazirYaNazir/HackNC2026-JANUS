@@ -1,0 +1,43 @@
+/* Shared phone UI: neumorphic buttons and fields used outside the widget grid. Tokens only. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  box-shadow: var(--neu-raised-sm);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: box-shadow 0.12s ease;
+}
+.btn:active:not(:disabled) { box-shadow: var(--neu-inset-sm); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible, .field input:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.btn--amber { color: var(--amber); }
+.btn--coral { color: var(--coral); }
+.btn--icon { width: 48px; padding: 0; border-radius: 50%; }
+
+.field { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.field > span { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.field input {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  box-shadow: var(--neu-inset-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px stops iOS from zooming the page on focus */
+}
+.field input::placeholder { color: var(--text-muted); opacity: 0.8; }
+
+.error { margin: 0; font-size: 14px; color: var(--coral); }
