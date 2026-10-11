@@ -167,6 +167,38 @@ class NativeLogicTests(unittest.TestCase):
             return subprocess.run([str(binary), *args], input=input_text, check=True, text=True, capture_output=True).stdout
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Tests platform-independent C logic using Linux fallback branches")
+    def test_joystick_screen_directions_and_fractional_movement(self):
+        path = ROOT / "native" / "mouse.c"
+        code = f'#define main tool_main\n#include "{path}"\n#undef main\n' + '''
+#include <assert.h>
+int main(void) {
+    const double directions[][2]={{0,1},{0,-1},{1,0},{-1,0},{0.5,0.5},{-0.5,-0.5},{0,0}};
+    const int screen[][2]={{0,-8},{0,8},{8,0},{-8,0},{4,-4},{-4,4},{0,0}};
+    for(size_t i=0;i<sizeof(directions)/sizeof(directions[0]);i++) {
+        double rx=0,ry=0;int dx,dy;
+        joystick_step(directions[i][0],directions[i][1],8,&rx,&ry,&dx,&dy);
+        assert(dx==screen[i][0] && dy==screen[i][1]);
+        assert(rx==0 && ry==0);
+    }
+    for(int direction=-1;direction<=1;direction+=2) {
+        double rx=0,ry=0;int dx,dy,total_x=0,total_y=0;
+        for(int tick=0;tick<4;tick++) {
+            joystick_step(direction,direction,0.25,&rx,&ry,&dx,&dy);
+            total_x+=dx;total_y+=dy;
+            assert(dx==(tick==3?direction:0));
+            assert(dy==(tick==3?-direction:0));
+        }
+        assert(total_x==direction && total_y==-direction);
+        assert(rx==0 && ry==0);
+        joystick_step(0,0,8,&rx,&ry,&dx,&dy);
+        assert(dx==0 && dy==0);
+    }
+    return 0;
+}
+'''
+        self.compile_run(code)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Tests platform-independent C logic using Linux fallback branches")
     def test_resource_filter_and_ancestors(self):
         path = ROOT / "native" / "processes.c"
         code = f'#define main tool_main\n#include "{path}"\n#undef main\n' + '''

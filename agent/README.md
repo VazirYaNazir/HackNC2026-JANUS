@@ -105,7 +105,7 @@ handlers and LLM calls are outside this agent-only change.
 | `processes.c` | `--once`, `--interval 1000`, `--min-cpu 1`, `--min-ram-mb 100`, `--pid PID`, `--all` | Flat process tree with PID/parent/name, CPU percentage, RAM bytes and ancestor context flags. |
 | `screen.c` | `--once`, `--interval 1000`, `--max-width 960` | Primary display JPEG frames, base64 payload, MIME type, scaled dimensions. |
 
-**Joystick semantics:** `x`/`y` are normalized axes in `[-1,1]`; right/down are
+**Joystick semantics:** `x`/`y` are normalized axes in `[-1,1]`; right/up are
 positive. Magnitudes below 0.08 are ignored. They control velocity, not absolute
 coordinates. Send fresh values at 20–60 Hz, including zero when centered. At
 250 ms without a fresh move/button event, motion stops and held buttons release.

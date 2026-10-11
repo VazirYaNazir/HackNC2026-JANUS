@@ -123,6 +123,13 @@ static int input_line(char *out,size_t capacity) {
 static volatile sig_atomic_t stopped;
 static void on_stop(int n) {(void)n;stopped=1;}
 static int held[3];
+/* Joysticks use positive Y for up; both native APIs use screen Y (down).
+ * Keep fractional pixels between ticks so low speeds remain responsive. */
+static void joystick_step(double x,double y,double pixels,double *rx,double *ry,int *dx,int *dy) {
+    *rx+=x*pixels; *ry-=y*pixels;
+    *dx=(int)*rx; *dy=(int)*ry;
+    *rx-=*dx; *ry-=*dy;
+}
 static int mouse_move(double dx,double dy) {
 #ifdef _WIN32
     INPUT in={0}; in.type=INPUT_MOUSE; in.mi.dx=(LONG)dx; in.mi.dy=(LONG)dy; in.mi.dwFlags=MOUSEEVENTF_MOVE;
@@ -221,8 +228,7 @@ int main(int argc,char **argv) {
             for(int i=0;i<3;i++) if(held[i]) mouse_button(i,0);
         }
         double dt=fmin((double)(now-last)/1000,0.05); last=now;
-        rx+=x*speed*dt; ry+=y*speed*dt;
-        int dx=(int)rx,dy=(int)ry; rx-=dx; ry-=dy;
+        int dx,dy; joystick_step(x,y,speed*dt,&rx,&ry,&dx,&dy);
         if((dx || dy) && !mouse_move(dx,dy)) {x=y=0;failure("mouse","Mouse injection failed",0);}
         if(now>=report) {report_mouse(0,x,y);report=now+100;}
         pause_ms(8);
