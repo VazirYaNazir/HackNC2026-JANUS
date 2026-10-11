@@ -2,7 +2,7 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { InputWidget, Widget, WidgetType } from '@janus/schema';
-import { PanelGrid, WIDGET_TYPES, WidgetView, createWidget, getWidgetComponent, getWidgetDef, getWidgetMinimumSize, snapWidgetSize } from '@janus/widgets';
+import { PanelGrid, WIDGET_TYPES, WidgetView, createWidget, getWidgetAccent, getWidgetComponent, getWidgetDef, getWidgetMinimumSize, snapWidgetSize } from '@janus/widgets';
 import { asNumber, formatNumber } from '../../shared/widgets/src/format';
 import { polar, sweepPath } from '../../shared/widgets/src/arc';
 import { levelOf } from '../../shared/widgets/src/level';
@@ -19,11 +19,19 @@ describe('every widget in the registry', () => {
     const w = widget(type), onSelect = vi.fn(), onTrigger = vi.fn();
     const view = render(<WidgetView widget={w} mode="edit" onSelect={onSelect} onTrigger={onTrigger} />);
     expect(view.container.querySelector('.jw')).not.toBeNull();
+    expect(w.color).toBe(type === 'toggle' ? 'green' : 'action' in w ? 'amber' : 'cyan');
+    view.rerender(<WidgetView widget={{ ...w, color: undefined }} mode="edit" />);
+    expect((view.container.querySelector('.jw') as HTMLElement).style.getPropertyValue('--jw-accent')).toBe(`var(--${getWidgetAccent(w)})`);
+    view.rerender(<WidgetView widget={w} mode="edit" onSelect={onSelect} onTrigger={onTrigger} />);
     const select = screen.queryByRole('button', { name: `Select ${w.label}` });
     if (select) { fireEvent.click(select); expect(onSelect).toHaveBeenCalledWith(w.id); }
     expect(onTrigger).not.toHaveBeenCalled();
     view.rerender(<WidgetView widget={w} mode="live" value={42} selected />);
     expect(view.container.querySelector('.jw--live.jw--selected')).not.toBeNull();
+    for (const color of ['amber', 'cyan', 'green', 'graphite', 'coral'] as const) {
+      view.rerender(<WidgetView widget={{ ...w, color }} mode="live" value={42} selected />);
+      expect((view.container.querySelector('.jw') as HTMLElement).style.getPropertyValue('--jw-accent')).toBe(`var(--${color})`);
+    }
     expect(screen.queryByRole('button', { name: `Select ${w.label}` })).toBeNull();
     expect(getWidgetMinimumSize(type).w).toBeGreaterThan(0);
     expect(snapWidgetSize(type, { x: 0, y: 0, w: 1, h: 1 }).w).toBeGreaterThan(1);

@@ -14,7 +14,7 @@ describe('supplied Janus branding assets', () => {
     ['PWA/public/icon-512.png', 'janus-logo-kit/png/janus-512.png'],
     ['PWA/public/icon-maskable-512.png', 'janus-logo-kit/png/janus-maskable-512.png'],
     ['PWA/public/apple-touch-icon.png', 'janus-logo-kit/png/apple-touch-icon.png'],
-  ])('%s uses the supplied logo without asset drift', (actual, expected) => { expect(read(actual)).toEqual(read(expected)); });
+  ])('%s uses the supplied logo without asset drift', (actual, expected) => { expect(read(actual).equals(read(expected))).toBe(true); });
   it.each([192, 512])('ships a valid %s-pixel install icon', pixels => {
     const file = read(`PWA/public/icon-${pixels}.png`); expect(file.subarray(1, 4).toString()).toBe('PNG');
     expect(file.readUInt32BE(16)).toBe(pixels); expect(file.readUInt32BE(20)).toBe(pixels);

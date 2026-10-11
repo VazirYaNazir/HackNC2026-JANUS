@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
+import { WidgetView } from '@janus/widgets';
+import type { Widget } from '@janus/schema';
 import { Inspector } from '../src/components/Inspector';
 import { ProjectDialog } from '../src/components/ProjectDialog';
 import { TopBar } from '../src/components/TopBar';
@@ -10,6 +13,42 @@ import { createEmptyLayout } from '../src/editor/layout';
 import './dom';
 
 describe('complete editor state', () => {
+  it.each([['button', 'amber'], ['toggle', 'green'], ['bar', 'cyan']] as const)('matches the rendered default accent for colorless %s layouts', (type, color) => {
+    const widget: Widget = type === 'bar'
+      ? { id: 'w', type, label: 'Saved widget', source: '', x: 0, y: 0, w: 170, h: 70 }
+      : { id: 'w', type, label: 'Saved widget', action: '', x: 0, y: 0, w: 170, h: 70 };
+    function Harness() {
+      const [current, setCurrent] = useState(widget);
+      return <><WidgetView widget={current} mode="edit" /><Inspector widget={current} mode="edit" error={null} onGeometryChange={() => true} onDelete={() => true} onWidgetChange={(_id, updater) => { setCurrent(updater); return true; }} /></>;
+    }
+    const view = render(<Harness />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Style' }));
+    expect((screen.getByLabelText('Accent role') as HTMLSelectElement).value).toBe(color);
+    expect((view.container.querySelector('.jw') as HTMLElement).style.getPropertyValue('--jw-accent')).toBe(`var(--${color})`);
+    fireEvent.change(screen.getByLabelText('Accent role'), { target: { value: 'coral' } });
+    expect((view.container.querySelector('.jw') as HTMLElement).style.getPropertyValue('--jw-accent')).toBe('var(--coral)');
+  });
+
+  it('applies every accent role, undoes/redoes style edits, and disables changes in preview', () => {
+    function Harness() {
+      const editor = useEditorState();
+      return <><button onClick={() => editor.addWidget('button', { x: 0, y: 0, w: 170, h: 70 })}>Add</button>
+        <button onClick={editor.undo}>Undo</button><button onClick={editor.redo}>Redo</button><button onClick={() => editor.setMode('preview')}>Preview</button>
+        {editor.selectedWidget && <WidgetView widget={editor.selectedWidget} mode="edit" />}
+        <Inspector widget={editor.selectedWidget} mode={editor.mode} error={editor.error} onGeometryChange={editor.changeGeometry} onWidgetChange={editor.changeWidget} onDelete={editor.removeWidget} /></>;
+    }
+    const view = render(<Harness />); fireEvent.click(screen.getByText('Add')); fireEvent.click(screen.getByRole('tab', { name: 'Style' }));
+    expect((screen.getByLabelText('Accent role') as HTMLSelectElement).value).toBe('amber');
+    for (const color of ['cyan', 'green', 'graphite', 'coral', 'amber']) {
+      fireEvent.change(screen.getByLabelText('Accent role'), { target: { value: color } });
+      expect((screen.getByLabelText('Accent role') as HTMLSelectElement).value).toBe(color);
+      expect((view.container.querySelector('.jw') as HTMLElement).style.getPropertyValue('--jw-accent')).toBe(`var(--${color})`);
+    }
+    fireEvent.click(screen.getByText('Undo')); expect((screen.getByLabelText('Accent role') as HTMLSelectElement).value).toBe('coral');
+    fireEvent.click(screen.getByText('Redo')); expect((screen.getByLabelText('Accent role') as HTMLSelectElement).value).toBe('amber');
+    fireEvent.click(screen.getByText('Preview')); expect(screen.getByLabelText('Accent role').hasAttribute('disabled')).toBe(true);
+  });
+
   it('inserts, selects, updates, deletes, undoes and redoes with validation', () => {
     const hook = renderHook(useEditorState);
     act(() => hook.result.current.addWidget('slider', { x: 0, y: 0, w: 170, h: 70 }));

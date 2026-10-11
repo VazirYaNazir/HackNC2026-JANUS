@@ -4,6 +4,12 @@ The desktop Studio edits the same panel used by the PWA. Its widget palette,
 logical canvas, inspector, preview, and undo/redo connect to the FastAPI backend
 through the shared `@janus/client` workspace.
 
+The inspector's **Accent role** colors the widget's controls, readouts, and charts
+in Studio and the paired PWA. Controls default to amber, toggles to green, and
+displays to cyan; saved layouts without a color use the same defaults. Color
+edits support undo/redo and persist when the panel is saved. Warning and critical
+readings use amber and coral.
+
 Install dependencies once with `npm ci` from the repository root. In a Linux
 cloud workspace where only the browser renderer is needed, use
 `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`; that does not install the Electron

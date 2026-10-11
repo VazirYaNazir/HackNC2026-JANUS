@@ -11,6 +11,34 @@ test('Studio starter, paired phone, native controls and all laptop streams work 
   await expect(page.getByRole('img', { name: 'JANUS', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Project', exact: true }).click();
   await page.getByRole('button', { name: 'Laptop controls starter' }).click();
+  await page.locator('.jw--slider').click(); await page.getByRole('tab', { name: 'Style' }).click();
+  await expect(page.getByLabel('Accent role')).toHaveValue('amber');
+  for (const [role, color] of [['cyan', 'rgb(91, 200, 232)'], ['green', 'rgb(74, 222, 128)'], ['graphite', 'rgb(58, 63, 74)'], ['coral', 'rgb(240, 96, 90)'], ['amber', 'rgb(245, 165, 36)']]) {
+    await page.getByLabel('Accent role').selectOption(role);
+    await expect(page.locator('.jw--slider .jw__readout')).toHaveCSS('color', color);
+  }
+  await page.getByLabel('Accent role').selectOption('cyan');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByLabel('Accent role')).toHaveValue('amber');
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(page.getByLabel('Accent role')).toHaveValue('cyan');
+  await page.locator('.jw--bar').click();
+  await expect(page.getByLabel('Accent role')).toHaveValue('cyan');
+  await page.getByLabel('Accent role').selectOption('green');
+  await page.getByRole('tab', { name: 'Data' }).click();
+  await page.getByLabel('Warning threshold').fill('40'); await page.getByLabel('Warning threshold').press('Enter');
+  await page.getByLabel('Critical threshold').fill('80'); await page.getByLabel('Critical threshold').press('Enter');
+  await expect(page.locator('.jw--bar .jw__fill')).toHaveCSS('background-color', 'rgb(245, 165, 36)');
+  await page.getByLabel('Critical threshold').fill('41'); await page.getByLabel('Critical threshold').press('Enter');
+  await expect(page.locator('.jw--bar .jw__fill')).toHaveCSS('background-color', 'rgb(240, 96, 90)');
+  await page.getByLabel('Warning threshold').fill(''); await page.getByLabel('Warning threshold').press('Enter');
+  await page.getByLabel('Critical threshold').fill(''); await page.getByLabel('Critical threshold').press('Enter');
+  await expect(page.locator('.jw--bar .jw__fill')).toHaveCSS('background-color', 'rgb(74, 222, 128)');
+  await page.locator('.jw--joystick').click(); await page.getByRole('tab', { name: 'Style' }).click();
+  await expect(page.getByLabel('Accent role')).toHaveValue('amber'); await page.getByLabel('Accent role').selectOption('green');
+  await expect.poll(() => page.locator('.jw__stickknob').evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe('rgb(74, 222, 128)');
+  await page.locator('.jw--button').first().click(); await page.getByLabel('Accent role').selectOption('coral');
+  await expect(page.getByRole('button', { name: 'Left click', exact: true })).toHaveCSS('color', 'rgb(240, 96, 90)');
   await page.getByLabel('Project name').fill('My laptop'); await page.getByLabel('Project name').press('Enter');
   await page.getByRole('button', { name: 'Save & Push' }).click();
   await expect(page.getByText('Panel saved and pushed to paired phones.')).toBeVisible();
@@ -28,6 +56,12 @@ test('Studio starter, paired phone, native controls and all laptop streams work 
   await phone.getByRole('button', { name: 'Pair', exact: true }).click(); await phone.getByLabel('Panel name').fill('Native laptop');
   await phone.getByRole('button', { name: 'Save', exact: true }).click(); await phone.getByText('Native laptop', { exact: true }).click();
   await expect(phone.getByRole('table', { name: 'Relevant processes' })).toContainText('Busy app');
+  await expect(phone.locator('.jw--slider .jw__readout')).toHaveCSS('color', 'rgb(91, 200, 232)');
+  await phone.reload(); await phone.getByText('Native laptop', { exact: true }).click();
+  await expect(phone.locator('.jw--slider .jw__readout')).toHaveCSS('color', 'rgb(91, 200, 232)');
+  await expect(phone.locator('.jw--bar .jw__fill')).toHaveCSS('background-color', 'rgb(74, 222, 128)');
+  await expect(phone.getByRole('button', { name: 'Left click', exact: true })).toHaveCSS('color', 'rgb(240, 96, 90)');
+  await expect.poll(() => phone.locator('.jw__stickknob').evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe('rgb(74, 222, 128)');
   await expect(phone.locator('.jw--temperature')).toContainText('55'); await expect(phone.locator('.jw--bar')).toContainText('42');
   const before = await (await request.get('http://127.0.0.1:18980/test/metrics')).json();
   await phone.getByRole('slider', { name: 'Volume' }).press('End');

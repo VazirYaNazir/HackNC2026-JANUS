@@ -52,11 +52,10 @@
   box-sizing: border-box;
   border-radius: inherit;
 }
-.jw--selected { outline: 2px solid var(--amber); outline-offset: 3px; }
+.jw--selected { outline: 2px solid var(--jw-accent); outline-offset: 3px; }
 
 /* Interaction highlight: ring + glow in the widget's accent color while a widget is pressed, dragged or being typed into (live mode only). */
-.jw { --jw-accent: var(--amber); transition: box-shadow 0.12s ease; } /* inputs are amber; widget.color overrides */
-.jw--toggle, .jw--push { --jw-accent: var(--green); }
+.jw { transition: box-shadow 0.12s ease; } /* Frame resolves each widget’s accent role. */
 .jw--live:has(
   .jw__tap:active:not(:disabled),
   .jw__range[data-active],
@@ -75,10 +74,12 @@
 .jw__heading { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
 .jw__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jw__ico { flex: none; align-self: center; width: 16px; height: 16px; }
+.jw__heading > .jw__ico { color: var(--jw-accent); }
+.jw--log .jw__title, .jw--stream .jw__title, .jw--processes .jw__title { color: var(--jw-accent); }
 .jw__row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
 .jw__row > .jw__heading { flex: 1; }
-.jw__readout { flex: none; font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 22cqh, 14px); color: var(--cyan); }
-.jw__readout--amber { color: var(--amber); }
+.jw__readout { flex: none; font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 22cqh, 14px); color: var(--jw-accent); }
+.jw__readout--amber { color: var(--jw-accent); }
 .jw__readout--warn { color: var(--amber); }
 .jw__readout--critical { color: var(--coral); }
 .jw__hint { font-family: var(--font-mono); font-size: var(--jw-font-min); color: var(--text-muted); }
@@ -107,7 +108,7 @@
   transition: box-shadow 0.12s ease;
 }
 .jw__tap:active { box-shadow: var(--neu-inset); }
-.jw__tap:focus-visible, .jw__range:focus-visible, .jw__select:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__tap:focus-visible, .jw__range:focus-visible, .jw__select:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 
 /* Edit-mode select overlay */
 .jw__select {
@@ -120,14 +121,14 @@
 }
 
 /* ---------- Button ---------- */
-.jw--button .jw__tap { color: var(--amber); }
+.jw--button .jw__tap { color: var(--jw-accent); }
 .jw--button .jw__label { font-size: clamp(var(--jw-font-min), 24cqh, 16px); font-weight: 600; }
 .jw--button .jw__ico { width: clamp(16px, 34cqh, 22px); height: clamp(16px, 34cqh, 22px); }
 
 /* Push toggle: a button that stays pushed in (inset, green) while on. */
 .jw--push .jw__tap { color: var(--text-muted); }
 .jw--push-on { box-shadow: var(--neu-inset); }
-.jw--push-on .jw__tap { color: var(--green); }
+.jw--push-on .jw__tap { color: var(--jw-accent); }
 
 /* ---------- Toggle ---------- */
 .jw--toggle .jw__tap { justify-content: space-between; }
@@ -151,9 +152,9 @@
   box-shadow: var(--neu-raised-sm);
   transition: transform 0.18s ease, background 0.18s ease;
 }
-.jw__switch--on .jw__knob { transform: translateX(22px); background: var(--green); }
+.jw__switch--on .jw__knob { transform: translateX(22px); background: var(--jw-accent); }
 .jw__switch { transition: background 0.18s ease; }
-.jw__switch--on { background: color-mix(in srgb, var(--green) 28%, var(--surface)); }
+.jw__switch--on { background: color-mix(in srgb, var(--jw-accent) 28%, var(--surface)); }
 
 /* ---------- Slider ---------- */
 .jw--slider .jw__body {
@@ -179,13 +180,13 @@
 .jw__range::-webkit-slider-runnable-track {
   height: 10px;
   border-radius: 5px;
-  background: linear-gradient(to right, var(--amber) var(--pct), var(--surface) var(--pct));
+  background: linear-gradient(to right, var(--jw-accent) var(--pct), var(--surface) var(--pct));
   box-shadow: var(--neu-inset-sm);
 }
 .jw__range::-moz-range-track {
   height: 10px;
   border-radius: 5px;
-  background: linear-gradient(to right, var(--amber) var(--pct), var(--surface) var(--pct));
+  background: linear-gradient(to right, var(--jw-accent) var(--pct), var(--surface) var(--pct));
   box-shadow: var(--neu-inset-sm);
 }
 .jw__range::-webkit-slider-thumb {
@@ -223,7 +224,7 @@
   width: var(--pct);
   height: 100%;
   border-radius: 5px;
-  background: var(--cyan);
+  background: var(--jw-accent);
   transition: width 0.3s ease;
 }
 .jw__fill--warn { background: var(--amber); }
@@ -255,7 +256,7 @@
 .jw__arc--groove-light { stroke: var(--groove-light); transform: translate(1.5px, 1.5px); }
 .jw__arc--track { stroke: var(--surface); }
 .jw__arc--fill {
-  color: var(--cyan);
+  color: var(--jw-accent);
   stroke: currentColor;
   filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 40%, transparent));
   transition: stroke-dasharray 0.3s ease;
@@ -276,20 +277,20 @@
   background: var(--surface);
   box-shadow: var(--neu-raised);
 }
-.jw__big { font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 15cqh, 20px); font-weight: 600; color: var(--text); }
+.jw__big { font-family: var(--font-mono); font-size: clamp(var(--jw-font-min), 15cqh, 20px); font-weight: 600; color: var(--jw-accent); }
 .jw__big small, .jw__side small { font-size: var(--jw-font-min); color: var(--text-muted); margin-left: 1px; }
 .jw__side {
   display: none;
   font-family: var(--font-mono);
   font-size: clamp(var(--jw-font-min), 30cqh, 20px);
   font-weight: 600;
-  color: var(--cyan);
+  color: var(--jw-accent);
 }
 .jw__side--warn { color: var(--amber); }
 .jw__side--critical { color: var(--coral); }
 
 /* ---------- Shared value text ---------- */
-.jw__val { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 600; color: var(--cyan); }
+.jw__val { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-weight: 600; color: var(--jw-accent); }
 .jw__val small { margin-left: 2px; font-size: var(--jw-font-min); font-weight: 600; color: var(--text-muted); }
 .jw__val--warn { color: var(--amber); }
 .jw__val--critical { color: var(--coral); }
@@ -315,7 +316,7 @@
   border-radius: var(--radius-small);
   box-shadow: var(--neu-inset-sm);
 }
-.jw__plot { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--cyan); }
+.jw__plot { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--jw-accent); }
 .jw__plot--warn { color: var(--amber); }
 .jw__plot--critical { color: var(--coral); }
 .jw__plot path { vector-effect: non-scaling-stroke; }
@@ -365,8 +366,8 @@
   border-radius: 5px 5px 0 0;
   box-shadow: var(--neu-inset-sm);
 }
-.jw__mercury { width: 100%; height: var(--pct); background: var(--cyan); transition: height 0.3s ease; }
-.jw__bulb { flex: none; width: 16px; height: 16px; margin-top: -3px; border-radius: 50%; background: var(--cyan); box-shadow: var(--neu-raised-sm); }
+.jw__mercury { width: 100%; height: var(--pct); background: var(--jw-accent); transition: height 0.3s ease; }
+.jw__bulb { flex: none; width: 16px; height: 16px; margin-top: -3px; border-radius: 50%; background: var(--jw-accent); box-shadow: var(--neu-raised-sm); }
 .jw__mercury--warn, .jw__bulb--warn { background: var(--amber); }
 .jw__mercury--critical, .jw__bulb--critical { background: var(--coral); }
 
@@ -413,7 +414,7 @@
   scrollbar-width: thin;
   scrollbar-color: var(--graphite) transparent;
 }
-.jw__logbox:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__logbox:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 .jw__logline { overflow-wrap: anywhere; }
 .jw__logline:last-child { color: var(--text); }
 
@@ -437,7 +438,7 @@
   cursor: grab;
 }
 .jw__stick--active { cursor: grabbing; }
-.jw__stick:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 3px; }
+.jw__stick:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 3px; }
 .jw__stickknob {
   position: absolute;
   top: 50%;
@@ -463,8 +464,8 @@
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--amber) 50%, transparent);
+  background: var(--jw-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--jw-accent) 50%, transparent);
 }
 
 /* ---------- D-pad: four raised arrow buttons on a 3x3 grid ---------- */
@@ -493,7 +494,7 @@
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--neu-raised-sm);
-  color: var(--amber);
+  color: var(--jw-accent);
   cursor: pointer;
   touch-action: none;
   user-select: none;
@@ -504,7 +505,7 @@
 /* Visible buttons are ~33px; this extends the touch target to 44px+. */
 .jw__dbtn::after { content: ""; position: absolute; inset: -6px; }
 .jw__dbtn:active, .jw__dbtn--held { box-shadow: var(--neu-inset-sm); }
-.jw__dbtn:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__dbtn:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 .jw__arrow { width: 60%; height: 60%; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .jw__dbtn--right .jw__arrow { transform: rotate(90deg); }
 .jw__dbtn--down .jw__arrow { transform: rotate(180deg); }
@@ -513,8 +514,8 @@
 /* ---------- Knob: drag vertically, 270 degrees, amber arc ---------- */
 .jw--knob .jw__big { display: none; }
 .jw__arc--amber {
-  stroke: var(--amber);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--amber) 40%, transparent));
+  stroke: var(--jw-accent);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--jw-accent) 40%, transparent));
 }
 .jw__pointer { position: absolute; inset: 0; transform: rotate(var(--rot, 0deg)); transition: transform 0.12s ease; }
 .jw__pointer::before {
@@ -526,8 +527,8 @@
   height: 6px;
   margin-left: -3px;
   border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 50%, transparent);
+  background: var(--jw-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--jw-accent) 50%, transparent);
 }
 .jw__surface {
   position: absolute;
@@ -538,7 +539,7 @@
   user-select: none;
   -webkit-user-select: none;
 }
-.jw__surface:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__surface:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 .jw__surface[aria-disabled="true"] { cursor: pointer; }
 
 /* ---------- Command / agent prompt: inset field + raised amber send key ---------- */
@@ -559,9 +560,9 @@
 }
 /* The visible field can be 40px; this keeps the touch target at 44px. */
 .jw__field::after { content: ""; position: absolute; inset: -2px 0; }
-.jw__field:focus-within { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__field:focus-within { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 .jw__field .jw__ico { color: var(--text-muted); }
-.jw--agent .jw__field .jw__ico { color: var(--amber); }
+.jw--agent .jw__field .jw__ico { color: var(--jw-accent); }
 .jw__field input {
   flex: 1;
   min-width: 0;
@@ -589,7 +590,7 @@
   border-radius: var(--radius-small);
   background: var(--surface);
   box-shadow: var(--neu-raised-sm);
-  color: var(--amber);
+  color: var(--jw-accent);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: box-shadow 0.12s ease;
@@ -597,7 +598,7 @@
 .jw__key::after { content: ""; position: absolute; inset: -2px; }
 .jw__key:active:not(:disabled) { box-shadow: var(--neu-inset-sm); }
 .jw__key:disabled { opacity: 0.45; cursor: default; }
-.jw__key:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
+.jw__key:focus-visible { outline: 2px solid var(--jw-accent); outline-offset: 2px; }
 .jw__reply {
   flex: 1;
   min-height: 0;

@@ -1,7 +1,7 @@
 import { useState, type FocusEvent, type KeyboardEvent } from 'react'
 import { ICONS, Icon, type Rect } from '@janus/design'
 import type { Widget } from '@janus/schema'
-import { isDialWidget, isInputWidget } from '@janus/widgets'
+import { getWidgetAccent, isDialWidget, isInputWidget } from '@janus/widgets'
 import type { EditorMode } from '../editor/useEditorState'
 
 const tabs = ['General', 'Style', 'Data', 'Logic'] as const
@@ -62,7 +62,7 @@ export function Inspector({ widget, mode, error, onGeometryChange, onWidgetChang
         <button className="delete-widget" type="button" disabled={disabled} onClick={() => onDelete(widget.id)}><Icon name="trash" size={15} />Delete widget</button>
       </>}
       {active === 'Style' && <>
-        <label className="inspector-field"><span>Accent role</span><select value={widget.color ?? 'graphite'} disabled={disabled} onChange={(event) => onWidgetChange(widget.id, (current) => ({ ...current, color: event.target.value as Widget['color'] }))}>{colors.map((color) => <option key={color} value={color}>{color}</option>)}</select></label>
+        <label className="inspector-field"><span>Accent role</span><select value={getWidgetAccent(widget)} disabled={disabled} onChange={(event) => onWidgetChange(widget.id, (current) => ({ ...current, color: event.target.value as Widget['color'] }))}>{colors.map((color) => <option key={color} value={color}>{color}</option>)}</select></label>
         <label className="inspector-field"><span>Icon</span><select value={widget.icon ?? ''} disabled={disabled} onChange={event => onWidgetChange(widget.id, current => ({ ...current, icon: event.target.value || undefined }))}><option value="">None</option>{Object.keys(ICONS).map(icon => <option key={icon} value={icon}>{icon}</option>)}</select></label>
         {widget.type === 'toggle' && <label className="inspector-field"><span>Toggle style</span><select value={widget.variant ?? 'switch'} disabled={disabled} onChange={event => onWidgetChange(widget.id, current => isInputWidget(current) ? { ...current, variant: event.target.value as 'switch' | 'push' } : current)}><option value="switch">Switch</option><option value="push">Push button</option></select></label>}
       </>}

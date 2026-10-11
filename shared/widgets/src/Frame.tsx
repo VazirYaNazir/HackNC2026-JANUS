@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import type { WidgetProps } from "./types";
+import { getWidgetAccent } from './accent';
 import "./widgets.css";
 
 interface FrameProps {
@@ -40,7 +41,7 @@ export function Frame({ props, className = "", typeClass, selectable = false, ch
     <div
       ref={rootRef}
       className={classes.filter(Boolean).join(" ")}
-      style={widget.color ? ({ "--jw-accent": `var(--${widget.color})` } as CSSProperties) : undefined}
+      style={{ "--jw-accent": `var(--${getWidgetAccent(widget)})` } as CSSProperties}
     >
       <div className="jw__body">{children}</div>
       {selectable && mode === "edit" && (
