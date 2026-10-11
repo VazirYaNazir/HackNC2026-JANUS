@@ -1,75 +1,25 @@
-# React + TypeScript + Vite
+# @janus/pwa
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The phone panel app: React + Vite + TypeScript. Part of the npm workspace at the repo root.
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Develop
 
 ```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+npm install            # from the repo root, never in this folder
+cd PWA && npm run dev -- --host
 ```
+
+The dev server runs over https (self-signed) so the camera works on a phone. Accept the certificate warning once.
+
+Typecheck: `npx tsc -b`. Lint: `npm run lint`. Production build: `npm run build` (output in `dist/`).
+
+## Deploy to Vercel
+
+1. Import the repo and set **Root Directory** to `PWA`.
+2. Leave **Include source files outside of the Root Directory** enabled. The app imports `shared/*` (`@janus/design`, `@janus/schema`, `@janus/widgets`), which live outside `PWA/`.
+3. Everything else comes from `vercel.json`: install from the repo root (`npm ci`), build with `npm run build`, serve `dist/`, and rewrite unknown paths to `index.html`.
+4. Use Node 20.19 or newer (Project Settings, Node.js Version).
+
+There are no environment variables yet. When the real pairing arrives, the PC's host and token come from the QR code, not from build-time config.
+
+The app is installable (web manifest and icons in `public/`). There is no service worker, so it needs a connection to work.

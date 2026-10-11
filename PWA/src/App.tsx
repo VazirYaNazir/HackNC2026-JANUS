@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import type { SavedPanel } from "@janus/schema";
-import Gallery from "./screens/Gallery";
 import HomeScreen from "./screens/HomeScreen";
 import PanelScreen from "./screens/PanelScreen";
-import ScanScreen from "./screens/ScanScreen";
 import { touchPanel } from "./lib/panels";
 import { mockData, mockLayout, mockValues } from "./lib/mockLayout";
 import "./ui.css";
 
 const isGallery = () =>
   new URLSearchParams(window.location.search).has("gallery") || window.location.pathname.endsWith("/gallery");
+
+// Loaded on demand: the QR scanner is the heaviest dependency, and the gallery is a dev tool.
+const Gallery = lazy(() => import("./screens/Gallery"));
+const ScanScreen = lazy(() => import("./screens/ScanScreen"));
 
 type Screen = { name: "home" } | { name: "scan" } | { name: "panel"; panel: SavedPanel };
 
@@ -32,6 +34,7 @@ export default function App() {
           <a href="/?gallery" aria-current={gallery ? "page" : undefined}>Gallery</a>
         </nav>
       )}
+      <Suspense fallback={null}>
       {gallery ? (
         <Gallery />
       ) : screen.name === "scan" ? (
@@ -41,6 +44,7 @@ export default function App() {
       ) : (
         <HomeScreen onOpen={open} onScan={() => setScreen({ name: "scan" })} />
       )}
+      </Suspense>
     </>
   );
 }
