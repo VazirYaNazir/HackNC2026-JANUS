@@ -17,7 +17,7 @@ def parser() -> argparse.ArgumentParser:
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("build", help="Compile all five standalone tools")
     worker = commands.add_parser("worker", help="Prepare or inspect the shipped portable-C execution worker")
-    worker.add_argument("action", choices=("status", "prepare"))
+    worker.add_argument("action", choices=("status", "prepare", "diagnose"))
     worker.add_argument("--isolation-adapter", default=(os.getenv("AGENT_ISOLATION_ADAPTER") or "").strip() or None, help="Preserve an explicitly configured local adapter")
     run = commands.add_parser("run", help="Build and run one tool; JSON Lines on stdout")
     run.add_argument("tool", choices=TOOLS)
@@ -67,8 +67,11 @@ def main(argv=None) -> int:
                         "reason": None if boundary.can_build() and boundary.can_run() else "WORKER_UNAVAILABLE",
                         "execution_target": None,
                     }
+                    diagnose = getattr(boundary, "diagnose", None)
+                    if options.action == "diagnose" and callable(diagnose):
+                        report = diagnose()
             print(json.dumps(report, allow_nan=False))
-            return 0 if options.action == "status" or report.get("available") else 1
+            return 0 if options.action in {"status", "diagnose"} or report.get("available") else 1
         if options.command == "build":
             for name, path in build_tools().items():
                 print(f"{name}: {path}")

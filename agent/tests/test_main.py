@@ -8,7 +8,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from agent.compiler import CCompiler, CompilerError
 from agent.main import main, parser
@@ -137,6 +137,60 @@ class MainTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         compiler.assert_not_called()
         approval.assert_not_called()
+
+    def test_worker_diagnose_prints_one_safe_collected_report_without_provisioning(self):
+        boundary = ReadyWorker()
+        report = {"available": False, "reason": "WORKER_ENFORCEMENT_UNAVAILABLE", "execution_target": None,
+                  "diagnostics": [{"stage": "runtime_probe", "outcome": "failed", "code": "CGROUP_REQUIRED", "checks": {"cpu": False}}]}
+        def diagnose():
+            print("trusted readiness diagnostic progress")
+            return report
+        boundary.diagnose = Mock(side_effect=diagnose)
+        self.loader.return_value = boundary
+        with patch.dict("os.environ", {}, clear=True), patch("agent.main.detect_compiler") as compiler, \
+             patch("agent.main.build_tools") as build, patch("agent.authorization.approve_session") as approval:
+            code, stdout, stderr = self.call(["worker", "diagnose"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), report)
+        self.assertIn("trusted readiness diagnostic progress", stderr)
+        boundary.diagnose.assert_called_once_with()
+        self.loader.assert_called_once_with(None)
+        compiler.assert_not_called()
+        build.assert_not_called()
+        approval.assert_not_called()
+
+    def test_worker_diagnose_preserves_explicit_local_adapter_and_describe_fallback(self):
+        self.loader.return_value = ReadyWorker()
+        with patch.dict("os.environ", {}, clear=True):
+            code, stdout, stderr = self.call(["worker", "diagnose", "--isolation-adapter", "local.worker:factory"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), ReadyWorker().describe())
+        self.assertEqual(stderr, "")
+        self.loader.assert_called_once_with("local.worker:factory")
+        self.loader.reset_mock()
+        self.loader.return_value = IsolationBoundary()
+        code, stdout, stderr = self.call(["worker", "diagnose"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), {"available": False, "reason": "WORKER_UNAVAILABLE", "execution_target": None})
+        self.assertEqual(stderr, "")
+
+    def test_worker_status_never_invokes_optional_diagnostics(self):
+        boundary = ReadyWorker()
+        boundary.diagnose = Mock()
+        self.loader.return_value = boundary
+        code, stdout, _ = self.call(["worker", "status"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout), boundary.describe())
+        boundary.diagnose.assert_not_called()
+
+    def test_worker_diagnostic_failure_uses_sanitized_worker_error_report(self):
+        boundary = ReadyWorker()
+        boundary.diagnose = Mock(side_effect=OSError("private-credential-file"))
+        self.loader.return_value = boundary
+        code, stdout, stderr = self.call(["worker", "diagnose"])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout), {"available": False, "reason": "WORKER_PREPARATION_FAILED", "execution_target": None})
+        self.assertNotIn("private-credential-file", stdout + stderr)
 
     def test_worker_prepare_outputs_one_json_report_and_routes_progress_to_stderr(self):
         expected = ReadyWorker().describe()

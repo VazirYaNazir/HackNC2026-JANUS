@@ -1,0 +1,96 @@
+"""Check that guest diagnostics expose only fixed, public check results."""
+import contextlib
+import io
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+from agent.isolation import ResourceLimits
+from dataclasses import asdict
+from agent.worker_diagnostics import DIAGNOSTIC_CHECKS, DIAGNOSTIC_CODES, DIAGNOSTIC_SOURCE
+
+
+class WorkerDiagnosticsTests(unittest.TestCase):
+    def run_source(self, *, runtime_error=None, seccomp_error=None, machine="aarch64", files=None, compiler=True):
+        values = {"memory.max": "536870912", "memory.swap.max": "0", "pids.max": "16",
+                  "cpu.max": "100000 100000", "cpu.max.burst": "0",
+                  "status": "CapEff: 0\nCapBnd: 0\nNoNewPrivs: 1\n"}
+        values.update(files or {})
+        runtime = Mock(side_effect=runtime_error)
+        seccomp = Mock(side_effect=seccomp_error)
+        worker = {"assert_runtime": runtime, "install_seccomp": seccomp,
+                  "CgroupMonitor": Mock(return_value=SimpleNamespace(wall_allowance=lambda: 29)),
+                  "_mounts": lambda: {"/": ({"ro"}, "overlay"), "/work": ({"rw"}, "tmpfs")}}
+        output = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("runpy.run_path", return_value=worker))
+            stack.enter_context(patch("sys.stdin", io.StringIO(json.dumps(asdict(ResourceLimits())))))
+            stack.enter_context(contextlib.redirect_stdout(output))
+            stack.enter_context(patch.object(Path, "read_text", lambda path: values[path.name]))
+            stack.enter_context(patch.object(Path, "exists", return_value=True))
+            stack.enter_context(patch.object(Path, "is_file", return_value=compiler))
+            stack.enter_context(patch.object(Path, "iterdir", return_value=[Path("lo")]))
+            stack.enter_context(patch("os.getpid", return_value=1))
+            stack.enter_context(patch("os.getuid", return_value=65532))
+            stack.enter_context(patch("os.statvfs", return_value=SimpleNamespace(f_blocks=16384, f_frsize=4096)))
+            stack.enter_context(patch("os.access", side_effect=lambda path, mode: str(path) != "/dev/shm"))
+            stack.enter_context(patch("platform.machine", return_value=machine))
+            stack.enter_context(patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": "/work"}, clear=True))
+            exec(compile(DIAGNOSTIC_SOURCE, "<trusted-worker-diagnostics>", "exec"), {})
+        result = json.loads(output.getvalue())
+        self.assertEqual(set(result), {"checks", "code", "ready"})
+        self.assertEqual(set(result["checks"]), DIAGNOSTIC_CHECKS)
+        self.assertTrue(all(type(value) is bool for value in result["checks"].values()))
+        self.assertIn(result["code"], DIAGNOSTIC_CODES | {None})
+        return result, runtime, seccomp
+
+    def test_native_arm64_and_x86_success_use_existing_worker_checks(self):
+        for machine in ("aarch64", "arm64", "x86_64"):
+            with self.subTest(machine=machine):
+                result, runtime, seccomp = self.run_source(machine=machine)
+                self.assertTrue(result["ready"])
+                self.assertTrue(all(result["checks"].values()))
+                runtime.assert_called_once_with(asdict(ResourceLimits()))
+                seccomp.assert_called_once_with(False)
+
+    def test_private_runtime_and_seccomp_errors_are_never_reported(self):
+        for field in ("runtime_error", "seccomp_error"):
+            with self.subTest(field=field):
+                result, _, _ = self.run_source(**{field: OSError("secret credential /private/path")})
+                self.assertFalse(result["ready"])
+                self.assertNotIn("secret", json.dumps(result))
+                self.assertEqual(result["code"], "WORKER_RUNTIME_UNAVAILABLE" if field == "runtime_error" else "WORKER_SECCOMP_UNAVAILABLE")
+
+    def test_effective_limits_identify_independent_failures(self):
+        cases = (("memory.max", "max", "memory"), ("memory.swap.max", "1", "swap"),
+                 ("pids.max", "max", "processes"), ("cpu.max", "max 100000", "cpu_quota"),
+                 ("cpu.max", "100000 200000", "cpu_period"), ("cpu.max.burst", "1", "cpu_burst"))
+        for name, value, check in cases:
+            with self.subTest(check=check):
+                result, _, _ = self.run_source(files={name: value}, runtime_error=ValueError("private"))
+                self.assertFalse(result["checks"][check])
+                self.assertFalse(result["ready"])
+
+    def test_compiler_and_architecture_have_fixed_failure_codes(self):
+        for argument, expected in (({"compiler": False}, "WORKER_COMPILER_UNAVAILABLE"),
+                                   ({"machine": "unsupported"}, "WORKER_ARCHITECTURE_UNSUPPORTED")):
+            result, _, _ = self.run_source(**argument)
+            self.assertEqual(result["code"], expected)
+            self.assertFalse(result["ready"])
+
+    def test_unreadable_image_produces_only_fixed_failure_code(self):
+        output = io.StringIO()
+        with patch("runpy.run_path", side_effect=OSError("secret /home/user/path")), patch("sys.stdin", io.StringIO("{}")), contextlib.redirect_stdout(output):
+            exec(compile(DIAGNOSTIC_SOURCE, "<trusted-worker-diagnostics>", "exec"), {})
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["code"], "WORKER_DIAGNOSTIC_UNAVAILABLE")
+        self.assertFalse(result["ready"])
+        self.assertEqual(set(result["checks"]), DIAGNOSTIC_CHECKS)
+        self.assertNotIn("secret", output.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
