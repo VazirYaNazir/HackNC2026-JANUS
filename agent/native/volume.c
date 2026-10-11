@@ -127,13 +127,25 @@ static int input_line(char *out,size_t capacity) {
 #include <initguid.h>
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
+/* The Windows SDK declares these COM identifiers but does not provide their
+ * C definitions in uuid.lib. Keep the published SDK values local so the
+ * standalone tool links with both the Microsoft and MinGW SDKs. */
+static const CLSID audio_enumerator_class = {
+    0xbcde0395,0xe52f,0x467c,{0x8e,0x3d,0xc4,0x57,0x92,0x91,0x69,0x2e}
+};
+static const IID audio_enumerator_interface = {
+    0xa95664d2,0x9614,0x4f35,{0xa7,0x46,0xde,0x8d,0xb6,0x36,0x17,0xe6}
+};
+static const IID audio_volume_interface = {
+    0x5cdf2c82,0x841e,0x4546,{0x97,0x22,0x0c,0xf7,0x40,0x78,0x22,0x9a}
+};
 static IAudioEndpointVolume *endpoint;
 static int open_audio(void) {
     IMMDeviceEnumerator *e=NULL; IMMDevice *d=NULL;
-    HRESULT hr=CoCreateInstance(&CLSID_MMDeviceEnumerator,NULL,CLSCTX_ALL,
-        &IID_IMMDeviceEnumerator,(void **)&e);
+    HRESULT hr=CoCreateInstance(&audio_enumerator_class,NULL,CLSCTX_ALL,
+        &audio_enumerator_interface,(void **)&e);
     if(SUCCEEDED(hr)) hr=IMMDeviceEnumerator_GetDefaultAudioEndpoint(e,eRender,eMultimedia,&d);
-    if(SUCCEEDED(hr)) hr=IMMDevice_Activate(d,&IID_IAudioEndpointVolume,CLSCTX_ALL,NULL,(void **)&endpoint);
+    if(SUCCEEDED(hr)) hr=IMMDevice_Activate(d,&audio_volume_interface,CLSCTX_ALL,NULL,(void **)&endpoint);
     if(d) IMMDevice_Release(d); if(e) IMMDeviceEnumerator_Release(e);
     return SUCCEEDED(hr);
 }
