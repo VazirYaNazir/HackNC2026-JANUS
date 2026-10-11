@@ -37,6 +37,7 @@ class TrackedBoundary(ContainerBoundary):
     def __init__(self):
         self.owned = set()
         self.create_started = None
+        self.attach_durations = []
         super().__init__()
 
     async def _call(self, arguments, **kwargs):
@@ -44,7 +45,12 @@ class TrackedBoundary(ContainerBoundary):
             self.owned.add(arguments[arguments.index("--name") + 1])
             if self.create_started is not None:
                 self.create_started.set()
-        return await super()._call(arguments, **kwargs)
+        started = time.monotonic()
+        try:
+            return await super()._call(arguments, **kwargs)
+        finally:
+            if arguments and arguments[0] == "start":
+                self.attach_durations.append(time.monotonic() - started)
 
 
 @unittest.skipUnless(ENABLED, "Set JANUS_TEST_CONTAINER=1 to verify the real container boundary")
@@ -91,7 +97,7 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.returncode, 0)
         return set(result.stdout.decode().splitlines()) & (self.boundary.owned - self.before)
 
-    async def wait_running(self, count=1, timeout=2):
+    async def wait_running(self, count=1, timeout=20):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             running = await self.running_owned()
@@ -182,7 +188,8 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
         started = time.monotonic()
         with self.assertRaises(ResourceLimitExceeded):
             await self.boundary.run(executable, "", replace(ResourceLimits(), processes=4), frozenset({"process.spawn"}))
-        self.assertLess(time.monotonic() - started, 4)
+        self.assertLess(self.boundary.attach_durations[-1], 3.5)
+        self.assertLess(time.monotonic() - started, 25)
 
     async def test_exited_parent_cannot_leave_a_child_in_a_new_session(self):
         result = await self.run_source('''int main(void) {
@@ -223,7 +230,8 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
         started = time.monotonic()
         with self.assertRaises(ResourceLimitExceeded):
             await self.boundary.run(executable, "", replace(ResourceLimits(), memory_bytes=64 * 1024 * 1024), frozenset({"files.write"}))
-        self.assertLess(time.monotonic() - started, 4)
+        self.assertLess(self.boundary.attach_durations[-1], 3.5)
+        self.assertLess(time.monotonic() - started, 25)
 
     async def test_disk_quota_and_other_writable_mounts_cannot_be_bypassed(self):
         result = await self.run_source('''int main(void) {
@@ -246,7 +254,11 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
         else:
             self.assertTrue(result.timed_out)
             self.assertNotEqual(result.returncode, 0)
-        self.assertLess(time.monotonic() - started, 1.8)
+            self.assertFalse(result.unavailable)
+        # Trusted Docker CREATE may copy image layers. The guest deadline
+        # starts at START/attach and remains independent of that allowance.
+        self.assertLess(self.boundary.attach_durations[-1], 1.2)
+        self.assertLess(time.monotonic() - started, 25)
 
     async def test_wall_deadline_stops_sleep_without_using_the_cpu_budget(self):
         executable = await self.compile_source('int main(void) { sleep(20); return 0; }')
@@ -254,7 +266,9 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
         result = await self.boundary.run(executable, "", replace(ResourceLimits(), run_seconds=.8), frozenset())
         self.assertTrue(result.timed_out)
         self.assertNotEqual(result.returncode, 0)
-        self.assertLess(time.monotonic() - started, 1.8)
+        self.assertFalse(result.unavailable)
+        self.assertLess(self.boundary.attach_durations[-1], 1.2)
+        self.assertLess(time.monotonic() - started, 25)
 
     async def test_cancellation_finishes_namespace_removal_before_propagating(self):
         executable = await self.compile_source('int main(void) { sleep(20); return 0; }')
@@ -307,7 +321,7 @@ class RealContainerEnforcementTests(unittest.IsolatedAsyncioTestCase):
             return f'''int main(void) {{
                 if(access("/work/state", F_OK)==0) return 10;
                 FILE *f=fopen("/work/state", "w"); if(!f) return 11; fputs("{letter}", f); fclose(f);
-                struct timespec delay={{1,0}}; nanosleep(&delay, NULL);
+                struct timespec delay={{2,0}}; nanosleep(&delay, NULL);
                 f=fopen("/work/state", "r"); if(!f) return 12; int value=fgetc(f); fclose(f);
                 if(value!='{letter}') return 13; puts("{letter}"); return 0;
             }}'''
