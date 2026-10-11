@@ -36,7 +36,7 @@ class Heartbeat(StrictModel):
 def messaging_service(request: Request, runtime: SERVICE) -> MessagingService:
     service = getattr(request.app.state, "messaging", None)
     if service is None:
-        service = request.app.state.messaging = MessagingService.from_env(runtime)
+        service = request.app.state.messaging = MessagingService.from_env(runtime, getattr(request.app.state, "tiger_store", None))
     return service
 
 
@@ -66,6 +66,8 @@ async def inbound(payload: Inbound, service: MESSAGING):
 async def heartbeat(payload: Heartbeat, service: MESSAGING):
     if payload.connected:
         service.heartbeat()
+    else:
+        service.disconnected()
     return {"ok": True}
 
 

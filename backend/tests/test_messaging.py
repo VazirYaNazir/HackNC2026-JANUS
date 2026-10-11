@@ -6,8 +6,9 @@ import asyncio
 import json
 import os
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,8 +18,9 @@ from app.agent_runtime.connections import PipelineError
 from app.agent_runtime.native import NativeManager
 from app.agent_runtime.events import PanelEvents
 from app.messaging import parser
-from app.messaging.service import (CONFIRM_SECONDS, DEDUPE_LIMIT, GeminiClassifier, MessagingService, mask, normalize_sender,
-                                   parse_allowlist)
+from app.messaging.service import (CONFIRM_SECONDS, DEDUPE_LIMIT, GeminiClassifier, MessagingService, clock_text, mask, normalize_sender,
+                                   parse_allowlist, pretty_app)
+from app.tiger import TigerUnavailable
 from app.routes import messaging as messaging_routes
 
 OWNER = "+15551234567"
@@ -29,6 +31,7 @@ NOTHING_TO_CONFIRM = "Nothing to confirm. Text help to see what I can do."
 HELP = """JANUS here. Text me:
 • status – CPU and RAM
 • apps – what's using the most
+• history – why it was slow
 • volume 40 – set volume (0–100)
 • mute / unmute
 • lock – locks your PC (I'll ask first)"""
@@ -70,6 +73,8 @@ class ParserTests(unittest.TestCase):
         cases = {
             "status": "status", "Status?": "status", "cpu": "status", "CPU": "status", "stats": "status", "what's my cpu at?": "status",
             "how's my laptop": "status", "ram": "status", "temp": "status", "memory usage": "status",
+            "history": "history", "History?": "history", "slow": "history", "spikes": "history", "why was my laptop slow?": "history",
+            "why is my pc so slow": "history", "any cpu spikes?": "history",
             "apps": "apps", "Apps?": "apps", "processes": "apps", "what's running": "apps", "top apps": "apps",
             "volume": "volume_get", "what's the volume?": "volume_get",
             "mute": "mute", "Mute my PC!": "mute", "unmute": "unmute", "please unmute the volume": "unmute",
@@ -151,7 +156,7 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(prompt.text, f"Lock your PC? Reply YES within {CONFIRM_SECONDS}s")
         runtime.native.lock.assert_not_awaited()
         self.assertEqual((await service.handle(OWNER, "yes", "m2")).text, "Locked.")
-        runtime.native.lock.assert_awaited_once_with(runtime.identity)
+        runtime.native.lock.assert_awaited_once_with(runtime.identity, source="imessage", request_id="m2")
         self.assertEqual((await service.handle(OWNER, "yes", "m3")).text, NOTHING_TO_CONFIRM)
         runtime.native.lock.assert_awaited_once()
 
@@ -186,16 +191,16 @@ class ConfirmationTests(unittest.IsolatedAsyncioTestCase):
     async def test_mute_runs_immediately_without_confirmation_and_unmute_restores_the_previous_volume(self):
         service, runtime, _ = make()
         self.assertEqual((await service.handle(OWNER, "mute", "m1")).text, "Muted (volume 0).")
-        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 0)
+        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 0, source="imessage", request_id="m1")
         self.assertEqual(service._pending, {})
         self.assertEqual((await service.handle(OWNER, "yes", "m2")).text, NOTHING_TO_CONFIRM)
         self.assertEqual((await service.handle(OWNER, "unmute", "m3")).text, "Unmuted - volume 40%.")
-        runtime.native.command.assert_awaited_with(runtime.identity, "native_volume", 40)
+        runtime.native.command.assert_awaited_with(runtime.identity, "native_volume", 40, source="imessage", request_id="m3")
 
     async def test_unmute_without_history_uses_a_safe_default(self):
         service, runtime, _ = make()
         await service.handle(OWNER, "unmute", "m1")
-        runtime.native.command.assert_awaited_with(runtime.identity, "native_volume", 30)
+        runtime.native.command.assert_awaited_with(runtime.identity, "native_volume", 30, source="imessage", request_id="m1")
 
     async def test_pending_state_is_per_sender(self):
         other = "+15550001111"
@@ -294,7 +299,7 @@ class ActionTests(unittest.IsolatedAsyncioTestCase):
         service, runtime, _ = make()
         self.assertEqual((await service.handle(OWNER, "volume", "m1")).text, "Volume is 40%.")
         self.assertEqual((await service.handle(OWNER, "volume 30", "m2")).text, "Volume set to 30%.")
-        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 30)
+        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 30, source="imessage", request_id="m2")
         self.assertEqual((await service.handle(OWNER, "volume 300", "m3")).text, "Volume must be between 0 and 100.")
         self.assertEqual(runtime.native.command.await_count, 1)
 
@@ -318,6 +323,96 @@ class ActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await service.handle(OWNER, "write me a poem", "m3")).text, UNKNOWN)
 
 
+class HistoryTests(unittest.IsolatedAsyncioTestCase):
+    """'why was my laptop slow?' answers from Tiger Data (metrics_1m + process_samples); everything else is unchanged."""
+
+    PEAK = datetime(2026, 10, 11, 16, 31).astimezone()  # local wall-clock 4:31 PM, whatever the machine's time zone
+
+    def tiger(self, **overrides):
+        store = SimpleNamespace(worst_minute=AsyncMock(return_value={"bucket": self.PEAK, "cpu": 94.2}),
+                                top_apps=AsyncMock(return_value=["chrome.exe", "Code.exe", "Teams"]))
+        for name, value in overrides.items():
+            setattr(store, name, value)
+        return store
+
+    def service(self, store, runtime=None):
+        runtime = runtime or FakeRuntime()
+        return MessagingService(runtime, allowed=frozenset({OWNER}), clock=Clock(), tiger=store), runtime
+
+    async def test_every_phrasing_gets_the_same_answer(self):
+        store = self.tiger()
+        service, _ = self.service(store)
+        for n, text in enumerate(("why was my laptop slow?", "slow", "spikes", "history")):
+            self.assertEqual((await service.handle(OWNER, text, f"h{n}")).text, "CPU peaked at 94% at 4:31 PM. Busiest: Chrome, Code, Teams.")
+        store.worst_minute.assert_awaited_with("laptop", 60)
+        store.top_apps.assert_awaited_with("laptop", self.PEAK, 3)
+
+    async def test_the_peak_alone_is_reported_when_no_process_samples_exist(self):
+        service, _ = self.service(self.tiger(top_apps=AsyncMock(return_value=[])))
+        self.assertEqual((await service.handle(OWNER, "slow", "m1")).text, "CPU peaked at 94% at 4:31 PM.")
+
+    async def test_morning_and_midnight_use_a_12_hour_clock(self):
+        for moment, expected in ((datetime(2026, 10, 11, 0, 5), "12:05 AM"), (datetime(2026, 10, 11, 9, 7), "9:07 AM"),
+                                 (datetime(2026, 10, 11, 12, 0), "12:00 PM"), (datetime(2026, 10, 11, 23, 59), "11:59 PM")):
+            self.assertEqual(clock_text(moment.astimezone()), expected)
+
+    async def test_app_names_are_tidied(self):
+        self.assertEqual([pretty_app(n) for n in ("chrome.exe", "Code.exe", "Teams", "msedge", "WINWORD.EXE", "")], ["Chrome", "Code", "Teams", "Msedge", "WINWORD", ""])
+
+    async def test_no_data_unavailable_and_not_configured_have_their_own_replies(self):
+        empty, _ = self.service(self.tiger(worst_minute=AsyncMock(return_value=None)))
+        self.assertEqual((await empty.handle(OWNER, "history", "m1")).text, "No history yet. Give me a few minutes of data.")
+        down, _ = self.service(self.tiger(worst_minute=AsyncMock(side_effect=TigerUnavailable("OperationalError"))))
+        self.assertEqual((await down.handle(OWNER, "history", "m1")).text, "History isn't available right now.")
+        missing_apps, _ = self.service(self.tiger(top_apps=AsyncMock(side_effect=TigerUnavailable("OperationalError"))))
+        self.assertEqual((await missing_apps.handle(OWNER, "history", "m1")).text, "History isn't available right now.")
+        unset, _ = self.service(None)
+        self.assertIn("no time-series database", (await unset.handle(OWNER, "history", "m1")).text)
+
+    async def test_history_needs_the_laptop_to_be_online_like_every_other_command(self):
+        store = self.tiger()
+        service, _ = self.service(store, FakeRuntime(online=False))
+        self.assertEqual((await service.handle(OWNER, "history", "m1")).text, "Your laptop is offline.")
+        store.worst_minute.assert_not_awaited()
+
+    async def test_unlisted_senders_cannot_read_history(self):
+        store = self.tiger()
+        service, _ = self.service(store)
+        self.assertIsNone((await service.handle(STRANGER, "history", "m1")).text)
+        store.worst_minute.assert_not_awaited()
+
+
+class ActivityLogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_read_only_commands_are_logged_as_imessage_activity_with_the_message_id(self):
+        service, runtime, _ = make()
+        runtime.native.sink = MagicMock()
+        for n, text in enumerate(("status", "apps", "volume")):
+            await service.handle(OWNER, text, f"read-{n}")
+        calls = [c.args for c in runtime.native.sink.action.call_args_list]
+        self.assertEqual(calls, [("laptop", "imessage", "status", {}, "ok", "read-0"), ("laptop", "imessage", "apps", {}, "ok", "read-1"),
+                                 ("laptop", "imessage", "volume_get", {}, "ok", "read-2")])
+
+    async def test_help_unknown_and_declined_texts_are_not_logged(self):
+        service, runtime, _ = make()
+        runtime.native.sink = MagicMock()
+        for n, text in enumerate(("help", "write me a poem", "yes")):
+            await service.handle(OWNER, text, f"x{n}")
+        await service.handle(OWNER, "lock", "x3")
+        await service.handle(OWNER, "no", "x4")
+        runtime.native.sink.action.assert_not_called()
+
+    async def test_native_controls_pass_their_source_down_instead_of_double_logging(self):
+        service, runtime, _ = make()
+        runtime.native.sink = MagicMock()
+        await service.handle(OWNER, "volume 30", "v1")
+        runtime.native.sink.action.assert_not_called()  # NativeManager logs it (with source="imessage"); the service must not repeat it
+        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 30, source="imessage", request_id="v1")
+
+    async def test_a_missing_sink_is_fine(self):
+        service, _, _ = make()
+        self.assertIn("CPU", (await service.handle(OWNER, "status", "m1")).text)
+
+
 class FallbackTests(unittest.IsolatedAsyncioTestCase):
     def provider(self, reply, client=object()):
         return SimpleNamespace(client=client, structured=AsyncMock(side_effect=reply if isinstance(reply, Exception) else None, return_value=None if isinstance(reply, Exception) else reply))
@@ -331,7 +426,7 @@ class FallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_can_choose_a_volume_level_within_bounds(self):
         service, runtime, _ = make(classifier=GeminiClassifier(self.provider('{"action": "volume_set", "level": 25}')))
         await service.handle(OWNER, "make it quieter please", "m1")
-        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 25)
+        runtime.native.command.assert_awaited_once_with(runtime.identity, "native_volume", 25, source="imessage", request_id="m1")
 
     async def test_anything_outside_the_registered_list_is_rejected(self):
         for raw in ('{"action": "shell", "level": null}', '{"action": "lock", "level": 5}', '{"action": "volume_set", "level": 500}',
@@ -435,6 +530,13 @@ class RouteTests(unittest.TestCase):
             self.assertTrue(service.connected())
             service.clock.now += 46
             self.assertFalse(service.connected())
+            # A 'down' report turns it off immediately instead of waiting out the timeout.
+            self.post(client, {"connected": True}, path="/api/messaging/heartbeat")
+            self.assertTrue(service.connected())
+            self.assertEqual(self.post(client, {"connected": False}, path="/api/messaging/heartbeat").status_code, 200)
+            self.assertFalse(service.connected())
+            self.post(client, {"connected": True}, path="/api/messaging/heartbeat")  # and it recovers on the next report
+            self.assertTrue(service.connected())
 
     def test_studio_status_requires_the_desktop_credential(self):
         from app.routes.studio import desktop

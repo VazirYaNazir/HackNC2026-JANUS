@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, ConfigDict
 
 from app.agent_runtime.connections import PipelineError
+from app.tiger import TigerStore, TigerUnavailable, tiger_url
 
 from . import parser
 from .parser import ACTIONS, UNKNOWN_REPLY, Intent
@@ -50,6 +51,18 @@ def parse_allowlist(raw: str | None) -> frozenset[str]:
         else:
             logger.warning("IMESSAGE_ALLOWED_SENDERS: ignoring an entry that is not E.164 (expected +15551234567)")
     return frozenset(allowed)
+
+
+def clock_text(moment) -> str:
+    """Local wall-clock time such as '4:31 PM' (the laptop's own time zone)."""
+    local = moment.astimezone()
+    return f"{local.hour % 12 or 12}:{local.minute:02d} {'AM' if local.hour < 12 else 'PM'}"
+
+
+def pretty_app(name: str) -> str:
+    """'chrome.exe' -> 'Chrome'; names that already have capitals are left alone."""
+    base = name[:-4] if name.lower().endswith(".exe") else name
+    return base[:1].upper() + base[1:] if base.islower() else base
 
 
 def mask(sender: str) -> str:
@@ -106,8 +119,10 @@ class GeminiClassifier:
 
 
 class MessagingService:
-    def __init__(self, runtime, *, allowed: frozenset[str], device_id: str | None = None, classifier=None, clock=time.monotonic):
+    def __init__(self, runtime, *, allowed: frozenset[str], device_id: str | None = None, classifier=None, clock=time.monotonic, tiger=None):
         self.runtime = runtime
+        self.tiger = tiger  # optional TigerStore for the 'history' command
+        self._message_id: str | None = None
         self.allowed = allowed
         self.clock = clock
         self.classifier = classifier
@@ -121,13 +136,14 @@ class MessagingService:
     # -- configuration -----------------------------------------------------------------------------------------
 
     @classmethod
-    def from_env(cls, runtime) -> "MessagingService":
+    def from_env(cls, runtime, tiger=None) -> "MessagingService":
         classifier = None
         if os.getenv("IMESSAGE_AI_FALLBACK", "1").lower() not in ("0", "false", "no"):
             candidate = GeminiClassifier(runtime.provider)
             classifier = candidate if candidate.available else None
         return cls(runtime, allowed=parse_allowlist(os.getenv("IMESSAGE_ALLOWED_SENDERS")),
-                   device_id=os.getenv("IMESSAGE_DEVICE_ID") or None, classifier=classifier)
+                   device_id=os.getenv("IMESSAGE_DEVICE_ID") or None, classifier=classifier,
+                   tiger=tiger if tiger is not None else (TigerStore(tiger_url()) if tiger_url() else None))
 
     @property
     def enabled(self) -> bool:
@@ -141,6 +157,10 @@ class MessagingService:
 
     def heartbeat(self) -> None:
         self.last_heartbeat = self.clock()
+
+    def disconnected(self) -> None:
+        """The sidecar reported it is no longer connected (or has stopped): show 'off' now, not after a timeout."""
+        self.last_heartbeat = None
 
     def connected(self) -> bool:
         return self.last_heartbeat is not None and self.clock() - self.last_heartbeat < 45
@@ -158,6 +178,7 @@ class MessagingService:
             if self._is_duplicate(message_id, now):
                 logger.info("iMessage duplicate %s ignored", message_id[:16])
                 return Reply(duplicate=True)
+            self._message_id = message_id
             if len(text) > MAX_TEXT:
                 return Reply("That message is too long. Text help to see what I can do.")
             return await self._dispatch(sender, text, now)
@@ -233,8 +254,16 @@ class MessagingService:
                 return Reply("Your laptop didn't respond in time.")
             return Reply("That didn't work on your laptop.")
 
+    def _record(self, identity, action: str, outcome: str = "ok") -> None:
+        """Activity log entry for read-only commands (native controls are logged by NativeManager)."""
+        sink = getattr(self.runtime.native, "sink", None)
+        if sink is not None:
+            sink.action(identity.device_id, "imessage", action, {}, outcome, self._message_id)
+
     async def _run(self, intent: Intent, identity, streams, latest) -> Reply:
         action = intent.action
+        if action in ("status", "apps", "volume_get", "history"):
+            self._record(identity, action)
         if action == "status":
             if "metrics" not in streams:
                 return Reply("CPU stats aren't available (start the agent with --native-tools).")
@@ -243,27 +272,45 @@ class MessagingService:
             if "processes" not in streams:
                 return Reply("App info isn't available (start the agent with --native-tools).")
             return Reply(self._apps(latest))
+        if action == "history":
+            return Reply(await self._history(identity))
         if action == "volume_get":
             level = latest.get("volume.percent")
             return Reply(f"Volume is {round(level)}%." if level is not None else "I can't read the volume right now.")
         if action == "volume_set":
             level = intent.args["level"]
-            await self.runtime.native.command(identity, "native_volume", level)
+            await self.runtime.native.command(identity, "native_volume", level, source="imessage", request_id=self._message_id)
             return Reply(f"Volume set to {level}%.")
         if action == "mute":
             current = latest.get("volume.percent")
             if current:
                 self._last_volume[identity.device_id] = round(current)
-            await self.runtime.native.command(identity, "native_volume", 0)
+            await self.runtime.native.command(identity, "native_volume", 0, source="imessage", request_id=self._message_id)
             return Reply("Muted (volume 0).")
         if action == "unmute":
             level = self._last_volume.get(identity.device_id) or DEFAULT_UNMUTE_LEVEL
-            await self.runtime.native.command(identity, "native_volume", level)
+            await self.runtime.native.command(identity, "native_volume", level, source="imessage", request_id=self._message_id)
             return Reply(f"Unmuted - volume {level}%.")
         if action == "lock":
-            await self.runtime.native.lock(identity)
+            await self.runtime.native.lock(identity, source="imessage", request_id=self._message_id)
             return Reply("Locked.")
         return Reply(UNKNOWN_REPLY)
+
+    async def _history(self, identity) -> str:
+        """The worst CPU minute in the last hour and the busiest apps in that minute, from Tiger Data."""
+        if self.tiger is None:
+            return "History isn't set up on this laptop yet (no time-series database is configured)."
+        try:
+            worst = await self.tiger.worst_minute(identity.device_id, 60)
+            if worst is None:
+                return "No history yet. Give me a few minutes of data."
+            apps = await self.tiger.top_apps(identity.device_id, worst["bucket"], 3)
+        except (TigerUnavailable, ValueError):
+            return "History isn't available right now."
+        text = f"CPU peaked at {round(worst['cpu'])}% at {clock_text(worst['bucket'])}."
+        if apps:
+            text += " Busiest: " + ", ".join(pretty_app(name) for name in apps) + "."
+        return text
 
     @staticmethod
     def _status(latest) -> str:

@@ -18,6 +18,7 @@ class ActionSpec:
 ACTIONS: dict[str, ActionSpec] = {spec.id: spec for spec in (
     ActionSpec("status", "CPU and RAM", "status"),
     ActionSpec("apps", "what's using the most", "apps"),
+    ActionSpec("history", "why it was slow", "history"),
     ActionSpec("volume_get", "current volume", "volume"),
     ActionSpec("volume_set", "set the volume (0-100)", "volume 40"),
     ActionSpec("mute", "mute", "mute"),
@@ -35,6 +36,7 @@ UNKNOWN_REPLY = "Not sure what that means. Text help to see what I can do."
 HELP_TEXT = """JANUS here. Text me:
 • status – CPU and RAM
 • apps – what's using the most
+• history – why it was slow
 • volume 40 – set volume (0–100)
 • mute / unmute
 • lock – locks your PC (I'll ask first)"""
@@ -66,6 +68,8 @@ _UNMUTE = re.compile(rf"^{_FILLER}unmute(?: (?:my|the))?(?: (?:pc|laptop|volume|
 _MUTE = re.compile(rf"^{_FILLER}mute(?: (?:my|the))?(?: (?:pc|laptop|volume|sound|audio))?$")
 _VOLUME_SET = re.compile(rf"^{_FILLER}(?:set )?(?:the )?vol(?:ume)?(?: to| at)? (\d{{1,4}}) ?%?$")
 _VOLUME_GET = re.compile(rf"^(?:what'?s |what is |how loud is )?(?:my |the )?vol(?:ume)?(?: level| at)?$")
+# "history" (aliases "slow", "spikes"): why was the laptop slow in the last hour?
+_HISTORY = re.compile(r"\b(?:history|slow(?:ness)?|spikes?|laggy|lag)\b")
 # "apps" (alias "processes"), plus the phrasings people actually type.
 _APPS = re.compile(r"\b(?:apps?|process(?:es)?|top apps?|what'?s (?:running|using)|task manager)\b")
 # "status" (aliases "cpu", "stats"); ram/memory/temp are accepted too and answer with the same status line.
@@ -93,6 +97,8 @@ def parse(text: str) -> Intent | None:
         return Intent("volume_set", {"level": level}) if 0 <= level <= 100 else Intent("rejected", {"reason": "Volume must be between 0 and 100."})
     if _VOLUME_GET.match(words):
         return Intent("volume_get")
+    if _HISTORY.search(words):
+        return Intent("history")
     if _APPS.search(words):
         return Intent("apps")
     if _STATUS.search(words):
