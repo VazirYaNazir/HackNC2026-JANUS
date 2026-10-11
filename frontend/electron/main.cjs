@@ -1,6 +1,7 @@
 
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -31,15 +32,26 @@ ipcMain.handle('janus:local-connection', (event) => {
   try { return localConnection(); } catch { return null; }
 });
 
-ipcMain.handle('janus:agent-status', (event) => {
+// An agent already started by `npm start` (or an earlier click) is recorded in .janus/pids.json.
+async function runningAgent() {
+  try {
+    const { liveAgent } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts', 'lib', 'common.mjs')).href);
+    return liveAgent();
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('janus:agent-status', async (event) => {
   if (!trusted(event)) throw new Error('Not available from this page.');
-  return { running: agentProcess !== null };
+  return { running: agentProcess !== null || (await runningAgent()) !== null };
 });
 
 // Same orchestration script as `npm start`, so there is one place that knows how to launch the agent.
-ipcMain.handle('janus:agent-start', (event) => {
+ipcMain.handle('janus:agent-start', async (event) => {
   if (!trusted(event)) throw new Error('Not available from this page.');
-  if (agentProcess) return { running: true };
+  // Never start a second agent for the same laptop: the backend would refuse it, and it would only add a process.
+  if (agentProcess || (await runningAgent())) return { running: true, alreadyRunning: true };
   agentProcess = spawn(process.execPath, [path.join(REPO_ROOT, 'scripts', 'start.mjs'), '--only=agent'], {
     cwd: REPO_ROOT,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },

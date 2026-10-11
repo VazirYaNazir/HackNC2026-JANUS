@@ -2,7 +2,7 @@
 interface JanusDesktop {
   getLocalConnection(): Promise<{ host: string; token: string; deviceId: string } | null>
   agentStatus(): Promise<{ running: boolean }>
-  startAgent(): Promise<{ running: boolean }>
+  startAgent(): Promise<{ running: boolean; alreadyRunning?: boolean }>
 }
 
 interface Window {

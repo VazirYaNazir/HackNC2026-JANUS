@@ -23,3 +23,14 @@ export function generationStatus(session: Session | null): GenerationStatus {
   if (noIsolation) return { tone: 'warning', text: 'Generation available; this laptop can’t run generated programs yet (no isolation adapter). Built-in controls still work.', links: [ISOLATION] }
   return { tone: 'ready', text: 'Generation ready.', links: [] }
 }
+
+export interface MessagingStatus {
+  enabled: boolean
+  connected: boolean
+}
+
+/** Small "iMessage: connected / off" label; null while unknown (no backend, or an older backend without the endpoint). */
+export function messagingLabel(status: MessagingStatus | null): string | null {
+  if (!status) return null
+  return status.enabled && status.connected ? 'iMessage: connected' : 'iMessage: off'
+}

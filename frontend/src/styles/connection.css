@@ -12,3 +12,4 @@
 .generation-status.is-ready { color: var(--green); }
 .generation-status.is-warning { color: var(--amber-light); }
 .generation-status a { margin-left: 8px; color: var(--cyan); }
+.messaging-status { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--graphite); }

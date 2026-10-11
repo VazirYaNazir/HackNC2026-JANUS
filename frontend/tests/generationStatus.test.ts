@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@janus/client'
-import { generationStatus } from '../src/generationStatus'
+import { agentHelpView } from '../src/agentHelp'
+import { generationStatus, messagingLabel } from '../src/generationStatus'
 
 const session = (overrides: Partial<Session> = {}, target: Partial<NonNullable<Session['target']>> = {}): Session => ({
   device_id: 'laptop', online: true, generation_available: true,
@@ -25,4 +26,23 @@ describe('generationStatus', () => {
   })
   it('reports both problems with both links', () => expect(generationStatus(session({ generation_available: false }, { execution_boundary_available: false })).links).toHaveLength(2))
   it('assumes a key is present when an older backend does not report it', () => expect(generationStatus(session({ generation_available: undefined })).tone).toBe('ready'))
+})
+
+describe('messagingLabel', () => {
+  it('says nothing while unknown', () => expect(messagingLabel(null)).toBeNull())
+  it('reports connected only when enabled and the sidecar is heartbeating', () => {
+    expect(messagingLabel({ enabled: true, connected: true })).toBe('iMessage: connected')
+    expect(messagingLabel({ enabled: true, connected: false })).toBe('iMessage: off')
+    expect(messagingLabel({ enabled: false, connected: false })).toBe('iMessage: off')
+    expect(messagingLabel({ enabled: false, connected: true })).toBe('iMessage: off')
+  })
+})
+
+describe('agentHelpView', () => {
+  it('offers the command to copy outside Electron', () => expect(agentHelpView({ desktop: false, running: false, waiting: false })).toBe('copy-command'))
+  it('offers Start only in Electron with no agent process and no start in flight', () => expect(agentHelpView({ desktop: true, running: false, waiting: false })).toBe('start'))
+  it('hides Start while an agent exists or was just started, so a second one is never spawned', () => {
+    expect(agentHelpView({ desktop: true, running: true, waiting: false })).toBe('waiting')
+    expect(agentHelpView({ desktop: true, running: false, waiting: true })).toBe('waiting')
+  })
 })
