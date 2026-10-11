@@ -14,6 +14,8 @@ interface PanelState {
   layoutError: string;
   error: string;
 }
+/** Most distinct dial sources kept per panel; a layout never needs anywhere near this many. */
+const MAX_READINGS = 256;
 const empty = (client: PanelClient | null): PanelState => ({ client, document: null, session: null, jobs: [], readings: {}, layoutError: '', error: '' });
 
 export function usePanel(client: PanelClient | null) {
@@ -68,11 +70,18 @@ export function usePanel(client: PanelClient | null) {
       if (!current) return;
       if (message.type === 'auth_ok') void refresh();
       else if (message.type === 'layout_updated') void refreshLayout();
-      else if (message.type === 'data') update((state) => ({ ...state, readings: { ...state.readings, [message.source]: message.value } }));
+      else if (message.type === 'data') update((state) => message.source in state.readings || Object.keys(state.readings).length < MAX_READINGS
+        ? { ...state, readings: { ...state.readings, [message.source]: message.value } }
+        : state);
       else if (message.type === 'job_update') recordJob(message.job);
       else if (message.type === 'agent_presence') update((state) => ({ ...state, session: message.session }));
       else if (message.type === 'error') update((state) => ({ ...state, error: message.message }));
-    }, (value) => { if (current) setStatus(value); });
+    }, (value) => {
+      if (!current) return;
+      setStatus(value);
+      // Without a live connection the last readings are stale; show nothing rather than an old number.
+      if (value !== 'connected') update((state) => (Object.keys(state.readings).length ? { ...state, readings: {} } : state));
+    });
     return () => { current = false; activeClient.current = null; abort.abort(); close(); };
   }, [client, recordJob]);
   // A new connection must never display another laptop's previous state.
