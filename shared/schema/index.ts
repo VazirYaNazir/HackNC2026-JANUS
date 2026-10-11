@@ -6,6 +6,15 @@ export type InputType = "button" | "toggle" | "slider" | "joystick" | "dpad" | "
 export type DialType = "gauge" | "bar" | "line" | "ring" | "temperature" | "number" | "log" | "stream";
 export type WidgetType = InputType | DialType;
 
+/** Joystick position, each axis -1..1 (y is up). */
+export interface Vec2 { x: number; y: number; }
+
+/**
+ * What an input sends when triggered: boolean (toggle), number (slider, knob), string (command text,
+ * agent prompt, d-pad direction), Vec2 (joystick). Buttons send nothing.
+ */
+export type WidgetValue = number | string | boolean | Vec2;
+
 export const INPUT_TYPES: readonly InputType[] = ["button", "toggle", "slider", "joystick", "dpad", "knob", "command", "agent"];
 export const isInput = (t: WidgetType): t is InputType => (INPUT_TYPES as readonly string[]).includes(t);
 
@@ -57,7 +66,7 @@ export interface PairQR { host: string; code: string; }          // host: "https
 // Phone → PC
 export type ClientMessage =
   | { type: "auth"; token: string }                                   // must be first
-  | { type: "trigger"; widget: string; action: string; value?: unknown };
+  | { type: "trigger"; widget: string; action: string; value?: WidgetValue };
 
 // PC → phone
 export type RunState = "running" | "done" | "error";
