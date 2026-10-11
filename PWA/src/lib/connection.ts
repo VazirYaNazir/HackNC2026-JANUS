@@ -1,5 +1,6 @@
 import type { PairQR, SavedConnection } from "@janus/schema";
 import { pairBackend, PanelClient } from "@janus/client";
+import { isDemoHost } from "./demo";
 
 const KEY = "janus.connection";
 
@@ -71,6 +72,7 @@ export async function pair(host: string, code: string): Promise<PairResult> {
 
 /** True when this phone's authenticated laptop session is online. */
 export async function checkHost(host: string, token: string, timeoutMs = 3000): Promise<boolean> {
+  if (isDemoHost(host)) return true; // the Demo panel is always "online" and never touches the network
   try {
     return (await new PanelClient({ host, token }).session(AbortSignal.timeout(timeoutMs))).online;
   } catch {

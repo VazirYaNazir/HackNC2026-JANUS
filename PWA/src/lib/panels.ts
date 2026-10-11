@@ -1,6 +1,9 @@
 import type { SavedPanel } from "@janus/schema";
+import { DEMO_HOST } from "./demo";
 
 const KEY = "janus.panels";
+const DEMO_SEEDED_KEY = "janus.demoSeeded";
+const DEMO_ID = "demo";
 
 function read(): SavedPanel[] | null {
   try {
@@ -35,17 +38,22 @@ export const removePanel = (id: string): SavedPanel[] => write(listPanels().filt
 export const touchPanel = (id: string): SavedPanel[] =>
   write(listPanels().map((p) => (p.id === id ? { ...p, lastOpenedAt: Date.now() } : p)));
 
-/** Dev only: puts one mock panel in an empty store, once. Removing it afterwards sticks. */
-export function seedMockPanel(): void {
-  if (!import.meta.env.DEV || read() !== null) return;
-  write([
-    {
-      id: "mock-desk",
-      name: "Desk Control",
-      pcName: "my-pc",
-      host: "https://mock.janus.local",
-      token: "mock-token",
-      addedAt: Date.now(),
-    },
-  ]);
+export const hasDemoPanel = (): boolean => listPanels().some((p) => p.id === DEMO_ID);
+
+/** Adds the Demo panel (simulated actions, no network) unless it is already there. */
+export function addDemoPanel(): SavedPanel[] {
+  if (hasDemoPanel()) return listPanels();
+  const demo: SavedPanel = { id: DEMO_ID, name: "Desk Control", pcName: "Demo PC", host: DEMO_HOST, token: "demo", addedAt: Date.now() };
+  return write([...listPanels(), demo]);
+}
+
+/** First launch only: adds the Demo panel, then sets a flag so it is never re-added after the user removes it. */
+export function seedDemoPanel(): void {
+  try {
+    if (localStorage.getItem(DEMO_SEEDED_KEY)) return;
+    addDemoPanel();
+    localStorage.setItem(DEMO_SEEDED_KEY, "1");
+  } catch {
+    // storage unavailable (private mode): there is nowhere to remember it, so skip seeding
+  }
 }

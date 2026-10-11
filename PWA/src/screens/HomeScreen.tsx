@@ -4,7 +4,8 @@ import type { SavedPanel } from "@janus/schema";
 import Dialog from "../components/Dialog";
 import InstallBanner from "../components/InstallBanner";
 import { checkHost } from "../lib/connection";
-import { listPanels, removePanel, renamePanel } from "../lib/panels";
+import { isDemoPanel } from "../lib/demo";
+import { addDemoPanel, listPanels, removePanel, renamePanel } from "../lib/panels";
 import "./HomeScreen.css";
 
 interface HomeScreenProps {
@@ -64,6 +65,11 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
         <>
           <InstallBanner prominent />
           <p className="home__empty">Open Janus on your PC and scan its QR code to add your first panel.</p>
+          <p className="home__demo">
+            <button type="button" className="home__link" onClick={() => setPanels(addDemoPanel())}>
+              Add demo panel
+            </button>
+          </p>
         </>
       ) : (
         <>
@@ -89,7 +95,10 @@ export default function HomeScreen({ onOpen, onScan }: HomeScreenProps) {
                   >
                     <span className={`card__dot card__dot--${state}`} role="img" aria-label={state} />
                     <span className="card__text">
-                      <span className="card__name">{panel.name}</span>
+                      <span className="card__title">
+                        <span className="card__name">{panel.name}</span>
+                        {isDemoPanel(panel) && <span className="card__badge">Demo</span>}
+                      </span>
                       <span className="card__pc">{panel.pcName}</span>
                     </span>
                     <Icon name="chevron" size={20} className="card__chevron" />

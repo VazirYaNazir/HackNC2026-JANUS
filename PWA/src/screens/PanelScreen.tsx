@@ -2,14 +2,16 @@ import { useMemo, useState } from "react";
 import { GRID, Icon } from "@janus/design";
 import type { SavedPanel, Widget, WidgetValue } from "@janus/schema";
 import { PanelGrid, isInputWidget } from "@janus/widgets";
-import { PanelClient, RequestDialog, activeJob, jobText, usePanel } from "@janus/client";
+import { RequestDialog, activeJob, jobText, usePanel } from "@janus/client";
 import "@janus/client/styles.css";
+import { createClient, demoValues, isDemoPanel } from "../lib/demo";
 import "./PanelScreen.css";
 
 export default function PanelScreen({ panel, onBack }: { panel: SavedPanel; onBack: () => void }) {
-  const client = useMemo(() => new PanelClient(panel), [panel]);
+  const client = useMemo(() => createClient(panel), [panel]);
+  const demo = isDemoPanel(panel);
   const live = usePanel(client);
-  const [values, setValues] = useState<Record<string, WidgetValue>>({});
+  const [values, setValues] = useState<Record<string, WidgetValue>>(() => (demo ? demoValues : {}));
   const [pending, setPending] = useState<{ widget: Widget; value?: WidgetValue } | null>(null);
   const [error, setError] = useState("");
   const states: Record<string, string> = {};
@@ -25,6 +27,7 @@ export default function PanelScreen({ panel, onBack }: { panel: SavedPanel; onBa
       }
     } catch { /* Plain text output is shown in job history. */ }
   }
+  Object.assign(data, live.readings); // pushed `data` messages win over anything parsed from job output
   const handleTrigger = (widget: Widget, value?: WidgetValue) => {
     if (!isInputWidget(widget)) return;
     if (value !== undefined) setValues((current) => ({ ...current, [widget.id]: value }));
@@ -36,6 +39,7 @@ export default function PanelScreen({ panel, onBack }: { panel: SavedPanel; onBa
       <button type="button" className="panel__back" aria-label="Back to panels" onClick={onBack}><Icon name="back" size={24} /></button>
       <h1 className="panel__title">{panel.name}</h1>
     </header>
+    {demo && <p className="panel__demo">Demo panel · Actions are simulated</p>}
     <p role="status">{live.status === "unauthorized" ? "Pair again: this connection is no longer authorized." : live.session?.online ? `Laptop online · ${live.status}` : `Laptop offline · ${live.status}`}</p>
     {(live.error || error) && <p className="error" role="alert">{error || live.error}</p>}
     {live.document ? <PanelGrid layout={live.document.layout} values={values} data={data} states={states} onTrigger={handleTrigger} /> : <p>Loading your saved panel…</p>}

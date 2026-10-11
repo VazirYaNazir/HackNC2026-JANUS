@@ -6,6 +6,20 @@
 }
 .home__title { margin: 8px 0 20px; font-size: 28px; font-weight: 700; letter-spacing: 0.02em; }
 .home__empty { margin: 60px 12px 0; text-align: center; line-height: 1.5; color: var(--text-muted); }
+.home__demo { margin: 4px 0 0; text-align: center; }
+.home__link {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--amber);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.home__link:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; border-radius: var(--radius-small); }
 .home__list { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
 
 .card { position: relative; }
@@ -33,6 +47,8 @@
 .card__main:active { box-shadow: var(--neu-inset); }
 .card__main:focus-visible, .card__more:focus-visible { outline: 2px solid var(--amber-light); outline-offset: 2px; }
 .card__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.card__title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.card__badge { flex: none; padding: 1px 8px; border-radius: 999px; box-shadow: var(--neu-inset-sm); font-size: 12px; font-weight: 600; color: var(--cyan); }
 .card__name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card__pc { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card__chevron { flex: none; color: var(--text-muted); }

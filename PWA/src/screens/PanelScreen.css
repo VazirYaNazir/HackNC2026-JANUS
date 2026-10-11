@@ -6,6 +6,7 @@
 }
 .panel__header { display: flex; align-items: center; gap: 6px; margin: 0 0 12px -10px; }
 .panel__title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 600; color: var(--text); }
+.panel__demo { margin: 0 0 8px; font-size: 13px; color: var(--cyan); }
 .panel__back {
   flex: none;
   display: grid;

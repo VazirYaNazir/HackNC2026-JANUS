@@ -8,9 +8,11 @@ interface PanelState {
   document: PanelDocument | null;
   session: Session | null;
   jobs: JobView[];
+  /** Latest value per dial source, from `data` messages. */
+  readings: Record<string, number | string>;
   error: string;
 }
-const empty = (client: PanelClient | null): PanelState => ({ client, document: null, session: null, jobs: [], error: '' });
+const empty = (client: PanelClient | null): PanelState => ({ client, document: null, session: null, jobs: [], readings: {}, error: '' });
 
 export function usePanel(client: PanelClient | null) {
   const [snapshot, setSnapshot] = useState<PanelState>(() => empty(null));
@@ -48,6 +50,7 @@ export function usePanel(client: PanelClient | null) {
       if (!current) return;
       if (message.type === 'auth_ok') void refresh();
       else if (message.type === 'layout_updated') void refreshLayout();
+      else if (message.type === 'data') update((state) => ({ ...state, readings: { ...state.readings, [message.source]: message.value } }));
       else if (message.type === 'job_update') recordJob(message.job);
       else if (message.type === 'agent_presence') update((state) => ({ ...state, session: message.session }));
       else if (message.type === 'error') update((state) => ({ ...state, error: message.message }));
