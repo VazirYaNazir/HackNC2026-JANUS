@@ -15,6 +15,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -258,18 +259,65 @@ def check_ports(ports: list[int]) -> None:
                 raise ValueError(f"Port {port} is already in use; stop its service or choose another port") from None
 
 
-def wait_http(url: str, timeout: float, process=None) -> bool:
+def verified_tls_context() -> ssl.SSLContext:
+    """Retain system trust and add public roots for managed macOS Python builds."""
+    context = ssl.create_default_context()
+    try:
+        import certifi
+    except ImportError:
+        pass
+    else:
+        context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
+def http_probe_error(error: Exception) -> str:
+    """Describe failures without echoing credential-bearing URLs or proxy settings."""
+    if isinstance(error, HTTPError):
+        return f"HTTP {error.code} from the public service"
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return "TLS certificate verification failed; check the Python trust store or configured CA bundle"
+    if isinstance(reason, ssl.SSLError):
+        return "TLS handshake failed"
+    if isinstance(reason, socket.gaierror):
+        return "DNS lookup failed; the new tunnel hostname may still be propagating"
+    if isinstance(reason, TimeoutError):
+        return "Network connection timed out"
+    if isinstance(reason, ConnectionRefusedError):
+        return "Network connection refused"
+    return "Network connection failed; check connectivity and HTTPS proxy settings"
+
+
+def wait_http(url: str, timeout: float, process=None, *, diagnostics: dict | None = None, cancelled=None) -> bool:
     deadline = time.monotonic() + timeout
+    context = None
+    last_error = "HTTP readiness check timed out"
     while time.monotonic() < deadline:
+        if cancelled is not None and cancelled.is_set():
+            if diagnostics is not None:
+                diagnostics["error"] = "HTTP readiness check cancelled"
+            return False
         if process is not None and process.poll() is not None:
+            if diagnostics is not None:
+                diagnostics["error"] = "Service exited before its HTTP readiness check completed"
             return False
         try:
-            with urlopen(Request(url, headers={"User-Agent": "JANUS-start"}), timeout=min(2, max(0.1, deadline - time.monotonic()))) as response:
+            kwargs = {}
+            if urlsplit(url).scheme == "https":
+                context = context or verified_tls_context()
+                kwargs["context"] = context
+            with urlopen(Request(url, headers={"User-Agent": "JANUS-start"}), timeout=min(2, max(0.1, deadline - time.monotonic())), **kwargs) as response:
                 if response.status == 200:
+                    if diagnostics is not None:
+                        diagnostics.pop("error", None)
                     return True
-        except (OSError, URLError, TimeoutError):
-            pass
+                last_error = f"HTTP {response.status} from the public service"
+        except (OSError, URLError, TimeoutError) as error:
+            last_error = http_probe_error(error)
         time.sleep(min(0.15, max(0, deadline - time.monotonic())))
+    if diagnostics is not None:
+        diagnostics["error"] = last_error
     return False
 
 
@@ -371,8 +419,11 @@ class CloudflareTunnel:
         self.ready = threading.Event()
         self.service = None
         self.last_error = ""
+        self.cancelled = None
 
     def start(self):
+        if self.cancelled is not None and self.cancelled.is_set():
+            raise RuntimeError(f"{self.name} connection cancelled")
         self.url = None
         self.ready.clear()
         self.last_error = ""
@@ -399,6 +450,9 @@ class CloudflareTunnel:
             print(f"[janus-process] {self.name} {pid}", flush=True)
         deadline = time.monotonic() + 40
         while not self.ready.wait(timeout=0.2):
+            if self.cancelled is not None and self.cancelled.is_set():
+                self.stop()
+                raise RuntimeError(f"{self.name} connection cancelled")
             if self.service.poll() is not None or time.monotonic() >= deadline:
                 self.stop()
                 detail = f" {self.last_error}" if self.last_error else ""
@@ -512,7 +566,8 @@ def ensure_cloudflared(root: Path, explicit: str | None) -> str:
     name = f"cloudflared-{system}-{architecture}" + (".exe" if system == "windows" else ".tgz" if system == "darwin" else "")
     print("Installing a checksum-verified official cloudflared release locally…")
     request = Request("https://api.github.com/repos/cloudflare/cloudflared/releases/latest", headers={"User-Agent": "JANUS-start", "Accept": "application/vnd.github+json"})
-    with urlopen(request, timeout=30) as response:
+    context = verified_tls_context()
+    with urlopen(request, timeout=30, context=context) as response:
         release = json.load(response)
     asset = next((item for item in release.get("assets", []) if item.get("name") == name), None)
     if not asset or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset.get("digest") or ""):
@@ -520,7 +575,7 @@ def ensure_cloudflared(root: Path, explicit: str | None) -> str:
     download_url = asset.get("browser_download_url", "")
     if not download_url.startswith("https://github.com/cloudflare/cloudflared/releases/download/"):
         raise RuntimeError("Unexpected cloudflared download origin")
-    with urlopen(Request(download_url, headers={"User-Agent": "JANUS-start"}), timeout=60) as response:
+    with urlopen(Request(download_url, headers={"User-Agent": "JANUS-start"}), timeout=60, context=context) as response:
         downloaded = response.read(100 * 1024 * 1024 + 1)
     if len(downloaded) > 100 * 1024 * 1024 or hashlib.sha256(downloaded).hexdigest() != asset["digest"].removeprefix("sha256:"):
         raise RuntimeError("cloudflared checksum verification failed")
@@ -642,6 +697,7 @@ def main(argv=None) -> int:
         # Install handlers before starting children, so interruption during readiness
         # or tunnel setup also reaches the process-tree cleanup below.
         def interrupt_startup(*_):
+            stopped.set()
             raise KeyboardInterrupt
 
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -670,7 +726,7 @@ def main(argv=None) -> int:
         for name, setting in (("backend", "PUBLIC_BACKEND_URL"), ("pwa", "PWA_PUBLIC_URL")):
             if env.get(setting, "").strip():
                 origins[name] = validate_origin(env[setting].strip())
-        fixed_origins = dict(origins)
+        candidate_urls, next_public_check = {}, {}
         if not options.only:
             atomic_json(public_urls, origins)
             owns_public_urls = True
@@ -739,35 +795,65 @@ def main(argv=None) -> int:
             launch("electron", ["node", str(ROOT / "frontend" / "electron" / "launch.cjs")], ROOT / "frontend", {"JANUS_STUDIO_URL": bootstrap.browser_url(), "JANUS_BACKEND_URL": local_backend, "AGENT_DEVICE_ID": registration.device_id})
         elif bootstrap and not options.no_browser:
             webbrowser.open(bootstrap.browser_url())
+
+        def check_public(name, address, timeout):
+            diagnostics = {}
+            ready = wait_http(address + ("/health" if name == "backend" else ""), timeout,
+                              tunnels[name].service, diagnostics=diagnostics, cancelled=stopped)
+            return ready, diagnostics.get("error", "HTTP readiness check timed out")
+
+        def publish_public(name, address):
+            origins[name] = address
+            atomic_json(public_urls, origins)
+            print(f"Phone {name} address ready: {address}. Create a new pairing code in Studio.")
+
         if not options.local_only and not all(origins.values()):
             print("Connecting the phone app and backend through Cloudflare…")
             try:
                 executable = ensure_cloudflared(ROOT, options.cloudflared)
-                from concurrent.futures import ThreadPoolExecutor
+                from concurrent.futures import ThreadPoolExecutor, as_completed
                 pending = {name: CloudflareTunnel(f"tunnel-{name}", executable, port, env, logs_dir) for name, port in (("backend", options.backend_port), ("pwa", options.pwa_port)) if not origins[name]}
+                for tunnel in pending.values():
+                    tunnel.cancelled = stopped
                 tunnels.update(pending)
+
+                def connect_public(name, tunnel):
+                    address = tunnel.start()
+                    ready, error = check_public(name, address, 35)
+                    return address, ready, error
+
                 with ThreadPoolExecutor(max_workers=2) as pool:
-                    futures = {name: pool.submit(tunnel.start) for name, tunnel in pending.items()}
-                    for name, future in futures.items():
-                        origins[name] = future.result()
-                # Publish only after public services respond, so QR links are usable.
-                if not wait_http(origins["backend"] + "/health", 35) or not wait_http(origins["pwa"], 35):
-                    raise RuntimeError("Phone tunnels did not become reachable; check .janus/logs/tunnel-*.log")
-                atomic_json(public_urls, origins)
+                    futures = {pool.submit(connect_public, name, tunnel): name for name, tunnel in pending.items()}
+                    for future in as_completed(futures):
+                        name = futures[future]
+                        try:
+                            address, ready, error = future.result()
+                        except (OSError, ValueError, RuntimeError) as error:
+                            print(f"Phone connection unavailable ({name}): {error}", file=sys.stderr)
+                            print("Local JANUS remains available; this tunnel will retry independently.", file=sys.stderr)
+                            continue
+                        candidate_urls[name] = address
+                        if ready:
+                            publish_public(name, address)
+                        else:
+                            print(f"Phone {name} public address pending: {error}. Connected tunnel stays running; retrying.", file=sys.stderr)
             except (OSError, ValueError, RuntimeError) as error:
                 print(f"Phone connection unavailable: {error}", file=sys.stderr)
                 print("Local JANUS remains available. Restart after fixing the tunnel connection, or configure PUBLIC_BACKEND_URL and PWA_PUBLIC_URL.", file=sys.stderr)
-                for tunnel in tunnels.values():
-                    tunnel.stop()
-                tunnels.clear()
-                origins = dict(fixed_origins)
-                atomic_json(public_urls, origins)
         print(f"\nJANUS Studio: {studio_origin}")
         print(f"Local backend: {local_backend}")
         print(f"SQLite database: {database}")
-        unavailable = "disabled (--local-only)" if options.local_only else "unavailable; check tunnel logs"
-        print(f"Phone app: {origins['pwa'] or unavailable}")
-        print(f"Phone backend: {origins['backend'] or unavailable}")
+        def phone_status(name):
+            if origins[name]:
+                return origins[name]
+            if options.local_only:
+                return "disabled (--local-only)"
+            if name in candidate_urls:
+                return "pending; retrying public HTTPS checks"
+            return "unavailable; check tunnel logs"
+
+        print(f"Phone app: {phone_status('pwa')}")
+        print(f"Phone backend: {phone_status('backend')}")
         print(f"Controller credential: {state_dir / 'controller.json'} (private local file; never put it in a QR code)")
         print("Use Project → Laptop controls starter, Save & Push, then Pair Device in Studio.")
         print("Gemini: " + ("configured" if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") else "no key configured; built-in tools remain available"))
@@ -797,9 +883,12 @@ def main(argv=None) -> int:
                         break
                     raise RuntimeError(f"{service.name} exited ({service.poll()}); inspect {logs_dir / (service.name + '.log')}")
             for name, tunnel in list(tunnels.items()):
-                if tunnel.service.poll() is not None:
+                if stopped.is_set():
+                    break
+                if name not in candidate_urls or tunnel.service is None or tunnel.service.poll() is not None:
                     origins[name] = None
                     atomic_json(public_urls, origins)
+                    candidate_urls.pop(name, None)
                     if recovery_attempts[name] >= 3:
                         print(f"Cloudflare {name} tunnel repeatedly failed. Local JANUS remains available; inspect its log and restart to reconnect.", file=sys.stderr)
                         tunnel.stop()
@@ -810,15 +899,23 @@ def main(argv=None) -> int:
                     tunnel.stop()
                     try:
                         address = tunnel.start()
-                        check = address + ("/health" if name == "backend" else "")
-                        if not wait_http(check, 35):
-                            raise RuntimeError(f"Recovered {name} tunnel is not reachable")
-                        origins[name] = address
-                        atomic_json(public_urls, origins)
-                        print(f"Phone {name} address changed to {address}. Create a new pairing code in Studio.")
+                        candidate_urls[name] = address
+                        ready, error = check_public(name, address, 2)
+                        if ready:
+                            publish_public(name, address)
+                        else:
+                            next_public_check[name] = time.monotonic() + 5
+                            print(f"Phone {name} public address pending: {error}. Connected tunnel stays running; retrying.", file=sys.stderr)
                     except (OSError, RuntimeError) as error:
                         print(f"Phone {name} reconnect failed: {error}", file=sys.stderr)
                         tunnel.stop()
+                elif not origins[name] and time.monotonic() >= next_public_check.get(name, 0):
+                    ready, error = check_public(name, candidate_urls[name], 2)
+                    next_public_check[name] = time.monotonic() + 5
+                    if ready:
+                        publish_public(name, candidate_urls[name])
+                    else:
+                        print(f"Phone {name} public address pending: {error}; will retry.", file=sys.stderr)
         return 0
     except KeyboardInterrupt:
         return 0
