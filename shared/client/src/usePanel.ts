@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { JobView } from '@janus/schema';
+import { latestDocument, type JobView } from '@janus/schema';
 import { PanelClient, type PanelDocument, type Session } from './api';
 import { mergeHistory, recordJob as addJob } from './jobs';
 
@@ -10,9 +10,11 @@ interface PanelState {
   jobs: JobView[];
   /** Latest value per dial source, from `data` messages. */
   readings: Record<string, number | string>;
+  /** Why the layout could not be loaded or shown; cleared as soon as a valid layout arrives. */
+  layoutError: string;
   error: string;
 }
-const empty = (client: PanelClient | null): PanelState => ({ client, document: null, session: null, jobs: [], readings: {}, error: '' });
+const empty = (client: PanelClient | null): PanelState => ({ client, document: null, session: null, jobs: [], readings: {}, layoutError: '', error: '' });
 
 export function usePanel(client: PanelClient | null) {
   const [snapshot, setSnapshot] = useState<PanelState>(() => empty(null));
@@ -27,7 +29,10 @@ export function usePanel(client: PanelClient | null) {
   }, [client]);
   const setDocument = useCallback((document: PanelDocument) => {
     if (activeClient.current !== client) return;
-    setSnapshot((state) => ({ ...(state.client === client ? state : empty(client)), document }));
+    setSnapshot((state) => {
+      const scoped = state.client === client ? state : empty(client);
+      return { ...scoped, document: latestDocument(scoped.document, document) };
+    });
   }, [client]);
 
   useEffect(() => {
@@ -38,13 +43,22 @@ export function usePanel(client: PanelClient | null) {
     const update = (change: (state: PanelState) => PanelState) => {
       if (current) setSnapshot((state) => change(state.client === client ? state : empty(client)));
     };
-    const fail = (reason: unknown) => update((state) => ({ ...state, error: reason instanceof Error ? reason.message : 'Could not load the panel.' }));
-    const refreshLayout = () => client.layout(abort.signal).then((document) => update((state) => ({ ...state, document }))).catch(fail);
+    const messageOf = (reason: unknown) => (reason instanceof Error ? reason.message : 'Could not load the panel.');
+    const refreshLayout = () => client.layout(abort.signal)
+      .then((document) => update((state) => ({ ...state, document: latestDocument(state.document, document), layoutError: '' })))
+      .catch((reason) => update((state) => ({ ...state, layoutError: messageOf(reason) })));
     const refresh = async () => {
-      try {
-        const [document, history, session] = await Promise.all([client.layout(abort.signal), client.history(abort.signal), client.session(abort.signal)]);
-        update((state) => ({ ...state, document, jobs: mergeHistory(state.jobs, history.jobs), session, error: '' }));
-      } catch (reason) { fail(reason); }
+      // Each part applies on its own: an invalid layout must not hide the job history or the laptop's status.
+      const [layout, history, session] = await Promise.allSettled([client.layout(abort.signal), client.history(abort.signal), client.session(abort.signal)]);
+      const failure = [history, session].find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      update((state) => ({
+        ...state,
+        document: layout.status === 'fulfilled' ? latestDocument(state.document, layout.value) : state.document,
+        jobs: history.status === 'fulfilled' ? mergeHistory(state.jobs, history.value.jobs) : state.jobs,
+        session: session.status === 'fulfilled' ? session.value : state.session,
+        layoutError: layout.status === 'rejected' ? messageOf(layout.reason) : '',
+        error: failure ? messageOf(failure.reason) : '',
+      }));
     };
     const close = client.subscribe((message) => {
       if (!current) return;
@@ -59,5 +73,5 @@ export function usePanel(client: PanelClient | null) {
   }, [client, recordJob]);
   // A new connection must never display another laptop's previous state.
   const scoped = snapshot.client === client ? snapshot : empty(client);
-  return { ...scoped, status: client ? status : 'disconnected', setDocument, recordJob };
+  return { ...scoped, error: scoped.layoutError || scoped.error, status: client ? status : 'disconnected', setDocument, recordJob };
 }

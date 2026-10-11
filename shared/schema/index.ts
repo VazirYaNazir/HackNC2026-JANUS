@@ -68,6 +68,9 @@ export interface LogicalCanvasLayout {
 
 export type Layout = LegacyGridLayout | LogicalCanvasLayout;
 
+/** What GET /api/layout returns: the saved layout and its revision (it increases on every save). */
+export interface PanelDocument { layout: Layout; revision: number }
+
 /* ---------- Pairing (POST /api/pair) ---------- */
 
 export interface PairRequest { code: string; name: string; }      // name: "Ana's iPhone"
@@ -186,4 +189,75 @@ function validServerMessage(msg: unknown): msg is ServerMessage {
     }
     default: return false;
   }
+}
+
+/* ---------- Panel documents: validation and ordering ---------- */
+
+/** A document from the server failed the shape check. `message` is safe to show to the user. */
+export class PanelDocumentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PanelDocumentError';
+  }
+}
+
+const fail = (path: string, expected: string): never => {
+  throw new PanelDocumentError(`The saved panel is invalid: ${path} must be ${expected}.`);
+};
+
+const isDialType = (type: string) => (['gauge', 'bar', 'line', 'ring', 'temperature', 'number', 'log', 'stream'] as string[]).includes(type);
+const optional = (value: unknown, ok: (v: unknown) => boolean) => value === undefined || ok(value);
+
+function checkWidget(raw: unknown, path: string): void {
+  if (!record(raw)) return fail(path, 'an object');
+  if (typeof raw.id !== 'string' || raw.id === '') fail(`${path}.id`, 'a non-empty string');
+  if (typeof raw.type !== 'string') fail(`${path}.type`, 'a string');
+  if (typeof raw.label !== 'string') fail(`${path}.label`, 'a string');
+  for (const key of ['x', 'y', 'w', 'h']) if (!finite(raw[key])) fail(`${path}.${key}`, 'a finite number');
+  if (!optional(raw.icon, (v) => typeof v === 'string')) fail(`${path}.icon`, 'a string');
+  if (!optional(raw.color, (v) => (['amber', 'cyan', 'green', 'graphite', 'coral'] as unknown[]).includes(v))) fail(`${path}.color`, 'one of the palette colors');
+  for (const key of ['min', 'max', 'step', 'warn', 'critical']) if (!optional(raw[key], finite)) fail(`${path}.${key}`, 'a finite number');
+  if (!optional(raw.unit, (v) => typeof v === 'string')) fail(`${path}.unit`, 'a string');
+  if (!optional(raw.confirm, (v) => typeof v === 'boolean')) fail(`${path}.confirm`, 'true or false');
+  if (!optional(raw.variant, (v) => v === 'switch' || v === 'push')) fail(`${path}.variant`, '"switch" or "push"');
+  // Unknown widget types are allowed: the phone shows them as "Unsupported widget".
+  const type = raw.type as string;
+  if ((INPUT_TYPES as readonly string[]).includes(type) && typeof raw.action !== 'string') fail(`${path}.action`, 'a string');
+  if (isDialType(type) && typeof raw.source !== 'string') fail(`${path}.source`, 'a string');
+}
+
+/**
+ * Checks the shape of a layout document from the server: version, name, canvas or columns, and every
+ * widget's fields. It does not check geometry (overlaps, bounds); `normalizeLayout` in @janus/design does.
+ */
+export function parsePanelDocument(raw: unknown): PanelDocument {
+  if (!record(raw)) return fail('the document', 'an object');
+  if (!Number.isInteger(raw.revision) || (raw.revision as number) < 0) fail('revision', 'a whole number, 0 or more');
+  const layout = raw.layout;
+  if (!record(layout)) return fail('layout', 'an object');
+  const version = layout.schemaVersion;
+  if (version !== LEGACY_SCHEMA_VERSION && version !== SCHEMA_VERSION) {
+    throw new PanelDocumentError(`This panel uses layout version ${String(version)}, which this app can't show. Update Janus.`);
+  }
+  if (typeof layout.name !== 'string') fail('layout.name', 'a string');
+  if (version === SCHEMA_VERSION) {
+    if (layout.coordinateSpace !== 'logical') fail('layout.coordinateSpace', '"logical"');
+    const canvas = layout.canvas;
+    if (!record(canvas) || !finite(canvas.width) || !finite(canvas.height) || canvas.width <= 0 || canvas.height <= 0) {
+      fail('layout.canvas', 'a width and height above 0');
+    }
+  } else if (!Number.isInteger(layout.columns) || (layout.columns as number) <= 0) {
+    fail('layout.columns', 'a whole number above 0');
+  }
+  if (!Array.isArray(layout.widgets)) return fail('layout.widgets', 'a list');
+  layout.widgets.forEach((widget, i) => checkWidget(widget, `layout.widgets[${i}]`));
+  return raw as unknown as PanelDocument;
+}
+
+/**
+ * Picks which document to show. Responses and socket updates can arrive out of order, so a document with a
+ * lower revision than the one on screen never replaces it. An equal revision is the same document.
+ */
+export function latestDocument(current: PanelDocument | null, incoming: PanelDocument): PanelDocument {
+  return current && incoming.revision < current.revision ? current : incoming;
 }

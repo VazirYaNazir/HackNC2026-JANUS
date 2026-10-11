@@ -1,7 +1,8 @@
-import { parseServerMessage, type GenerationRequest, type JobView, type Layout, type PairResponse, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
+import { normalizeLayout } from '@janus/design';
+import { parsePanelDocument, parseServerMessage, type GenerationRequest, type JobView, type Layout, type PairResponse, type PanelDocument, type ProgramMatch, type ServerMessage, type WidgetValue } from '@janus/schema';
 
 export interface Connection { host: string; token: string }
-export interface PanelDocument { layout: Layout; revision: number }
+export type { PanelDocument };
 export interface Session { device_id: string; online: boolean; target: { platform: GenerationRequest['platform']; architecture: GenerationRequest['architecture']; build_boundary_available: boolean; execution_boundary_available: boolean } | null }
 export interface Dispatch { widget_id: string; job_id: string; value?: WidgetValue; program_id?: string; request_sha256?: string }
 export interface Prepared { request: GenerationRequest; request_sha256: string; checked: boolean; matches: ProgramMatch[] }
@@ -37,7 +38,13 @@ export class PanelClient {
     return response.json() as Promise<T>;
   }
 
-  layout(signal?: AbortSignal) { return this.request<PanelDocument>('/api/layout', { signal }); }
+  /** The saved layout. Throws if the server's document is malformed or its geometry is invalid. */
+  async layout(signal?: AbortSignal): Promise<PanelDocument> {
+    const document = parsePanelDocument(await this.request<unknown>('/api/layout', { signal }));
+    try { normalizeLayout(document.layout); }
+    catch (reason) { throw new Error(`The saved panel is invalid: ${reason instanceof Error ? reason.message : 'bad layout'}`); }
+    return document;
+  }
   history(signal?: AbortSignal) { return this.request<{ jobs: JobView[] }>('/api/v1/agent-jobs', { signal }); }
   session(signal?: AbortSignal) { return this.request<Session>('/api/v1/panels/session', { signal }); }
   save(layout: Layout, revision: number) { return this.request<PanelDocument>('/api/v1/studio/layout', { method: 'PUT', body: JSON.stringify({ layout, revision }) }); }
